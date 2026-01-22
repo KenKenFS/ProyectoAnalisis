@@ -6,7 +6,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-
 node_modules
 dist
 dist-ssr
@@ -22,3 +21,51 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Visual Studio / Visual Studio Code temporales y caché
+.vs/
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/*.code-workspace
+*.code-workspace
+*.vsidx
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Firebase / credenciales sensibles (¡muy importante!)
+*.json-adminsdk-*.json
+firebase.json
+.firebaserc
+serviceAccountKey.json
+*.serviceAccountKey.json
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Dependencias y builds
+node_modules/
+dist/
+build/
+coverage/
+.tmp/
+.cache/
+.vite/
+.eslintcache
+.prettiercache
+
+# Archivos de sistema Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Archivos temporales de editores
+*.bak
+*.swp
+*.swo
+*~
+~$*
