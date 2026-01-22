@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  h1, h2 {
+    @apply font-bold font-poppins;
+  }
+  h3, h4, h5, h6 {
+    @apply font-semibold font-poppins;
+  }
+  body {
+    @apply font-inter text-base;
+  }
+  
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-cyan-600/40 rounded-full hover:bg-cyan-600/60;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-cyan-600 hover:bg-cyan-700 text-white font-medium transition-all duration-200 shadow-lg shadow-cyan-600/20 hover:shadow-cyan-600/40 active:scale-95;
+  }
+  
+  .btn-secondary {
+    @apply bg-blue-600 hover:bg-blue-700 text-white font-medium transition-all duration-200 shadow-lg shadow-blue-600/20 hover:shadow-blue-600/40 active:scale-95;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200;
+  }
+  
+  .badge-primary {
+    @apply inline-flex items-center px-3 py-1 rounded-full bg-cyan-100 text-cyan-800 font-medium text-sm;
+  }
+  
+  .safe-area-inset-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  
+  /* Estilos especificos para cocina - pantalla grande */
+  .kitchen-order-card {
+    @apply bg-white rounded-lg shadow-lg p-6 mb-4 border-l-4 border-blue-500;
+  }
+  
+  .kitchen-order-title {
+    @apply text-2xl font-bold mb-2;
+  }
+  
+  .kitchen-button {
+    @apply px-6 py-3 rounded-lg font-semibold text-lg cursor-pointer transition-all;
+  }
+}

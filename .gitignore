@@ -6,66 +6,41 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+
+# Dependencies
 node_modules
+.pnp
+.pnp.js
+
+# Build
 dist
 dist-ssr
+build
 *.local
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Visual Studio / Visual Studio Code temporales y caché
-.vs/
-.vscode/settings.json
-.vscode/tasks.json
-.vscode/launch.json
-.vscode/*.code-workspace
-*.code-workspace
-*.vsidx
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-
-# Firebase / credenciales sensibles (¡muy importante!)
-*.json-adminsdk-*.json
-firebase.json
-.firebaserc
-serviceAccountKey.json
-*.serviceAccountKey.json
+# Environment
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 
-# Dependencias y builds
-node_modules/
-dist/
-build/
-coverage/
-.tmp/
-.cache/
-.vite/
-.eslintcache
-.prettiercache
+# Firebase Admin SDK credentials
+*-firebase-adminsdk-*.json
+firebase-adminsdk*.json
+serviceAccountKey.json
 
-# Archivos de sistema Windows
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vs/
+
+# OS
+.DS_Store
 Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Archivos temporales de editores
-*.bak
-*.swp
-*.swo
-*~
-~$*
