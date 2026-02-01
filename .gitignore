@@ -25,6 +25,12 @@ build
 .env.test.local
 .env.production.local
 
+# Python virtualenvs (seed scripts)
+.venv
+.venv-*
+venv
+venv-*
+
 # Firebase Admin SDK credentials
 *-firebase-adminsdk-*.json
 firebase-adminsdk*.json
@@ -44,3 +50,4 @@ serviceAccountKey.json
 # OS
 .DS_Store
 Thumbs.db
+/scripts

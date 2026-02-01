@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   ShoppingCartIcon,
   PlusIcon,
@@ -13,42 +14,7 @@ import {
   ClockIcon,
 } from '@heroicons/react/24/outline'
 
-// Datos de ejemplo - Ordenes de meseros
-const pendingOrders = [
-  {
-    id: 1,
-    table: 5,
-    items: [
-      { id: 1, name: 'Ceviche Clasico', qty: 2, price: 12.5 },
-      { id: 6, name: 'Coca Cola', qty: 2, price: 2 },
-    ],
-    status: 'Listo',
-    time: '15 min',
-    total: 29000,
-  },
-  {
-    id: 2,
-    table: 8,
-    items: [
-      { id: 2, name: 'Ceviche Mixto', qty: 1, price: 14 },
-      { id: 7, name: 'Inca Kola', qty: 1, price: 2.5 },
-    ],
-    status: 'En cocina',
-    time: '8 min',
-    total: 11550,
-  },
-  {
-    id: 3,
-    table: 12,
-    items: [
-      { id: 3, name: 'Causa Limena', qty: 3, price: 8 },
-      { id: 5, name: 'Papa a la Huancaina', qty: 2, price: 6 },
-    ],
-    status: 'Listo',
-    time: '5 min',
-    total: 30800,
-  },
-]
+import { getMesasConCuentaActivaOrThrow, getCuentaItems } from '@shared/firebase/firestore'
 
 // Datos de ejemplo - Menu para venta directa
 const menuItems = [
@@ -317,12 +283,59 @@ function ReceiptModal({ visible, order, onClose }) {
 }
 
 export default function VentasPage() {
+  const navigate = useNavigate()
   const [cart, setCart] = useState([])
   const [selectedCategory, setSelectedCategory] = useState('Todos')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedOrder, setSelectedOrder] = useState(null)
-  const [showOrderDetail, setShowOrderDetail] = useState(false)
   const [showReceipt, setShowReceipt] = useState(false)
+  const [mesasConCuenta, setMesasConCuenta] = useState([])
+  const [mesasError, setMesasError] = useState('')
+  const [mesasLoading, setMesasLoading] = useState(true)
+
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        setMesasLoading(true)
+        setMesasError('')
+        const mesas = await getMesasConCuentaActivaOrThrow()
+
+        // Enriquecer con un resumen rápido de ítems pendientes (para el card)
+        const enriched = await Promise.all(
+          mesas.map(async (m) => {
+            try {
+              const its = await getCuentaItems(m.cuentaActivaId)
+              const pendientes = its.filter(i => i.estadoItem === 'pendiente')
+              const subtotal = Math.round(
+                pendientes.reduce((s, i) => s + Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1), 0)
+              )
+              const impuesto = Math.round(subtotal * 0.13)
+              const total = subtotal + impuesto
+              return {
+                ...m,
+                resumen: {
+                  itemsPendientes: pendientes.length,
+                  total,
+                },
+              }
+            } catch {
+              return { ...m, resumen: { itemsPendientes: 0, total: 0 } }
+            }
+          })
+        )
+
+        if (mounted) setMesasConCuenta(enriched)
+      } catch (e) {
+        if (mounted) setMesasError(e?.message || 'Error al cargar mesas')
+      } finally {
+        if (mounted) setMesasLoading(false)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = selectedCategory === 'Todos' || item.category === selectedCategory
@@ -365,22 +378,41 @@ export default function VentasPage() {
         </h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {pendingOrders.map(order => (
+          {mesasConCuenta.map(mesa => (
             <OrderTableCard
-              key={order.id}
-              order={order}
+              key={mesa.id}
+              order={{
+                id: mesa.id,
+                table: mesa.numero ?? mesa.id,
+                items: [
+                  {
+                    id: 'pendientes',
+                    name: `${mesa.resumen?.itemsPendientes ?? 0} ítems pendientes`,
+                    qty: 1,
+                  },
+                ],
+                status: 'Pendiente',
+                time: 'Cuenta activa',
+                total: Number(mesa.resumen?.total || 0),
+              }}
               onSelect={() => {
-                setSelectedOrder(order)
-                setShowOrderDetail(true)
+                setSelectedOrder({ mesaId: mesa.id, cuentaId: mesa.cuentaActivaId })
+                navigate(`/mesa-compartida?mesaId=${encodeURIComponent(mesa.id)}`)
               }}
             />
           ))}
         </div>
 
-        {pendingOrders.length === 0 && (
+        {mesasError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm mt-3">
+            {mesasError}
+          </div>
+        )}
+
+        {!mesasLoading && mesasConCuenta.length === 0 && !mesasError && (
           <div className="text-center py-8 text-gray-500">
             <ShoppingCartIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
-            <p>No hay pedidos pendientes</p>
+            <p>No hay mesas con cuenta activa</p>
           </div>
         )}
       </div>
@@ -533,16 +565,6 @@ export default function VentasPage() {
       </div>
 
       {/* MODALS */}
-      <OrderDetailModal
-        order={selectedOrder}
-        visible={showOrderDetail}
-        onClose={() => setShowOrderDetail(false)}
-        onPay={(method) => {
-          setShowOrderDetail(false)
-          setShowReceipt(true)
-        }}
-      />
-
       <ReceiptModal
         visible={showReceipt}
         order={selectedOrder || { table: 'Mostrador', items: cart }}

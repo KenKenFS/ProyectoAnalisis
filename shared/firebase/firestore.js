@@ -2,6 +2,7 @@ import { db } from './firebase';
 import {
   collection,
   addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   doc,
@@ -11,6 +12,7 @@ import {
   where,
   orderBy,
   onSnapshot,
+  writeBatch,
 } from 'firebase/firestore';
 
 // ==================== PEDIDOS ====================
@@ -276,12 +278,32 @@ export async function createMesa(mesaData) {
  */
 export async function getMesas() {
   try {
-    const snapshot = await getDocs(collection(db, 'mesas'));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return await getMesasOrThrow();
   } catch (error) {
     console.error('❌ Error al obtener mesas:', error.message);
     return [];
   }
+}
+
+/**
+ * Obtiene todas las mesas (versión estricta).
+ * Útil para UI: permite mostrar el error real (reglas/permisos/índices).
+ * @returns {Promise<array>}
+ */
+export async function getMesasOrThrow() {
+  const snapshot = await getDocs(collection(db, 'mesas'));
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+/**
+ * Mesas que tienen cuenta activa (útil para Caja/Ventas).
+ * @returns {Promise<array>}
+ */
+export async function getMesasConCuentaActivaOrThrow() {
+  const mesas = await getMesasOrThrow();
+  return mesas
+    .filter(m => !!m.cuentaActivaId)
+    .sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0));
 }
 
 /**
@@ -361,4 +383,158 @@ export async function getTransaccionesPorFecha(fechaInicio, fechaFin) {
     console.error('❌ Error al obtener transacciones por fecha:', error.message);
     return [];
   }
+}
+
+// ==================== CUENTAS (MESA COMPARTIDA / HU1) ====================
+
+export async function getMesa(mesaId) {
+  const snap = await getDoc(doc(db, 'mesas', mesaId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function getCuenta(cuentaId) {
+  const snap = await getDoc(doc(db, 'cuentas', cuentaId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+/**
+ * Obtiene la cuenta activa de una mesa leyendo mesas/{mesaId}.cuentaActivaId
+ * @returns {Promise<null|object>} cuenta
+ */
+export async function getCuentaActivaByMesaId(mesaId) {
+  const mesa = await getMesa(mesaId);
+  if (!mesa?.cuentaActivaId) return null;
+  return await getCuenta(mesa.cuentaActivaId);
+}
+
+export async function getCuentaComensales(cuentaId) {
+  const snapshot = await getDocs(collection(db, 'cuentas', cuentaId, 'comensales'));
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function getCuentaItems(cuentaId) {
+  const snapshot = await getDocs(collection(db, 'cuentas', cuentaId, 'items'));
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function getCuentaItemsByComensal(cuentaId, comensalId) {
+  const q = query(
+    collection(db, 'cuentas', cuentaId, 'items'),
+    where('comensalId', '==', comensalId)
+  );
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function getCuentaUnassignedPendingItems(cuentaId) {
+  const q = query(
+    collection(db, 'cuentas', cuentaId, 'items'),
+    where('comensalId', '==', null)
+  );
+  const snapshot = await getDocs(q);
+  // Filtramos en cliente para evitar índices compuestos por múltiples where()
+  return snapshot.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(i => i.estadoItem === 'pendiente');
+}
+
+export async function assignCuentaItemToComensal({ cuentaId, itemId, comensalId, assignedByUid = null }) {
+  await updateDoc(doc(db, 'cuentas', cuentaId, 'items', itemId), {
+    comensalId,
+    assignedByUid,
+    assignedAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+/**
+ * Cierre parcial por comensal:
+ * - valida que no existan ítems pendientes sin asignar
+ * - marca ítems del comensal como pagados
+ * - crea un documento en pagos
+ * - libera al comensal si ya no le quedan pendientes
+ */
+export async function payPartialForComensal({
+  cuentaId,
+  mesaId,
+  comensalId,
+  metodo,
+  cajeroUid = null,
+  impuestoRate = 0.13,
+}) {
+  const allowed = ['efectivo', 'tarjeta', 'mixto'];
+  if (!allowed.includes(metodo)) {
+    const err = new Error('Método de pago inválido');
+    err.code = 'INVALID_METHOD';
+    throw err;
+  }
+
+  const unassigned = await getCuentaUnassignedPendingItems(cuentaId);
+  if (unassigned.length > 0) {
+    const err = new Error('Hay ítems sin asignar. Asigna primero para poder cerrar parcialmente.');
+    err.code = 'UNASSIGNED_ITEMS';
+    err.unassignedItemIds = unassigned.map(i => i.id);
+    throw err;
+  }
+
+  // Leemos por comensal y filtramos en cliente para evitar índices compuestos
+  const items = (await getCuentaItemsByComensal(cuentaId, comensalId)).filter(i => i.estadoItem === 'pendiente');
+
+  if (items.length === 0) {
+    const err = new Error('El comensal no tiene ítems pendientes.');
+    err.code = 'NO_PENDING_ITEMS';
+    throw err;
+  }
+
+  const subtotal = Math.round(
+    items.reduce((s, i) => s + (Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1)), 0)
+  );
+  const impuesto = Math.round(subtotal * Number(impuestoRate || 0));
+  const total = subtotal + impuesto;
+
+  const pagoRef = doc(collection(db, 'pagos'));
+  const pagoId = pagoRef.id;
+
+  const batch = writeBatch(db);
+  batch.set(
+    pagoRef,
+    {
+      cuentaId,
+      mesaId,
+      comensalId,
+      itemIds: items.map(i => i.id),
+      metodo,
+      estadoPago: 'pagado',
+      montoSubtotal: subtotal,
+      montoImpuesto: impuesto,
+      montoTotal: total,
+      cajeroUid,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+    { merge: true }
+  );
+
+  for (const item of items) {
+    batch.update(doc(db, 'cuentas', cuentaId, 'items', item.id), {
+      estadoItem: 'pagado',
+      pagoId,
+      paidAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  await batch.commit();
+
+  // Liberar comensal si no quedan pendientes
+  const pendingAfter = (await getCuentaItemsByComensal(cuentaId, comensalId)).filter(i => i.estadoItem === 'pendiente');
+  if (pendingAfter.length === 0) {
+    await setDoc(
+      doc(db, 'cuentas', cuentaId, 'comensales', comensalId),
+      { estadoCliente: 'liberado', updatedAt: new Date() },
+      { merge: true }
+    );
+  }
+
+  return { pagoId, itemIds: items.map(i => i.id), subtotal, impuesto, total };
 }

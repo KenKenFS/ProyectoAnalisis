@@ -1,14 +1,16 @@
-﻿import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import AuthLayout from '@shared/layout/AuthLayout'
 import InternalLayout from '@shared/layout/InternalLayout'
 import { ProtectedAuthRoute } from '@shared/firebase/ProtectedAuthRoute'
 import Login from './pages/Login'
 import VentasPage from './pages/VentasPage'
+import MesaCompartidaPage from './pages/MesaCompartidaPage'
 import CierresCajaPage from './pages/CierresCajaPage'
 import ReportesPage from './pages/ReportesPage'
 
 const sidebarLinks = [
   { to: '/ventas', label: 'Ventas', icon: 'ShoppingCartIcon', roles: ['Cajero', 'Admin'] },
+  { to: '/mesa-compartida', label: 'Mesa compartida', icon: 'TableCellsIcon', roles: ['Cajero', 'Admin'] },
   { to: '/cierres', label: 'Cierres de Caja', icon: 'DocumentTextIcon', roles: ['Cajero', 'Admin'] },
   { to: '/reportes', label: 'Reportes', icon: 'ChartBarIcon', roles: ['Cajero', 'Admin'] },
 ]
@@ -46,6 +48,14 @@ function App() {
             element={
               <ProtectedAuthRoute allowedRoles={['Cajero', 'Admin']}>
                 <VentasPage />
+              </ProtectedAuthRoute>
+            }
+          />
+          <Route
+            path="/mesa-compartida"
+            element={
+              <ProtectedAuthRoute allowedRoles={['Cajero', 'Admin']}>
+                <MesaCompartidaPage />
               </ProtectedAuthRoute>
             }
           />
