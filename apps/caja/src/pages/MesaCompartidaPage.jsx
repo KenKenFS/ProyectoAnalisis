@@ -10,6 +10,7 @@ import {
   PlusIcon,
   TrashIcon,
   XMarkIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline'
 
 import { useAuth } from '@shared/firebase/AuthContext'
@@ -24,6 +25,7 @@ import {
   addCuentaItem,
   deleteCuentaItem,
   payPartialForComensal,
+  cerrarCuentaReabierta,
 } from '@shared/firebase/firestore'
 
 function moneyCRC(value) {
@@ -167,6 +169,15 @@ export default function MesaCompartidaPage() {
   const [addingProduct, setAddingProduct] = useState(false)
   const [deletingItemId, setDeletingItemId] = useState(null)
 
+  const [confirmCerrarOpen, setConfirmCerrarOpen] = useState(false)
+  const [cerrarLoading, setCerrarLoading] = useState(false)
+
+  // Solo cuentas que fueron reabiertas desde "Cuentas cerradas" tienen reopenedAt; las nuevas no.
+  const cuentaReabierta = useMemo(
+    () => !!(cuenta?.reopenedAt),
+    [cuenta?.reopenedAt]
+  )
+
   const mesasConCuenta = useMemo(() => {
     return [...mesas]
       .filter(m => !!m.cuentaActivaId)
@@ -260,7 +271,7 @@ export default function MesaCompartidaPage() {
       setError('Selecciona primero un comensal para asignar ítems.')
       return
     }
-    if (selectedComensal?.estadoCliente === 'liberado') {
+    if (selectedComensal?.estadoCliente === 'liberado' && !cuentaReabierta) {
       setError('Este comensal está liberado y no se le pueden asignar nuevos ítems.')
       return
     }
@@ -296,7 +307,7 @@ export default function MesaCompartidaPage() {
 
   async function addProductToComensal(productoId) {
     if (!cuenta?.id || !selectedComensalId) return
-    if (selectedComensal?.estadoCliente === 'liberado') {
+    if (selectedComensal?.estadoCliente === 'liberado' && !cuentaReabierta) {
       setError('Este comensal está liberado y no se le pueden agregar ítems.')
       return
     }
@@ -343,8 +354,8 @@ export default function MesaCompartidaPage() {
       setError('Selecciona un comensal para hacer cierre parcial.')
       return
     }
-    if (selectedComensal?.estadoCliente === 'liberado') {
-      setError('Este comensal ya está liberado.')
+    if (selectedComensal?.estadoCliente === 'liberado' && pendingItemsDelComensal.length === 0) {
+      setError('Este comensal ya está liberado y no tiene ítems pendientes.')
       return
     }
     if (unassignedPending.length > 0) {
@@ -395,6 +406,34 @@ export default function MesaCompartidaPage() {
       }
     } finally {
       setPayLoading(false)
+    }
+  }
+
+  async function confirmCerrarCuenta() {
+    if (!cuenta?.id || !user?.uid) return
+    setCerrarLoading(true)
+    setError(null)
+    try {
+      const result = await cerrarCuentaReabierta({
+        cuentaId: cuenta.id,
+        cerradoPorUid: user.uid,
+      })
+      if (result.ok) {
+        setConfirmCerrarOpen(false)
+        setSelectedMesaId(null)
+        setSelectedComensalId(null)
+        setCuenta(null)
+        setComensales([])
+        setItems([])
+        setUnassignedPending([])
+        await loadMesas()
+      } else {
+        setError(result.error || 'No se pudo cerrar la cuenta.')
+      }
+    } catch (e) {
+      setError(e?.message || 'Error al cerrar la cuenta.')
+    } finally {
+      setCerrarLoading(false)
     }
   }
 
@@ -524,6 +563,26 @@ export default function MesaCompartidaPage() {
                       </div>
                     </div>
                   </div>
+
+                  {cuentaReabierta && (
+                    <div className="p-4 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3 bg-amber-50/50">
+                      <div className="flex items-center gap-2 text-amber-800">
+                        <LockClosedIcon className="w-5 h-5" />
+                        <span className="text-sm font-semibold">Cuenta reabierta</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmCerrarOpen(true)}
+                          className="btn border border-amber-600 text-amber-700 hover:bg-amber-100 gap-1"
+                          disabled={cerrarLoading}
+                        >
+                          <LockClosedIcon className="w-4 h-4" />
+                          Cerrar cuenta (sin más cambios)
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Comensales + items */}
@@ -560,16 +619,26 @@ export default function MesaCompartidaPage() {
                           <button
                             onClick={openAddProduct}
                             className="btn btn-ghost border border-gray-300 hover:bg-gray-50 gap-1"
-                            disabled={!selectedComensalId || selectedComensal?.estadoCliente === 'liberado'}
-                            title={selectedComensal?.estadoCliente === 'liberado' ? 'Comensal liberado' : 'Agregar producto'}
+                            disabled={!selectedComensalId || (selectedComensal?.estadoCliente === 'liberado' && !cuentaReabierta)}
+                            title={
+                              selectedComensal?.estadoCliente === 'liberado' && !cuentaReabierta
+                                ? 'Comensal liberado'
+                                : cuentaReabierta
+                                ? 'Agregar ítem (cuenta reabierta)'
+                                : 'Agregar producto'
+                            }
                           >
                             <PlusIcon className="w-4 h-4" />
-                            Agregar producto
+                            {cuentaReabierta ? 'Agregar ítem' : 'Agregar producto'}
                           </button>
                           <button
                             onClick={startPay}
                             className="btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
-                            disabled={!selectedComensalId || payLoading}
+                            disabled={
+                              !selectedComensalId ||
+                              payLoading ||
+                              (selectedComensal?.estadoCliente === 'liberado' && pendingItemsDelComensal.length === 0)
+                            }
                           >
                             Cierre parcial
                           </button>
@@ -730,6 +799,41 @@ export default function MesaCompartidaPage() {
                 Agregando...
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmar cerrar cuenta (reabierta) */}
+      {confirmCerrarOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex items-center gap-2">
+              <LockClosedIcon className="w-6 h-6 text-amber-600" />
+              <div className="font-bold text-gray-900">Cerrar cuenta</div>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-gray-700">
+                ¿Cerrar la cuenta sin más cambios? La cuenta quedará cerrada y dejará de aparecer en Mesa compartida.
+              </p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmCerrarOpen(false)}
+                  className="flex-1 py-2 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
+                  disabled={cerrarLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmCerrarCuenta}
+                  className="flex-1 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold disabled:opacity-50"
+                  disabled={cerrarLoading}
+                >
+                  {cerrarLoading ? 'Cerrando...' : 'Sí, cerrar cuenta'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

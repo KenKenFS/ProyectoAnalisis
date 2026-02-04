@@ -14,6 +14,7 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   TableCellsIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline'
 
 // Mapa de iconos para uso dinamico
@@ -31,6 +32,7 @@ const iconMap = {
   DocumentTextIcon,
   Cog6ToothIcon,
   TableCellsIcon,
+  LockClosedIcon,
 }
 
 export default function Sidebar({ links = [], appName = 'Sistema', extraContent = null }) {

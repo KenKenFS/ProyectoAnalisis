@@ -607,6 +607,8 @@ export async function payPartialForComensal({
       await updateDoc(doc(db, 'cuentas', cuentaId), {
         estadoCuenta: 'cerrada',
         closedAt: new Date(),
+        timestampCierre: new Date(),
+        closedByUid: cajeroUid ?? null,
         updatedAt: new Date(),
       });
       cuentaCerrada = true;
@@ -614,4 +616,158 @@ export async function payPartialForComensal({
   }
 
   return { pagoId, itemIds: items.map(i => i.id), subtotal, impuesto, total, cuentaCerrada };
+}
+
+// ==================== HU2: REAPERTURA DE CUENTA CERRADA ====================
+
+/** Límite en ms para permitir reapertura (15 minutos). */
+export const LIMITE_REAPERTURA_MS = 15 * 60 * 1000;
+
+/**
+ * Obtiene cuentas cerradas (para historial y reapertura por supervisor).
+ * Ordenadas por fecha de cierre descendente (orden en memoria para no requerir índice compuesto).
+ * @returns {Promise<array>} Lista de cuentas con estadoCuenta === 'cerrada'
+ */
+export async function getCuentasCerradas() {
+  const q = query(
+    collection(db, 'cuentas'),
+    where('estadoCuenta', '==', 'cerrada')
+  );
+  const snapshot = await getDocs(q);
+  const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  const toMs = (ts) => {
+    if (!ts) return 0;
+    return ts.toMillis ? ts.toMillis() : (ts instanceof Date ? ts.getTime() : new Date(ts).getTime());
+  };
+  list.sort((a, b) => toMs(b.timestampCierre ?? b.closedAt) - toMs(a.timestampCierre ?? a.closedAt));
+  return list;
+}
+
+/**
+ * Verifica si una cuenta cerrada puede ser reabierta (dentro del límite de 15 min).
+ * @param {object} cuenta - Documento cuenta con timestampCierre (Firestore Timestamp o Date)
+ * @returns {{ permitido: boolean, mensaje?: string }}
+ */
+export function puedeReabrirCuenta(cuenta) {
+  if (!cuenta || cuenta.estadoCuenta !== 'cerrada') {
+    return { permitido: false, mensaje: 'La cuenta no está cerrada o no existe.' };
+  }
+  const ts = cuenta.timestampCierre ?? cuenta.closedAt;
+  if (!ts) {
+    return { permitido: false, mensaje: 'No se encontró fecha de cierre.' };
+  }
+  const cierreMs = ts.toMillis ? ts.toMillis() : (ts instanceof Date ? ts.getTime() : new Date(ts).getTime());
+  const ahoraMs = Date.now();
+  if (ahoraMs - cierreMs > LIMITE_REAPERTURA_MS) {
+    return {
+      permitido: false,
+      mensaje: 'La cuenta no puede ser reabierta por superar el tiempo permitido (15 minutos).',
+    };
+  }
+  return { permitido: true };
+}
+
+/**
+ * Reabre una cuenta cerrada (solo si está dentro del límite de 15 min).
+ * Registra en auditoría y opcionalmente notifica al cajero original.
+ * @param {object} params
+ * @param {string} params.cuentaId
+ * @param {string} params.usuarioIdSupervisor - UID del supervisor que reabre
+ * @param {string} params.motivoReapertura - Motivo obligatorio
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function reabrirCuenta({ cuentaId, usuarioIdSupervisor, motivoReapertura }) {
+  if (!motivoReapertura || !String(motivoReapertura).trim()) {
+    return { ok: false, error: 'El motivo de reapertura es obligatorio.' };
+  }
+
+  const cuentaRef = doc(db, 'cuentas', cuentaId);
+  const cuentaSnap = await getDoc(cuentaRef);
+  if (!cuentaSnap.exists()) {
+    return { ok: false, error: 'Cuenta no encontrada.' };
+  }
+
+  const cuenta = { id: cuentaSnap.id, ...cuentaSnap.data() };
+  const validacion = puedeReabrirCuenta(cuenta);
+  if (!validacion.permitido) {
+    return { ok: false, error: validacion.mensaje };
+  }
+
+  const now = new Date();
+  const closedByUid = cuenta.closedByUid ?? null;
+
+  const batch = writeBatch(db);
+
+  // Actualizar cuenta: estado abierta, permiteModificar, datos de reapertura
+  batch.update(cuentaRef, {
+    estadoCuenta: 'abierta',
+    permiteModificar: true,
+    timestampReapertura: now,
+    motivoReapertura: String(motivoReapertura).trim(),
+    usuarioIdSupervisor,
+    reopenedAt: now,
+    updatedAt: now,
+  });
+
+  // Registro en auditoría
+  const auditoriaRef = doc(collection(db, 'auditoria'));
+  batch.set(auditoriaRef, {
+    accion: 'reapertura_cuenta',
+    cuentaId,
+    usuarioId: usuarioIdSupervisor,
+    motivoReapertura: String(motivoReapertura).trim(),
+    timestampReapertura: now,
+    usuarioIdCajeroOriginal: closedByUid,
+    createdAt: now,
+  });
+
+  // Notificación al cajero original (si existe)
+  if (closedByUid) {
+    const notifRef = doc(collection(db, 'notificaciones'));
+    batch.set(notifRef, {
+      tipo: 'cuenta_reabierta',
+      userId: closedByUid,
+      cuentaId,
+      mensaje: `La cuenta ${cuentaId} fue reabierta por un supervisor y queda disponible para revisión.`,
+      leido: false,
+      createdAt: now,
+    });
+  }
+
+  await batch.commit();
+  return { ok: true };
+}
+
+/**
+ * Vuelve a cerrar una cuenta que fue reabierta (sin nuevos pagos).
+ * Solo aplica si la cuenta está abierta y tiene reopenedAt o permiteModificar.
+ * @param {object} params
+ * @param {string} params.cuentaId
+ * @param {string} params.cerradoPorUid - UID de quien cierra (cajero/supervisor)
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function cerrarCuentaReabierta({ cuentaId, cerradoPorUid }) {
+  const cuentaRef = doc(db, 'cuentas', cuentaId);
+  const cuentaSnap = await getDoc(cuentaRef);
+  if (!cuentaSnap.exists()) {
+    return { ok: false, error: 'Cuenta no encontrada.' };
+  }
+
+  const cuenta = cuentaSnap.data();
+  if (cuenta.estadoCuenta !== 'abierta') {
+    return { ok: false, error: 'La cuenta no está abierta.' };
+  }
+  if (!cuenta.reopenedAt && !cuenta.permiteModificar) {
+    return { ok: false, error: 'Esta cuenta no fue reabierta; use el cierre normal por comensales.' };
+  }
+
+  const now = new Date();
+  await updateDoc(cuentaRef, {
+    estadoCuenta: 'cerrada',
+    closedAt: now,
+    timestampCierre: now,
+    closedByUid: cerradoPorUid ?? null,
+    updatedAt: now,
+  });
+  return { ok: true };
 }
