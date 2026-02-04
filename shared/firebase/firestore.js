@@ -296,14 +296,24 @@ export async function getMesasOrThrow() {
 }
 
 /**
- * Mesas que tienen cuenta activa (útil para Caja/Ventas).
+ * Mesas que tienen cuenta activa y abierta (útil para Caja/Ventas).
+ * Solo incluye mesas cuya cuenta existe en Firestore y estadoCuenta === 'abierta'.
+ * Excluye cuentas borradas o cerradas.
  * @returns {Promise<array>}
  */
 export async function getMesasConCuentaActivaOrThrow() {
   const mesas = await getMesasOrThrow();
-  return mesas
-    .filter(m => !!m.cuentaActivaId)
-    .sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0));
+  const conCuenta = mesas.filter(m => !!m.cuentaActivaId);
+
+  const conCuentaExistenteYAbierta = [];
+  for (const m of conCuenta) {
+    const cuenta = await getCuenta(m.cuentaActivaId);
+    if (!cuenta) continue; // cuenta borrada: no mostrar mesa
+    if (cuenta.estadoCuenta === 'cerrada') continue; // cuenta cerrada: no mostrar como pendiente
+    conCuentaExistenteYAbierta.push(m);
+  }
+
+  return conCuentaExistenteYAbierta.sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0));
 }
 
 /**
@@ -448,6 +458,59 @@ export async function assignCuentaItemToComensal({ cuentaId, itemId, comensalId,
 }
 
 /**
+ * Agrega un ítem (producto) a la cuenta asignado a un comensal.
+ * @param {string} cuentaId
+ * @param {string} productoId - ID del doc en colección productos
+ * @param {string} comensalId
+ * @param {string|null} createdByUid
+ * @returns {Promise<string>} itemId
+ */
+export async function addCuentaItem({ cuentaId, productoId, comensalId, createdByUid = null }) {
+  const productSnap = await getDoc(doc(db, 'productos', productoId));
+  if (!productSnap.exists()) {
+    const err = new Error('Producto no encontrado');
+    err.code = 'PRODUCT_NOT_FOUND';
+    throw err;
+  }
+  const p = productSnap.data();
+  const nombreSnapshot = p.nombre ?? p.name ?? productoId;
+  const precioUnitSnapshot = Number(p.precioUnit ?? p.precio ?? 0);
+
+  const docRef = await addDoc(collection(db, 'cuentas', cuentaId, 'items'), {
+    productoId,
+    nombreSnapshot,
+    precioUnitSnapshot,
+    cantidad: 1,
+    comensalId,
+    estadoItem: 'pendiente',
+    createdByUid,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  return docRef.id;
+}
+
+/**
+ * Elimina un ítem de la cuenta. Solo ítems pendientes (no pagados).
+ * @param {string} cuentaId
+ * @param {string} itemId
+ */
+export async function deleteCuentaItem({ cuentaId, itemId }) {
+  const itemSnap = await getDoc(doc(db, 'cuentas', cuentaId, 'items', itemId));
+  if (!itemSnap.exists()) {
+    const err = new Error('Ítem no encontrado');
+    err.code = 'ITEM_NOT_FOUND';
+    throw err;
+  }
+  if (itemSnap.data().estadoItem === 'pagado') {
+    const err = new Error('No se puede eliminar un ítem ya pagado.');
+    err.code = 'ITEM_ALREADY_PAID';
+    throw err;
+  }
+  await deleteDoc(doc(db, 'cuentas', cuentaId, 'items', itemId));
+}
+
+/**
  * Cierre parcial por comensal:
  * - valida que no existan ítems pendientes sin asignar
  * - marca ítems del comensal como pagados
@@ -526,6 +589,8 @@ export async function payPartialForComensal({
 
   await batch.commit();
 
+  let cuentaCerrada = false;
+
   // Liberar comensal si no quedan pendientes
   const pendingAfter = (await getCuentaItemsByComensal(cuentaId, comensalId)).filter(i => i.estadoItem === 'pendiente');
   if (pendingAfter.length === 0) {
@@ -534,7 +599,19 @@ export async function payPartialForComensal({
       { estadoCliente: 'liberado', updatedAt: new Date() },
       { merge: true }
     );
+
+    // Si todos los comensales están liberados, marcar cuenta como cerrada
+    const comensales = await getCuentaComensales(cuentaId);
+    const todosLiberados = comensales.length > 0 && comensales.every(c => c.estadoCliente === 'liberado');
+    if (todosLiberados) {
+      await updateDoc(doc(db, 'cuentas', cuentaId), {
+        estadoCuenta: 'cerrada',
+        closedAt: new Date(),
+        updatedAt: new Date(),
+      });
+      cuentaCerrada = true;
+    }
   }
 
-  return { pagoId, itemIds: items.map(i => i.id), subtotal, impuesto, total };
+  return { pagoId, itemIds: items.map(i => i.id), subtotal, impuesto, total, cuentaCerrada };
 }

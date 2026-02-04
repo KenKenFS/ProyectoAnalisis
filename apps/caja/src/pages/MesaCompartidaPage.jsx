@@ -7,6 +7,9 @@ import {
   CreditCardIcon,
   BanknotesIcon,
   ArrowPathIcon,
+  PlusIcon,
+  TrashIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline'
 
 import { useAuth } from '@shared/firebase/AuthContext'
@@ -16,7 +19,10 @@ import {
   getCuentaComensales,
   getCuentaItems,
   getCuentaUnassignedPendingItems,
+  getProductos,
   assignCuentaItemToComensal,
+  addCuentaItem,
+  deleteCuentaItem,
   payPartialForComensal,
 } from '@shared/firebase/firestore'
 
@@ -156,6 +162,11 @@ export default function MesaCompartidaPage() {
   const [payLoading, setPayLoading] = useState(false)
   const [payError, setPayError] = useState(null)
 
+  const [addProductOpen, setAddProductOpen] = useState(false)
+  const [productos, setProductos] = useState([])
+  const [addingProduct, setAddingProduct] = useState(false)
+  const [deletingItemId, setDeletingItemId] = useState(null)
+
   const mesasConCuenta = useMemo(() => {
     return [...mesas]
       .filter(m => !!m.cuentaActivaId)
@@ -270,6 +281,59 @@ export default function MesaCompartidaPage() {
     }
   }
 
+  async function openAddProduct() {
+    setError(null)
+    setAddProductOpen(true)
+    if (productos.length === 0) {
+      try {
+        const list = await getProductos()
+        setProductos(list)
+      } catch (e) {
+        setError(e?.message || 'Error al cargar productos')
+      }
+    }
+  }
+
+  async function addProductToComensal(productoId) {
+    if (!cuenta?.id || !selectedComensalId) return
+    if (selectedComensal?.estadoCliente === 'liberado') {
+      setError('Este comensal está liberado y no se le pueden agregar ítems.')
+      return
+    }
+    setAddingProduct(true)
+    setError(null)
+    try {
+      await addCuentaItem({
+        cuentaId: cuenta.id,
+        productoId,
+        comensalId: selectedComensalId,
+        createdByUid: user?.uid || null,
+      })
+      setAddProductOpen(false)
+      await refresh()
+    } catch (e) {
+      if (e?.code === 'PRODUCT_NOT_FOUND') setError('Producto no encontrado.')
+      else setError(e?.message || 'Error al agregar producto')
+    } finally {
+      setAddingProduct(false)
+    }
+  }
+
+  async function removeItem(itemId) {
+    if (!cuenta?.id) return
+    setDeletingItemId(itemId)
+    setError(null)
+    try {
+      await deleteCuentaItem({ cuentaId: cuenta.id, itemId })
+      await refresh()
+    } catch (e) {
+      if (e?.code === 'ITEM_ALREADY_PAID') setError('No se puede eliminar un ítem ya pagado.')
+      else setError(e?.message || 'Error al eliminar ítem')
+    } finally {
+      setDeletingItemId(null)
+    }
+  }
+
   async function startPay() {
     setPayError(null)
     setError(null)
@@ -301,7 +365,7 @@ export default function MesaCompartidaPage() {
     setPayLoading(true)
     setPayError(null)
     try {
-      await payPartialForComensal({
+      const result = await payPartialForComensal({
         cuentaId: cuenta.id,
         mesaId: selectedMesaId,
         comensalId: selectedComensalId,
@@ -310,7 +374,17 @@ export default function MesaCompartidaPage() {
         impuestoRate: 0.13,
       })
       setPayOpen(false)
-      await refresh()
+      if (result.cuentaCerrada) {
+        setSelectedMesaId(null)
+        setSelectedComensalId(null)
+        setCuenta(null)
+        setComensales([])
+        setItems([])
+        setUnassignedPending([])
+        await loadMesas()
+      } else {
+        await refresh()
+      }
     } catch (e) {
       if (e?.code === 'UNASSIGNED_ITEMS') {
         setPayError('Hay ítems sin asignar. Asigna primero para poder cerrar parcialmente.')
@@ -480,15 +554,26 @@ export default function MesaCompartidaPage() {
 
                   <div className="lg:col-span-2 space-y-4">
                     <div className="card bg-white border border-gray-200">
-                      <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                      <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
                         <div className="font-bold text-gray-900">Ítems del comensal</div>
-                        <button
-                          onClick={startPay}
-                          className="btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
-                          disabled={!selectedComensalId || payLoading}
-                        >
-                          Cierre parcial
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={openAddProduct}
+                            className="btn btn-ghost border border-gray-300 hover:bg-gray-50 gap-1"
+                            disabled={!selectedComensalId || selectedComensal?.estadoCliente === 'liberado'}
+                            title={selectedComensal?.estadoCliente === 'liberado' ? 'Comensal liberado' : 'Agregar producto'}
+                          >
+                            <PlusIcon className="w-4 h-4" />
+                            Agregar producto
+                          </button>
+                          <button
+                            onClick={startPay}
+                            className="btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
+                            disabled={!selectedComensalId || payLoading}
+                          >
+                            Cierre parcial
+                          </button>
+                        </div>
                       </div>
 
                       {!selectedComensalId ? (
@@ -515,14 +600,29 @@ export default function MesaCompartidaPage() {
                               <div className="text-sm text-gray-500">Este comensal no tiene ítems asignados.</div>
                             ) : (
                               itemsDelComensal.map(i => (
-                                <div key={i.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                  <div className="min-w-0">
+                                <div key={i.id} className="flex items-center justify-between gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                  <div className="min-w-0 flex-1">
                                     <div className="font-semibold text-gray-900 truncate">{i.nombreSnapshot || i.productoId || i.id}</div>
                                     <div className="text-xs text-gray-500 font-mono">{i.id}</div>
                                   </div>
-                                  <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-2">
                                     <div className="text-sm font-bold text-gray-900">{moneyCRC(Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1))}</div>
                                     <ItemEstadoBadge estado={i.estadoItem} />
+                                    {i.estadoItem === 'pendiente' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeItem(i.id)}
+                                        className="p-1.5 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                        disabled={deletingItemId === i.id}
+                                        title="Eliminar ítem"
+                                      >
+                                        {deletingItemId === i.id ? (
+                                          <span className="loading loading-spinner loading-xs" />
+                                        ) : (
+                                          <TrashIcon className="w-4 h-4" />
+                                        )}
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               ))
@@ -590,6 +690,49 @@ export default function MesaCompartidaPage() {
         resumen={resumenPago}
         error={payError}
       />
+
+      {/* Modal Agregar producto */}
+      {addProductOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="font-bold text-gray-900">Agregar producto al comensal</div>
+              <button
+                type="button"
+                onClick={() => setAddProductOpen(false)}
+                className="p-1 rounded hover:bg-gray-100"
+              >
+                <XMarkIcon className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {productos.length === 0 ? (
+                <div className="text-sm text-gray-500">Cargando productos...</div>
+              ) : (
+                <div className="space-y-2">
+                  {productos.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => addProductToComensal(p.id)}
+                      disabled={addingProduct}
+                      className="w-full text-left p-3 rounded-lg border border-gray-200 hover:border-cyan-400 hover:bg-cyan-50 transition flex items-center justify-between gap-2"
+                    >
+                      <span className="font-medium text-gray-900">{p.nombre ?? p.name ?? p.id}</span>
+                      <span className="text-sm font-semibold text-cyan-600">{moneyCRC(p.precioUnit ?? p.precio ?? 0)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {addingProduct && (
+              <div className="p-2 border-t border-gray-200 text-center text-sm text-gray-500">
+                Agregando...
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
