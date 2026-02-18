@@ -1,4 +1,4 @@
-import { auth, db } from './firebase';
+import { auth, secondaryAuth, db } from './firebase';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -7,29 +7,59 @@ import {
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, setDoc, getDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+
+const VALID_ROLES = ['Admin', 'Cajero', 'Mesero', 'Cocina'];
 
 export async function registerUserWithRole(email, password, role, additionalData = {}) {
-  try {
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
-
-    await setDoc(doc(db, 'users', user.uid), {
-      uid: user.uid,
-      email: user.email,
-      role: role,
-      name: additionalData.name || email.split('@')[0],
-      phone: additionalData.phone || '',
-      status: 'active',
-      createdAt: new Date(),
-      ...additionalData,
-    });
-
-    return user;
-  } catch (error) {
-    console.error('Error al registrar usuario:', error.message);
-    throw error;
+  if (!email || !password || !role || !additionalData.name) {
+    throw new Error('Todos los campos obligatorios deben estar completos.');
   }
+
+  if (!VALID_ROLES.includes(role)) {
+    throw new Error(`Rol no valido. Los roles permitidos son: ${VALID_ROLES.join(', ')}`);
+  }
+
+  if (password.length < 8) {
+    throw new Error('La contrasena debe tener al menos 8 caracteres.');
+  }
+  if (!/[A-Z]/.test(password)) {
+    throw new Error('La contrasena debe incluir al menos una letra mayuscula.');
+  }
+  if (!/[0-9]/.test(password)) {
+    throw new Error('La contrasena debe incluir al menos un numero.');
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    throw new Error('La contrasena debe incluir al menos un caracter especial.');
+  }
+
+  const dupeQuery = query(collection(db, 'users'), where('email', '==', email));
+  const dupeSnap = await getDocs(dupeQuery);
+  if (!dupeSnap.empty) {
+    throw new Error('Ya existe un usuario registrado con ese correo electronico.');
+  }
+
+  const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+  const user = userCredential.user;
+
+  await signOut(secondaryAuth);
+
+  await setDoc(doc(db, 'users', user.uid), {
+    uid: user.uid,
+    email: user.email,
+    role,
+    name: additionalData.name,
+    phone: additionalData.phone || '',
+    status: 'active',
+    createdAt: new Date(),
+  });
+
+  return user;
+}
+
+export async function getAllUsers() {
+  const snap = await getDocs(collection(db, 'users'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 export async function loginUser(email, password) {
