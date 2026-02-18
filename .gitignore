@@ -30,11 +30,18 @@ build
 .venv-*
 venv
 venv-*
+__pycache__
+*.pyc
 
-# Firebase Admin SDK credentials
+# Firebase
 *-firebase-adminsdk-*.json
 firebase-adminsdk*.json
 serviceAccountKey.json
+*-credentials.json
+*.p12
+*.pem
+.cursor/plans/
+.cursor/rules/
 
 # Editor
 .vscode/*
@@ -50,5 +57,4 @@ serviceAccountKey.json
 # OS
 .DS_Store
 Thumbs.db
-/scripts
-/docs
+desktop.ini
