@@ -49,21 +49,24 @@ export default function LoginForm({
         }, 500)
       }
     } catch (err) {
-      const errorMsg = err.message || 'Error en el login'
-      
-      if (errorMsg.includes('user-not-found')) {
+      const code = err.code || ''
+      const msg = err.message || ''
+
+      if (code === 'ACCOUNT_INACTIVE') {
+        setError('Cuenta inactiva. Contacta al administrador.')
+      } else if (code === 'auth/too-many-requests' || msg.includes('too-many-requests')) {
+        setError('Demasiados intentos fallidos. Tu cuenta fue bloqueada temporalmente. Intenta de nuevo en unos minutos.')
+      } else if (code === 'auth/invalid-credential' || msg.includes('invalid-credential')) {
+        setError('Credenciales incorrectas. Verifica tu email y contrasena.')
+      } else if (msg.includes('user-not-found')) {
         setError('Usuario no encontrado. Verifica tu email.')
-      } else if (errorMsg.includes('wrong-password')) {
+      } else if (msg.includes('wrong-password')) {
         setError('Contrasena incorrecta.')
-      } else if (errorMsg.includes('invalid-email')) {
+      } else if (msg.includes('invalid-email')) {
         setError('Email invalido.')
-      } else if (errorMsg.includes('too-many-requests')) {
-        setError('Demasiados intentos. Intenta mas tarde.')
       } else {
-        setError(errorMsg)
+        setError(msg)
       }
-      
-      console.error('Login error:', err)
     } finally {
       setLoading(false)
     }
@@ -95,9 +98,12 @@ export default function LoginForm({
         }, 500)
       }
     } catch (err) {
-      const errorMsg = err.message || 'Error en el login con Google'
-      setError(errorMsg)
-      console.error('Google login error:', err)
+      const code = err.code || ''
+      if (code === 'ACCOUNT_INACTIVE') {
+        setError('Cuenta inactiva. Contacta al administrador.')
+      } else {
+        setError(err.message || 'Error en el login con Google')
+      }
     } finally {
       setLoading(false)
     }

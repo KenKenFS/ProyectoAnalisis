@@ -27,10 +27,25 @@ function formatFecha(timestamp) {
   })
 }
 
-function minutosDesdeCierre(timestamp) {
+function tiempoRelativo(timestamp) {
   if (!timestamp) return null
   const date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp)
-  return Math.floor((Date.now() - date.getTime()) / 60000)
+  const diffMs = Date.now() - date.getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'ahora'
+  if (mins < 60) return `hace ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `hace ${hrs}h`
+  const dias = Math.floor(hrs / 24)
+  if (dias < 30) return `hace ${dias}d`
+  const meses = Math.floor(dias / 30)
+  if (meses < 12) return `hace ${meses} mes${meses > 1 ? 'es' : ''}`
+  const anos = Math.floor(dias / 365)
+  return `hace ${anos} año${anos > 1 ? 's' : ''}`
+}
+
+function cuentaLabel(index) {
+  return `CTA-${String(index + 1).padStart(3, '0')}`
 }
 
 export default function CuentasCerradasPage() {
@@ -146,8 +161,9 @@ export default function CuentasCerradasPage() {
 
   const limiteMinutos = Math.floor(LIMITE_REAPERTURA_MS / 60000)
   const selectedMesa = selectedCuenta ? mesasMap[selectedCuenta.mesaId] : null
-  const minutosSelected = selectedCuenta ? minutosDesdeCierre(selectedCuenta.timestampCierre ?? selectedCuenta.closedAt) : null
+  const tiempoSelected = selectedCuenta ? tiempoRelativo(selectedCuenta.timestampCierre ?? selectedCuenta.closedAt) : null
   const puedeReabrir = selectedCuenta ? puedeReabrirCuenta(selectedCuenta).permitido : false
+  const selectedIdx = selectedCuenta ? cuentas.findIndex(c => c.id === selectedCuenta.id) : -1
 
   return (
     <div className="space-y-6 pb-4">
@@ -197,9 +213,9 @@ export default function CuentasCerradasPage() {
               {cuentas.length === 0 ? (
                 <div className="text-sm text-gray-500">No hay cuentas cerradas recientes.</div>
               ) : (
-                cuentas.map(cuenta => {
+                cuentas.map((cuenta, idx) => {
                   const mesa = mesasMap[cuenta.mesaId]
-                  const minutos = minutosDesdeCierre(cuenta.timestampCierre ?? cuenta.closedAt)
+                  const tiempo = tiempoRelativo(cuenta.timestampCierre ?? cuenta.closedAt)
                   return (
                     <button
                       key={cuenta.id}
@@ -209,13 +225,13 @@ export default function CuentasCerradasPage() {
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="font-semibold text-gray-900">Mesa {mesa?.numero ?? cuenta.mesaId ?? '—'}</div>
+                        <div className="font-semibold text-gray-900">Mesa {mesa?.numero ?? '—'}</div>
                         <span className="text-xs text-gray-500">
-                          {minutos != null ? `hace ${minutos} min` : 'cerrada'}
+                          {tiempo ?? 'cerrada'}
                         </span>
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        Cuenta: <span className="font-mono">{cuenta.id}</span>
+                        {cuentaLabel(idx)}
                       </div>
                     </button>
                   )
@@ -235,7 +251,7 @@ export default function CuentasCerradasPage() {
                 <div className="card bg-white border border-gray-200">
                   <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                     <div className="font-bold text-gray-900">Cuenta</div>
-                    <div className="text-xs text-gray-500 font-mono">{selectedCuenta.id}</div>
+                    <div className="text-xs text-gray-500">{selectedIdx >= 0 ? cuentaLabel(selectedIdx) : ''}</div>
                   </div>
 
                   <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -258,9 +274,9 @@ export default function CuentasCerradasPage() {
                     <div className="text-xs text-gray-500 flex items-center gap-1">
                       <ClockIcon className="w-4 h-4" />
                       Cerrada {formatFecha(selectedCuenta.timestampCierre ?? selectedCuenta.closedAt)}
-                      {minutosSelected != null && (
+                      {tiempoSelected && (
                         <span className={puedeReabrir ? 'text-green-600' : 'text-red-600'}>
-                          (hace {minutosSelected} min)
+                          ({tiempoSelected})
                         </span>
                       )}
                     </div>
@@ -300,12 +316,12 @@ export default function CuentasCerradasPage() {
                     ) : comensales.length === 0 ? (
                       <div className="text-sm text-gray-500">Sin comensales.</div>
                     ) : (
-                      comensales.map(c => (
+                      comensales.map((c, idx) => (
                         <div
                           key={c.id}
                           className="w-full text-left p-3 rounded-lg border border-gray-200 bg-gray-50"
                         >
-                          <div className="font-semibold text-gray-900">{c.alias || c.id}</div>
+                          <div className="font-semibold text-gray-900">{c.alias || `Comensal ${idx + 1}`}</div>
                           <div className="text-xs text-gray-500 mt-1">{c.estadoCliente || '—'}</div>
                         </div>
                       ))
@@ -330,7 +346,8 @@ export default function CuentasCerradasPage() {
             </div>
             <div className="p-5 space-y-4">
               <p className="text-gray-700">
-                Cuenta <strong>{modalCuenta.id}</strong> (Mesa {mesasMap[modalCuenta.mesaId]?.numero ?? modalCuenta.mesaId}).
+                {(() => { const i = cuentas.findIndex(c => c.id === modalCuenta.id); return i >= 0 ? cuentaLabel(i) : 'Cuenta'; })()}
+                {' '}(Mesa {mesasMap[modalCuenta.mesaId]?.numero ?? '—'}).
               </p>
               <div>
                 <label className="block font-semibold text-gray-800 mb-1">Motivo de reapertura *</label>

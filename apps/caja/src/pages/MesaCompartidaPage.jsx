@@ -33,6 +33,28 @@ function moneyCRC(value) {
   return `₡${n.toLocaleString()}`
 }
 
+// Genera etiqueta secuencial a partir de posicion en lista: "CTA-001", "CTA-002", etc.
+function cuentaLabel(index) {
+  return `CTA-${String(index + 1).padStart(3, '0')}`
+}
+
+function tiempoRelativo(timestamp) {
+  if (!timestamp) return null
+  const date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp)
+  const diffMs = Date.now() - date.getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'ahora'
+  if (mins < 60) return `hace ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `hace ${hrs}h`
+  const dias = Math.floor(hrs / 24)
+  if (dias < 30) return `hace ${dias}d`
+  const meses = Math.floor(dias / 30)
+  if (meses < 12) return `hace ${meses} mes${meses > 1 ? 'es' : ''}`
+  const anos = Math.floor(dias / 365)
+  return `hace ${anos} año${anos > 1 ? 's' : ''}`
+}
+
 function ItemEstadoBadge({ estado }) {
   const cfg =
     estado === 'pagado'
@@ -511,7 +533,7 @@ export default function MesaCompartidaPage() {
               {mesasConCuenta.length === 0 ? (
                 <div className="text-sm text-gray-500">No hay mesas con cuenta activa.</div>
               ) : (
-                mesasConCuenta.map(m => (
+                mesasConCuenta.map((m, idx) => (
                   <button
                     key={m.id}
                     onClick={() => selectMesa(m)}
@@ -524,7 +546,7 @@ export default function MesaCompartidaPage() {
                       <span className="text-xs text-gray-500">{m.estado}</span>
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
-                      Cuenta: <span className="font-mono">{m.cuentaActivaId}</span>
+                      {cuentaLabel(idx)}
                     </div>
                   </button>
                 ))
@@ -543,7 +565,9 @@ export default function MesaCompartidaPage() {
                 <div className="card bg-white border border-gray-200">
                   <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                     <div className="font-bold text-gray-900">Cuenta</div>
-                    <div className="text-xs text-gray-500 font-mono">{cuenta.id}</div>
+                    <div className="text-xs text-gray-500">
+                      {cuentaLabel(mesasConCuenta.findIndex(m => m.cuentaActivaId === cuenta.id))}
+                    </div>
                   </div>
 
                   <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -593,7 +617,7 @@ export default function MesaCompartidaPage() {
                       <div className="font-bold text-gray-900">Comensales</div>
                     </div>
                     <div className="p-3 space-y-2 max-h-[55vh] overflow-y-auto">
-                      {comensales.map(c => (
+                      {comensales.map((c, idx) => (
                         <button
                           key={c.id}
                           onClick={() => setSelectedComensalId(c.id)}
@@ -602,10 +626,9 @@ export default function MesaCompartidaPage() {
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <div className="font-semibold text-gray-900">{c.alias || c.id}</div>
+                            <div className="font-semibold text-gray-900">{c.alias || `Comensal ${idx + 1}`}</div>
                             <ClienteEstadoBadge estado={c.estadoCliente} />
                           </div>
-                          <div className="text-xs text-gray-500 mt-1 font-mono">{c.id}</div>
                         </button>
                       ))}
                     </div>
@@ -671,8 +694,7 @@ export default function MesaCompartidaPage() {
                               itemsDelComensal.map(i => (
                                 <div key={i.id} className="flex items-center justify-between gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
                                   <div className="min-w-0 flex-1">
-                                    <div className="font-semibold text-gray-900 truncate">{i.nombreSnapshot || i.productoId || i.id}</div>
-                                    <div className="text-xs text-gray-500 font-mono">{i.id}</div>
+                                    <div className="font-semibold text-gray-900 truncate">{i.nombreSnapshot || i.productoId || 'Item'}</div>
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <div className="text-sm font-bold text-gray-900">{moneyCRC(Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1))}</div>
@@ -722,8 +744,7 @@ export default function MesaCompartidaPage() {
                           unassignedPending.map(i => (
                             <div key={i.id} className="flex items-center justify-between p-3 bg-amber-50 rounded-lg border border-amber-200">
                               <div className="min-w-0">
-                                <div className="font-semibold text-gray-900 truncate">{i.nombreSnapshot || i.productoId || i.id}</div>
-                                <div className="text-xs text-gray-600 font-mono">{i.id}</div>
+                                <div className="font-semibold text-gray-900 truncate">{i.nombreSnapshot || i.productoId || 'Item'}</div>
                               </div>
                               <div className="flex items-center gap-2">
                                 <div className="text-sm font-bold text-gray-900">

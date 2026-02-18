@@ -33,13 +33,21 @@ export async function registerUserWithRole(email, password, role, additionalData
 }
 
 export async function loginUser(email, password) {
-  try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    return userCredential.user;
-  } catch (error) {
-    console.error('Error al logearse:', error.message);
-    throw error;
+  const userCredential = await signInWithEmailAndPassword(auth, email, password);
+  const user = userCredential.user;
+
+  const userDoc = await getDoc(doc(db, 'users', user.uid));
+  if (userDoc.exists()) {
+    const status = (userDoc.data().status || '').toLowerCase();
+    if (status !== 'active' && status !== 'activo') {
+      await signOut(auth);
+      const err = new Error('Cuenta inactiva. Contacta al administrador.');
+      err.code = 'ACCOUNT_INACTIVE';
+      throw err;
+    }
   }
+
+  return user;
 }
 
 export async function loginWithGoogle() {
@@ -63,6 +71,13 @@ export async function loginWithGoogle() {
       });
       await new Promise(resolve => setTimeout(resolve, 200));
     } else {
+      const status = (userDoc.data().status || '').toLowerCase();
+      if (status !== 'active' && status !== 'activo') {
+        await signOut(auth);
+        const err = new Error('Cuenta inactiva. Contacta al administrador.');
+        err.code = 'ACCOUNT_INACTIVE';
+        throw err;
+      }
       await setDoc(userDocRef, { lastLogin: new Date() }, { merge: true });
     }
     return user;

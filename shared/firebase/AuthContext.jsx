@@ -39,6 +39,7 @@ export function AuthProvider({ children }) {
           localStorage.removeItem('role');
           localStorage.removeItem('userName');
           localStorage.removeItem('uid');
+          localStorage.removeItem('userEmail');
         }
         
         setError(null);
