@@ -8,8 +8,17 @@ import {
   XMarkIcon,
   EyeIcon,
   EyeSlashIcon,
+  KeyIcon,
+  EnvelopeIcon,
 } from '@heroicons/react/24/outline'
-import { getAllUsers, registerUserWithRole, updateUserRole, VALID_ROLES } from '@shared/firebase/auth'
+import {
+  getAllUsers,
+  registerUserWithRole,
+  updateUserRole,
+  updateUserData,
+  sendUserPasswordReset,
+  VALID_ROLES,
+} from '@shared/firebase/auth'
 import { useAuth } from '@shared/firebase/AuthContext'
 
 const roleConfig = {
@@ -39,6 +48,7 @@ export default function Users() {
   const [formError, setFormError] = useState('')
   const [formSuccess, setFormSuccess] = useState('')
 
+  // Formulario de creacion
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -47,13 +57,18 @@ export default function Users() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
-  // Estado para modal de cambio de rol
-  const [roleModal, setRoleModal] = useState(null)
-  const [newRoleSelection, setNewRoleSelection] = useState('')
-  const [roleConfirm, setRoleConfirm] = useState(false)
-  const [roleChanging, setRoleChanging] = useState(false)
-  const [roleError, setRoleError] = useState('')
-  const [roleSuccess, setRoleSuccess] = useState('')
+  // Modal de edicion
+  const [editUser, setEditUser] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [editPhone, setEditPhone] = useState('')
+  const [editRole, setEditRole] = useState('')
+  const [editStatus, setEditStatus] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+  const [editSuccess, setEditSuccess] = useState('')
+  const [roleConfirmStep, setRoleConfirmStep] = useState(false)
+  const [resetSending, setResetSending] = useState(false)
+  const [resetMsg, setResetMsg] = useState('')
 
   const pwErrors = validatePassword(password)
 
@@ -76,33 +91,26 @@ export default function Users() {
 
   useEffect(() => { loadUsers() }, [loadUsers])
 
+  // --- Crear usuario ---
+
   const resetForm = () => {
-    setName('')
-    setEmail('')
-    setPhone('')
-    setRole('Mesero')
-    setPassword('')
-    setConfirmPassword('')
-    setFormError('')
-    setFormSuccess('')
-    setShowPassword(false)
+    setName(''); setEmail(''); setPhone(''); setRole('Mesero')
+    setPassword(''); setConfirmPassword('')
+    setFormError(''); setFormSuccess(''); setShowPassword(false)
   }
 
   const handleCreate = async (e) => {
     e.preventDefault()
-    setFormError('')
-    setFormSuccess('')
+    setFormError(''); setFormSuccess('')
 
     if (!name.trim() || !email.trim() || !password || !role) {
       setFormError('Completa todos los campos obligatorios.')
       return
     }
-
     if (pwErrors.length > 0) {
       setFormError('La contrasena no cumple los requisitos.')
       return
     }
-
     if (password !== confirmPassword) {
       setFormError('Las contrasenas no coinciden.')
       return
@@ -128,38 +136,97 @@ export default function Users() {
     }
   }
 
-  const openRoleModal = (user) => {
-    setRoleModal(user)
-    setNewRoleSelection(user.role)
-    setRoleConfirm(false)
-    setRoleError('')
-    setRoleSuccess('')
+  // --- Editar usuario ---
+
+  const openEdit = (user) => {
+    setEditUser(user)
+    setEditName(user.name || '')
+    setEditPhone(user.phone || '')
+    setEditRole(user.role || '')
+    const s = (user.status || '').toLowerCase()
+    setEditStatus(s === 'active' || s === 'activo' ? 'active' : 'inactive')
+    setEditError(''); setEditSuccess('')
+    setRoleConfirmStep(false)
+    setResetMsg('')
   }
 
-  const closeRoleModal = () => {
-    setRoleModal(null)
-    setNewRoleSelection('')
-    setRoleConfirm(false)
-    setRoleError('')
-    setRoleSuccess('')
+  const closeEdit = () => {
+    setEditUser(null)
+    setEditError(''); setEditSuccess('')
+    setRoleConfirmStep(false)
+    setResetMsg('')
   }
 
-  const handleRoleChange = async () => {
-    if (!roleModal) return
-    setRoleChanging(true)
-    setRoleError('')
+  const handleSaveEdit = async () => {
+    setEditError(''); setEditSuccess('')
+
+    if (!editName.trim()) {
+      setEditError('El nombre es obligatorio.')
+      return
+    }
+
+    const roleChanged = editRole !== editUser.role
+    if (roleChanged && !roleConfirmStep) {
+      setRoleConfirmStep(true)
+      return
+    }
+
+    setEditSaving(true)
     try {
-      await updateUserRole(roleModal.id, newRoleSelection, currentAdmin?.uid)
-      setRoleSuccess(`Rol actualizado a ${roleConfig[newRoleSelection]?.label || newRoleSelection}.`)
+      const dataChanges = {
+        name: editName.trim(),
+        phone: editPhone.trim(),
+        status: editStatus,
+      }
+      let saved = false
+
+      const prevStatus = (editUser.status || '').toLowerCase()
+      const normalizedPrev = (prevStatus === 'active' || prevStatus === 'activo') ? 'active' : 'inactive'
+      const hasDataChanges = dataChanges.name !== editUser.name
+        || dataChanges.phone !== (editUser.phone || '')
+        || dataChanges.status !== normalizedPrev
+
+      if (hasDataChanges) {
+        await updateUserData(editUser.id, dataChanges, currentAdmin?.uid)
+        saved = true
+      }
+
+      if (roleChanged) {
+        await updateUserRole(editUser.id, editRole, currentAdmin?.uid)
+        saved = true
+      }
+
+      if (!saved) {
+        setEditError('No se detectaron cambios.')
+        return
+      }
+
+      setEditSuccess('Usuario actualizado correctamente.')
       await loadUsers()
-      setTimeout(closeRoleModal, 1200)
+      setTimeout(closeEdit, 1200)
     } catch (err) {
-      setRoleError(err.message)
-      setRoleConfirm(false)
+      setEditError(err.message)
+      setRoleConfirmStep(false)
     } finally {
-      setRoleChanging(false)
+      setEditSaving(false)
     }
   }
+
+  const handlePasswordReset = async () => {
+    if (!editUser?.email) return
+    setResetSending(true)
+    setResetMsg('')
+    try {
+      await sendUserPasswordReset(editUser.email)
+      setResetMsg('Correo de restablecimiento enviado.')
+    } catch (err) {
+      setResetMsg(err.message || 'Error al enviar correo.')
+    } finally {
+      setResetSending(false)
+    }
+  }
+
+  // --- Stats ---
 
   const activeUsers = users.filter(u => {
     const s = (u.status || '').toLowerCase()
@@ -180,10 +247,7 @@ export default function Users() {
           </p>
         </div>
         <button
-          onClick={() => {
-            if (showForm) resetForm()
-            setShowForm(!showForm)
-          }}
+          onClick={() => { if (showForm) resetForm(); setShowForm(!showForm) }}
           className="btn btn-primary gap-2"
         >
           {showForm ? <XMarkIcon className="w-5 h-5" /> : <PlusIcon className="w-5 h-5" />}
@@ -233,78 +297,43 @@ export default function Users() {
         <div className="bg-white border border-gray-100 rounded-lg p-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">Crear nuevo usuario</h2>
 
-          {formError && (
-            <div className="alert alert-error mb-4 text-sm">{formError}</div>
-          )}
-          {formSuccess && (
-            <div className="alert alert-success mb-4 text-sm">{formSuccess}</div>
-          )}
+          {formError && <div className="alert alert-error mb-4 text-sm">{formError}</div>}
+          {formSuccess && <div className="alert alert-success mb-4 text-sm">{formSuccess}</div>}
 
           <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="form-control">
               <label className="label"><span className="label-text">Nombre completo *</span></label>
-              <input
-                type="text"
-                className="input input-bordered w-full"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="Nombre del empleado"
-              />
+              <input type="text" className="input input-bordered w-full" value={name}
+                onChange={e => setName(e.target.value)} placeholder="Nombre del empleado" />
             </div>
-
             <div className="form-control">
               <label className="label"><span className="label-text">Correo electronico *</span></label>
-              <input
-                type="email"
-                className="input input-bordered w-full"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="correo@ejemplo.com"
-              />
+              <input type="email" className="input input-bordered w-full" value={email}
+                onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" />
             </div>
-
             <div className="form-control">
               <label className="label"><span className="label-text">Telefono</span></label>
-              <input
-                type="tel"
-                className="input input-bordered w-full"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-                placeholder="Opcional"
-              />
+              <input type="tel" className="input input-bordered w-full" value={phone}
+                onChange={e => setPhone(e.target.value)} placeholder="Opcional" />
             </div>
-
             <div className="form-control">
               <label className="label"><span className="label-text">Rol *</span></label>
-              <select
-                className="select select-bordered w-full"
-                value={role}
-                onChange={e => setRole(e.target.value)}
-              >
-                {ROLES.map(r => (
-                  <option key={r} value={r}>{roleConfig[r]?.label || r}</option>
-                ))}
+              <select className="select select-bordered w-full" value={role}
+                onChange={e => setRole(e.target.value)}>
+                {ROLES.map(r => <option key={r} value={r}>{roleConfig[r]?.label || r}</option>)}
               </select>
             </div>
-
             <div className="form-control">
               <label className="label"><span className="label-text">Contrasena *</span></label>
               <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="input input-bordered w-full pr-10"
-                  value={password}
+                <input type={showPassword ? 'text' : 'password'}
+                  className="input input-bordered w-full pr-10" value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Min 8, mayuscula, numero, especial"
-                />
-                <button
-                  type="button"
+                  placeholder="Min 8, mayuscula, numero, especial" />
+                <button type="button"
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword
-                    ? <EyeSlashIcon className="w-5 h-5" />
-                    : <EyeIcon className="w-5 h-5" />}
+                  onClick={() => setShowPassword(!showPassword)}>
+                  {showPassword ? <EyeSlashIcon className="w-5 h-5" /> : <EyeIcon className="w-5 h-5" />}
                 </button>
               </div>
               {password && pwErrors.length > 0 && (
@@ -316,34 +345,19 @@ export default function Users() {
                 <p className="mt-1 text-xs text-green-600">Contrasena valida</p>
               )}
             </div>
-
             <div className="form-control">
               <label className="label"><span className="label-text">Confirmar contrasena *</span></label>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                className="input input-bordered w-full"
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                placeholder="Repite la contrasena"
-              />
+              <input type={showPassword ? 'text' : 'password'}
+                className="input input-bordered w-full" value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite la contrasena" />
               {confirmPassword && confirmPassword !== password && (
                 <p className="mt-1 text-xs text-red-500">Las contrasenas no coinciden</p>
               )}
             </div>
-
             <div className="md:col-span-2 flex justify-end gap-3 mt-2">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => { resetForm(); setShowForm(false) }}
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={submitting}
-              >
+              <button type="button" className="btn btn-ghost"
+                onClick={() => { resetForm(); setShowForm(false) }}>Cancelar</button>
+              <button type="submit" className="btn btn-primary" disabled={submitting}>
                 {submitting ? <span className="loading loading-spinner loading-sm" /> : 'Crear usuario'}
               </button>
             </div>
@@ -371,11 +385,7 @@ export default function Users() {
               </thead>
               <tbody>
                 {users.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="text-center text-gray-400 py-8">
-                      No hay usuarios registrados
-                    </td>
-                  </tr>
+                  <tr><td colSpan={5} className="text-center text-gray-400 py-8">No hay usuarios registrados</td></tr>
                 )}
                 {users.map(user => {
                   const statusNorm = (user.status || '').toLowerCase()
@@ -405,11 +415,9 @@ export default function Users() {
                         </span>
                       </td>
                       <td>
-                        <button
-                          onClick={() => openRoleModal(user)}
+                        <button onClick={() => openEdit(user)}
                           className="btn btn-ghost btn-sm btn-square text-gray-400 hover:text-gray-600"
-                          title="Cambiar rol"
-                        >
+                          title="Editar usuario">
                           <PencilSquareIcon className="w-4 h-4" />
                         </button>
                       </td>
@@ -422,85 +430,104 @@ export default function Users() {
         )}
       </div>
 
-      {/* Modal cambio de rol */}
-      {roleModal && (
+      {/* Modal de edicion */}
+      {editUser && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
-            <div className="p-6 space-y-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="p-6 space-y-5">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-800">Cambiar rol</h3>
-                <button onClick={closeRoleModal} className="btn btn-ghost btn-sm btn-square">
+                <h3 className="text-lg font-semibold text-gray-800">Editar usuario</h3>
+                <button onClick={closeEdit} className="btn btn-ghost btn-sm btn-square">
                   <XMarkIcon className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Info del usuario */}
-              <div className="bg-gray-50 rounded-lg p-4 space-y-1">
-                <p className="text-sm font-medium text-gray-700">{roleModal.name}</p>
-                <p className="text-xs text-gray-500">{roleModal.email}</p>
-                <div className="pt-1">
-                  {(() => {
-                    const rc = roleConfig[roleModal.role] || { bg: 'bg-gray-50', text: 'text-gray-600', dot: 'bg-gray-400', label: roleModal.role }
-                    return (
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md ${rc.bg} ${rc.text}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${rc.dot}`} />
-                        Rol actual: {rc.label}
-                      </span>
-                    )
-                  })()}
+              {/* Email (solo lectura) */}
+              <div className="bg-gray-50 rounded-lg p-4 flex items-center gap-3">
+                <EnvelopeIcon className="w-5 h-5 text-gray-400 shrink-0" />
+                <div>
+                  <p className="text-xs text-gray-400">Correo electronico</p>
+                  <p className="text-sm font-medium text-gray-700">{editUser.email}</p>
                 </div>
               </div>
 
-              {roleError && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{roleError}</div>}
-              {roleSuccess && <div className="text-sm text-emerald-600 bg-emerald-50 rounded-lg p-3">{roleSuccess}</div>}
+              {editError && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{editError}</div>}
+              {editSuccess && <div className="text-sm text-emerald-600 bg-emerald-50 rounded-lg p-3">{editSuccess}</div>}
 
-              {!roleSuccess && (
+              {!editSuccess && (
                 <>
-                  <div className="form-control">
-                    <label className="label"><span className="label-text">Nuevo rol</span></label>
-                    <select
-                      className="select select-bordered w-full"
-                      value={newRoleSelection}
-                      onChange={e => { setNewRoleSelection(e.target.value); setRoleConfirm(false) }}
-                    >
-                      {ROLES.map(r => (
-                        <option key={r} value={r}>{roleConfig[r]?.label || r}</option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Nombre *</span></label>
+                      <input type="text" className="input input-bordered w-full"
+                        value={editName} onChange={e => setEditName(e.target.value)} />
+                    </div>
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Telefono</span></label>
+                      <input type="tel" className="input input-bordered w-full"
+                        value={editPhone} onChange={e => setEditPhone(e.target.value)} placeholder="Opcional" />
+                    </div>
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Rol</span></label>
+                      <select className="select select-bordered w-full" value={editRole}
+                        onChange={e => { setEditRole(e.target.value); setRoleConfirmStep(false) }}>
+                        {ROLES.map(r => <option key={r} value={r}>{roleConfig[r]?.label || r}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Estado</span></label>
+                      <select className="select select-bordered w-full" value={editStatus}
+                        onChange={e => setEditStatus(e.target.value)}>
+                        <option value="active">Activo</option>
+                        <option value="inactive">Inactivo</option>
+                      </select>
+                    </div>
                   </div>
 
-                  {/* Paso de confirmacion */}
-                  {newRoleSelection !== roleModal.role && !roleConfirm && (
+                  {/* Aviso de cambio de rol */}
+                  {roleConfirmStep && editRole !== editUser.role && (
                     <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
                       <p className="text-sm text-amber-800">
-                        Se cambiara el rol de <span className="font-semibold">{roleModal.name}</span> de{' '}
-                        <span className="font-semibold">{roleConfig[roleModal.role]?.label || roleModal.role}</span> a{' '}
-                        <span className="font-semibold">{roleConfig[newRoleSelection]?.label || newRoleSelection}</span>.
+                        Se cambiara el rol de <span className="font-semibold">{editUser.name}</span> de{' '}
+                        <span className="font-semibold">{roleConfig[editUser.role]?.label || editUser.role}</span> a{' '}
+                        <span className="font-semibold">{roleConfig[editRole]?.label || editRole}</span>.
+                        Si el usuario tiene sesion abierta, debera volver a iniciar sesion.
                       </p>
                     </div>
                   )}
 
-                  <div className="flex justify-end gap-3 pt-2">
-                    <button onClick={closeRoleModal} className="btn btn-ghost btn-sm">Cancelar</button>
-                    {!roleConfirm ? (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        disabled={newRoleSelection === roleModal.role}
-                        onClick={() => setRoleConfirm(true)}
-                      >
-                        Continuar
+                  {/* Restablecer contrasena */}
+                  <div className="border-t border-gray-100 pt-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <KeyIcon className="w-4 h-4" />
+                        <span>Contrasena</span>
+                      </div>
+                      <button onClick={handlePasswordReset}
+                        className="btn btn-ghost btn-sm text-sm"
+                        disabled={resetSending}>
+                        {resetSending
+                          ? <span className="loading loading-spinner loading-xs" />
+                          : 'Enviar correo de restablecimiento'}
                       </button>
-                    ) : (
-                      <button
-                        className="btn btn-warning btn-sm"
-                        disabled={roleChanging}
-                        onClick={handleRoleChange}
-                      >
-                        {roleChanging
-                          ? <span className="loading loading-spinner loading-sm" />
-                          : 'Confirmar cambio'}
-                      </button>
+                    </div>
+                    {resetMsg && (
+                      <p className={`text-xs mt-2 ${resetMsg.includes('enviado') ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {resetMsg}
+                      </p>
                     )}
+                  </div>
+
+                  {/* Acciones */}
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button onClick={closeEdit} className="btn btn-ghost btn-sm">Cancelar</button>
+                    <button onClick={handleSaveEdit} className="btn btn-primary btn-sm" disabled={editSaving}>
+                      {editSaving
+                        ? <span className="loading loading-spinner loading-sm" />
+                        : roleConfirmStep && editRole !== editUser.role
+                          ? 'Confirmar cambios'
+                          : 'Guardar'}
+                    </button>
                   </div>
                 </>
               )}

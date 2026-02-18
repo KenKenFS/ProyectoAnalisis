@@ -6,6 +6,7 @@ import {
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, addDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
@@ -216,4 +217,53 @@ export async function updateUserRole(targetUid, newRole, adminUid) {
   });
 
   return { previousRole, newRole };
+}
+
+export async function updateUserData(targetUid, updates, adminUid) {
+  if (!updates.name?.trim()) {
+    throw new Error('El nombre es obligatorio.');
+  }
+
+  const userRef = doc(db, 'users', targetUid);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) {
+    throw new Error('El usuario no existe.');
+  }
+
+  const prev = userSnap.data();
+  const changes = {};
+  const fields = ['name', 'phone', 'status'];
+  for (const f of fields) {
+    if (updates[f] !== undefined && updates[f] !== prev[f]) {
+      changes[f] = { antes: prev[f] || '', despues: updates[f] };
+    }
+  }
+
+  if (Object.keys(changes).length === 0) {
+    throw new Error('No se detectaron cambios.');
+  }
+
+  const dataToUpdate = { updatedAt: new Date() };
+  for (const f of Object.keys(changes)) {
+    dataToUpdate[f] = updates[f];
+  }
+
+  await setDoc(userRef, dataToUpdate, { merge: true });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'modificacion_usuario',
+    targetUid,
+    targetEmail: prev.email || '',
+    targetName: prev.name || '',
+    cambios: changes,
+    adminUid,
+    timestamp: new Date(),
+  });
+
+  return changes;
+}
+
+export async function sendUserPasswordReset(email) {
+  if (!email) throw new Error('Email requerido.');
+  await sendPasswordResetEmail(auth, email);
 }
