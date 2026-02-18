@@ -9,7 +9,8 @@ import {
   EyeIcon,
   EyeSlashIcon,
 } from '@heroicons/react/24/outline'
-import { getAllUsers, registerUserWithRole } from '@shared/firebase/auth'
+import { getAllUsers, registerUserWithRole, updateUserRole, VALID_ROLES } from '@shared/firebase/auth'
+import { useAuth } from '@shared/firebase/AuthContext'
 
 const roleConfig = {
   Admin: { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-400', avatar: 'bg-violet-100 text-violet-600', label: 'Administrador' },
@@ -30,6 +31,7 @@ function validatePassword(pw) {
 }
 
 export default function Users() {
+  const { user: currentAdmin } = useAuth()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -44,6 +46,14 @@ export default function Users() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+
+  // Estado para modal de cambio de rol
+  const [roleModal, setRoleModal] = useState(null)
+  const [newRoleSelection, setNewRoleSelection] = useState('')
+  const [roleConfirm, setRoleConfirm] = useState(false)
+  const [roleChanging, setRoleChanging] = useState(false)
+  const [roleError, setRoleError] = useState('')
+  const [roleSuccess, setRoleSuccess] = useState('')
 
   const pwErrors = validatePassword(password)
 
@@ -115,6 +125,39 @@ export default function Users() {
       }
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const openRoleModal = (user) => {
+    setRoleModal(user)
+    setNewRoleSelection(user.role)
+    setRoleConfirm(false)
+    setRoleError('')
+    setRoleSuccess('')
+  }
+
+  const closeRoleModal = () => {
+    setRoleModal(null)
+    setNewRoleSelection('')
+    setRoleConfirm(false)
+    setRoleError('')
+    setRoleSuccess('')
+  }
+
+  const handleRoleChange = async () => {
+    if (!roleModal) return
+    setRoleChanging(true)
+    setRoleError('')
+    try {
+      await updateUserRole(roleModal.id, newRoleSelection, currentAdmin?.uid)
+      setRoleSuccess(`Rol actualizado a ${roleConfig[newRoleSelection]?.label || newRoleSelection}.`)
+      await loadUsers()
+      setTimeout(closeRoleModal, 1200)
+    } catch (err) {
+      setRoleError(err.message)
+      setRoleConfirm(false)
+    } finally {
+      setRoleChanging(false)
     }
   }
 
@@ -362,7 +405,11 @@ export default function Users() {
                         </span>
                       </td>
                       <td>
-                        <button className="btn btn-ghost btn-sm btn-square text-gray-400 hover:text-gray-600">
+                        <button
+                          onClick={() => openRoleModal(user)}
+                          className="btn btn-ghost btn-sm btn-square text-gray-400 hover:text-gray-600"
+                          title="Cambiar rol"
+                        >
                           <PencilSquareIcon className="w-4 h-4" />
                         </button>
                       </td>
@@ -374,6 +421,93 @@ export default function Users() {
           </div>
         )}
       </div>
+
+      {/* Modal cambio de rol */}
+      {roleModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-800">Cambiar rol</h3>
+                <button onClick={closeRoleModal} className="btn btn-ghost btn-sm btn-square">
+                  <XMarkIcon className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Info del usuario */}
+              <div className="bg-gray-50 rounded-lg p-4 space-y-1">
+                <p className="text-sm font-medium text-gray-700">{roleModal.name}</p>
+                <p className="text-xs text-gray-500">{roleModal.email}</p>
+                <div className="pt-1">
+                  {(() => {
+                    const rc = roleConfig[roleModal.role] || { bg: 'bg-gray-50', text: 'text-gray-600', dot: 'bg-gray-400', label: roleModal.role }
+                    return (
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md ${rc.bg} ${rc.text}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${rc.dot}`} />
+                        Rol actual: {rc.label}
+                      </span>
+                    )
+                  })()}
+                </div>
+              </div>
+
+              {roleError && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{roleError}</div>}
+              {roleSuccess && <div className="text-sm text-emerald-600 bg-emerald-50 rounded-lg p-3">{roleSuccess}</div>}
+
+              {!roleSuccess && (
+                <>
+                  <div className="form-control">
+                    <label className="label"><span className="label-text">Nuevo rol</span></label>
+                    <select
+                      className="select select-bordered w-full"
+                      value={newRoleSelection}
+                      onChange={e => { setNewRoleSelection(e.target.value); setRoleConfirm(false) }}
+                    >
+                      {ROLES.map(r => (
+                        <option key={r} value={r}>{roleConfig[r]?.label || r}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Paso de confirmacion */}
+                  {newRoleSelection !== roleModal.role && !roleConfirm && (
+                    <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
+                      <p className="text-sm text-amber-800">
+                        Se cambiara el rol de <span className="font-semibold">{roleModal.name}</span> de{' '}
+                        <span className="font-semibold">{roleConfig[roleModal.role]?.label || roleModal.role}</span> a{' '}
+                        <span className="font-semibold">{roleConfig[newRoleSelection]?.label || newRoleSelection}</span>.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button onClick={closeRoleModal} className="btn btn-ghost btn-sm">Cancelar</button>
+                    {!roleConfirm ? (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        disabled={newRoleSelection === roleModal.role}
+                        onClick={() => setRoleConfirm(true)}
+                      >
+                        Continuar
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-warning btn-sm"
+                        disabled={roleChanging}
+                        onClick={handleRoleChange}
+                      >
+                        {roleChanging
+                          ? <span className="loading loading-spinner loading-sm" />
+                          : 'Confirmar cambio'}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

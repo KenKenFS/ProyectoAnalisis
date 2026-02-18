@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { auth } from './firebase';
-import { onAuthChange, getUserRole, getUserData } from './auth';
+import { onAuthChange, getUserRole, getUserData, logoutUser } from './auth';
 
 const AuthContext = createContext(null);
 
@@ -53,6 +53,23 @@ export function AuthProvider({ children }) {
 
     return () => unsubscribe();
   }, []);
+
+  // Verificacion periodica: si el rol cambio en Firestore, cierra sesion
+  const roleRef = useRef(role);
+  roleRef.current = role;
+
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(async () => {
+      try {
+        const freshRole = await getUserRole(user.uid);
+        if (roleRef.current && freshRole && freshRole !== roleRef.current) {
+          await logoutUser();
+        }
+      } catch (_) { /* silencioso */ }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const value = {
     user,

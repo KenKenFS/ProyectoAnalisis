@@ -7,9 +7,9 @@ import {
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { doc, setDoc, getDoc, addDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
-const VALID_ROLES = ['Admin', 'Cajero', 'Mesero', 'Cocina'];
+export const VALID_ROLES = ['Admin', 'Cajero', 'Mesero', 'Cocina'];
 
 export async function registerUserWithRole(email, password, role, additionalData = {}) {
   if (!email || !password || !role || !additionalData.name) {
@@ -181,4 +181,39 @@ export async function updateUserProfile(uid, updates) {
     console.error('Error al actualizar perfil:', error.message);
     throw error;
   }
+}
+
+export async function updateUserRole(targetUid, newRole, adminUid) {
+  if (!VALID_ROLES.includes(newRole)) {
+    throw new Error(`El rol seleccionado no es valido. Los roles permitidos son: ${VALID_ROLES.join(', ')}`)
+  }
+
+  const userRef = doc(db, 'users', targetUid);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) {
+    throw new Error('El usuario no existe.');
+  }
+
+  const previousRole = userSnap.data().role;
+  if (previousRole === newRole) {
+    throw new Error('El usuario ya tiene ese rol asignado.');
+  }
+
+  await setDoc(userRef, {
+    role: newRole,
+    updatedAt: new Date(),
+  }, { merge: true });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'cambio_rol',
+    targetUid,
+    targetEmail: userSnap.data().email || '',
+    targetName: userSnap.data().name || '',
+    rolAnterior: previousRole,
+    rolNuevo: newRole,
+    adminUid,
+    timestamp: new Date(),
+  });
+
+  return { previousRole, newRole };
 }
