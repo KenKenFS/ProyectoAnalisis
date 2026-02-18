@@ -54,7 +54,12 @@ serviceAccountKey.json
 *.sw?
 .vs/
 
+# Docs y scripts internos
+/docs
+/scripts
+
 # OS
 .DS_Store
 Thumbs.db
 desktop.ini
+
