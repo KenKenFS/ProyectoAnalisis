@@ -22,16 +22,16 @@ export async function registerUserWithRole(email, password, role, additionalData
   }
 
   if (password.length < 8) {
-    throw new Error('La contrasena debe tener al menos 8 caracteres.');
+    throw new Error('La contraseña debe tener al menos 8 caracteres.');
   }
   if (!/[A-Z]/.test(password)) {
-    throw new Error('La contrasena debe incluir al menos una letra mayuscula.');
+    throw new Error('La contraseña debe incluir al menos una letra mayuscula.');
   }
   if (!/[0-9]/.test(password)) {
-    throw new Error('La contrasena debe incluir al menos un numero.');
+    throw new Error('La contraseña debe incluir al menos un numero.');
   }
   if (!/[^A-Za-z0-9]/.test(password)) {
-    throw new Error('La contrasena debe incluir al menos un caracter especial.');
+    throw new Error('La contraseña debe incluir al menos un caracter especial.');
   }
 
   const dupeQuery = query(collection(db, 'users'), where('email', '==', email));

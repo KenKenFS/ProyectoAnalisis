@@ -10,6 +10,9 @@ import {
   EyeSlashIcon,
   KeyIcon,
   EnvelopeIcon,
+  MagnifyingGlassIcon,
+  FunnelIcon,
+  XCircleIcon,
 } from '@heroicons/react/24/outline'
 import {
   getAllUsers,
@@ -78,7 +81,43 @@ export default function Users() {
   const [statusError, setStatusError] = useState('')
   const [statusSuccess, setStatusSuccess] = useState('')
 
+  // Filtros
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterRole, setFilterRole] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+
   const pwErrors = validatePassword(password)
+
+  const hasFilters = searchQuery || filterRole || filterStatus
+
+  const filteredUsers = users.filter(u => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      const matchName = (u.name || '').toLowerCase().includes(q)
+      const matchEmail = (u.email || '').toLowerCase().includes(q)
+      if (!matchName && !matchEmail) return false
+    }
+    if (filterRole && u.role !== filterRole) return false
+    if (filterStatus) {
+      const s = (u.status || '').toLowerCase()
+      const isActive = s === 'active' || s === 'activo'
+      if (filterStatus === 'active' && !isActive) return false
+      if (filterStatus === 'inactive' && isActive) return false
+    }
+    return true
+  })
+
+  const filteredActive = filteredUsers.filter(u => {
+    const s = (u.status || '').toLowerCase()
+    return s === 'active' || s === 'activo'
+  }).length
+  const filteredInactive = filteredUsers.length - filteredActive
+
+  const clearFilters = () => {
+    setSearchQuery('')
+    setFilterRole('')
+    setFilterStatus('')
+  }
 
   const loadUsers = useCallback(async () => {
     setLoading(true)
@@ -116,11 +155,11 @@ export default function Users() {
       return
     }
     if (pwErrors.length > 0) {
-      setFormError('La contrasena no cumple los requisitos.')
+      setFormError('La contraseña no cumple los requisitos.')
       return
     }
     if (password !== confirmPassword) {
-      setFormError('Las contrasenas no coinciden.')
+      setFormError('Las contraseñas no coinciden.')
       return
     }
 
@@ -279,12 +318,6 @@ export default function Users() {
     }
   }
 
-  const activeUsers = users.filter(u => {
-    const s = (u.status || '').toLowerCase()
-    return s === 'active' || s === 'activo'
-  }).length
-  const inactiveUsers = users.length - activeUsers
-
   return (
     <div className="space-y-6 pb-20 md:pb-6">
       {/* Header */}
@@ -314,8 +347,8 @@ export default function Users() {
               <UsersIcon className="w-5 h-5 text-slate-500" />
             </div>
             <div>
-              <div className="text-xl font-semibold text-gray-800">{users.length}</div>
-              <div className="text-xs text-gray-400">Total</div>
+              <div className="text-xl font-semibold text-gray-800">{filteredUsers.length}</div>
+              <div className="text-xs text-gray-400">{hasFilters ? 'Resultados' : 'Total'}</div>
             </div>
           </div>
         </div>
@@ -325,7 +358,7 @@ export default function Users() {
               <ShieldCheckIcon className="w-5 h-5 text-emerald-500" />
             </div>
             <div>
-              <div className="text-xl font-semibold text-gray-800">{activeUsers}</div>
+              <div className="text-xl font-semibold text-gray-800">{filteredActive}</div>
               <div className="text-xs text-gray-400">Activos</div>
             </div>
           </div>
@@ -336,7 +369,7 @@ export default function Users() {
               <UserCircleIcon className="w-5 h-5 text-rose-400" />
             </div>
             <div>
-              <div className="text-xl font-semibold text-gray-800">{inactiveUsers}</div>
+              <div className="text-xl font-semibold text-gray-800">{filteredInactive}</div>
               <div className="text-xs text-gray-400">Inactivos</div>
             </div>
           </div>
@@ -375,7 +408,7 @@ export default function Users() {
               </select>
             </div>
             <div className="form-control">
-              <label className="label"><span className="label-text">Contrasena *</span></label>
+              <label className="label"><span className="label-text">Contraseña *</span></label>
               <div className="relative">
                 <input type={showPassword ? 'text' : 'password'}
                   className="input input-bordered w-full pr-10" value={password}
@@ -393,16 +426,16 @@ export default function Users() {
                 </ul>
               )}
               {password && pwErrors.length === 0 && (
-                <p className="mt-1 text-xs text-green-600">Contrasena valida</p>
+                <p className="mt-1 text-xs text-green-600">Contraseña valida</p>
               )}
             </div>
             <div className="form-control">
-              <label className="label"><span className="label-text">Confirmar contrasena *</span></label>
+              <label className="label"><span className="label-text">Confirmar contraseña *</span></label>
               <input type={showPassword ? 'text' : 'password'}
                 className="input input-bordered w-full" value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite la contrasena" />
+                onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite la contraseña" />
               {confirmPassword && confirmPassword !== password && (
-                <p className="mt-1 text-xs text-red-500">Las contrasenas no coinciden</p>
+                <p className="mt-1 text-xs text-red-500">Las contraseñas no coinciden</p>
               )}
             </div>
             <div className="md:col-span-2 flex justify-end gap-3 mt-2">
@@ -415,6 +448,40 @@ export default function Users() {
           </form>
         </div>
       )}
+
+      {/* Busqueda y filtros */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            className="input input-bordered w-full pl-9 input-sm"
+            placeholder="Buscar por nombre o correo..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2">
+          <select className="select select-bordered select-sm"
+            value={filterRole} onChange={e => setFilterRole(e.target.value)}>
+            <option value="">Todos los roles</option>
+            {ROLES.map(r => <option key={r} value={r}>{roleConfig[r]?.label || r}</option>)}
+          </select>
+          <select className="select select-bordered select-sm"
+            value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">Todos los estados</option>
+            <option value="active">Activos</option>
+            <option value="inactive">Inactivos</option>
+          </select>
+          {hasFilters && (
+            <button onClick={clearFilters}
+              className="btn btn-ghost btn-sm gap-1 text-gray-500">
+              <XCircleIcon className="w-4 h-4" />
+              Limpiar
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Tabla de usuarios */}
       <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
@@ -435,10 +502,23 @@ export default function Users() {
                 </tr>
               </thead>
               <tbody>
-                {users.length === 0 && (
-                  <tr><td colSpan={5} className="text-center text-gray-400 py-8">No hay usuarios registrados</td></tr>
+                {filteredUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="text-center py-8">
+                      {hasFilters ? (
+                        <div className="space-y-2">
+                          <p className="text-gray-400">No se encontraron usuarios con los filtros aplicados</p>
+                          <button onClick={clearFilters} className="btn btn-ghost btn-sm text-primary">
+                            Limpiar filtros
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-gray-400">No hay usuarios registrados</p>
+                      )}
+                    </td>
+                  </tr>
                 )}
-                {users.map(user => {
+                {filteredUsers.map(user => {
                   const statusNorm = (user.status || '').toLowerCase()
                   const isActive = statusNorm === 'active' || statusNorm === 'activo'
                   const rc = roleConfig[user.role] || { bg: 'bg-gray-50', text: 'text-gray-600', dot: 'bg-gray-400', avatar: 'bg-gray-100 text-gray-500', label: user.role }
@@ -550,7 +630,7 @@ export default function Users() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <KeyIcon className="w-4 h-4" />
-                        <span>Contrasena</span>
+                        <span>Contraseña</span>
                       </div>
                       <button onClick={handlePasswordReset}
                         className="btn btn-ghost btn-sm text-sm"

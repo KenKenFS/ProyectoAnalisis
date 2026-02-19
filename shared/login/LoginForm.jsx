@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { loginUser, loginWithGoogle } from '../firebase/auth'
+import { loginUser, loginWithGoogle, sendUserPasswordReset } from '../firebase/auth'
 import {
   EnvelopeIcon,
   KeyIcon,
   ExclamationCircleIcon,
   CheckCircleIcon,
+  ArrowLeftIcon,
 } from '@heroicons/react/24/outline'
 
 export default function LoginForm({
@@ -23,6 +24,10 @@ export default function LoginForm({
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showReset, setShowReset] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetMsg, setResetMsg] = useState('')
+  const [resetLoading, setResetLoading] = useState(false)
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -57,11 +62,11 @@ export default function LoginForm({
       } else if (code === 'auth/too-many-requests' || msg.includes('too-many-requests')) {
         setError('Demasiados intentos fallidos. Tu cuenta fue bloqueada temporalmente. Intenta de nuevo en unos minutos.')
       } else if (code === 'auth/invalid-credential' || msg.includes('invalid-credential')) {
-        setError('Credenciales incorrectas. Verifica tu email y contrasena.')
+        setError('Credenciales incorrectas. Verifica tu email y contraseña.')
       } else if (msg.includes('user-not-found')) {
         setError('Usuario no encontrado. Verifica tu email.')
       } else if (msg.includes('wrong-password')) {
-        setError('Contrasena incorrecta.')
+        setError('Contraseña incorrecta.')
       } else if (msg.includes('invalid-email')) {
         setError('Email invalido.')
       } else {
@@ -109,6 +114,21 @@ export default function LoginForm({
     }
   }
 
+  async function handleResetPassword(e) {
+    e.preventDefault()
+    if (!resetEmail) { setResetMsg('Ingresa tu correo electronico.'); return }
+    setResetLoading(true)
+    setResetMsg('')
+    try {
+      await sendUserPasswordReset(resetEmail)
+      setResetMsg('Si el correo esta registrado, recibiras un enlace para restablecer tu contraseña.')
+    } catch (_) {
+      setResetMsg('Si el correo esta registrado, recibiras un enlace para restablecer tu contraseña.')
+    } finally {
+      setResetLoading(false)
+    }
+  }
+
   return (
     <div className="w-full max-w-md">
       {/* Logo y titulo */}
@@ -130,7 +150,7 @@ export default function LoginForm({
       </div>
 
       {/* Card de login */}
-      <div className="card bg-white/95 backdrop-blur shadow-2xl border border-white/20 rounded-xl">
+      <div className="card bg-white/95 backdrop-blur shadow-2xl border border-white/20 rounded-xl relative overflow-hidden">
         <div className="card-body p-8">
           <h2 className="text-2xl font-semibold text-gray-800 mb-6 font-poppins">
             {formTitle}
@@ -180,7 +200,7 @@ export default function LoginForm({
               <label className="label">
                 <span className="label-text text-gray-700 font-medium flex items-center gap-2">
                   <KeyIcon className="w-4 h-4" />
-                  Contrasena
+                  Contraseña
                 </span>
               </label>
               <input
@@ -193,11 +213,17 @@ export default function LoginForm({
               />
             </div>
 
-            {/* Boton Login */}
+            <div className="text-right">
+              <button type="button" onClick={() => { setShowReset(true); setResetEmail(email); setResetMsg('') }}
+                className="text-xs text-primary hover:underline">
+                Olvidaste tu contraseña?
+              </button>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="btn btn-primary w-full mt-6 text-white font-semibold"
+              className="btn btn-primary w-full mt-2 text-white font-semibold"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -261,6 +287,39 @@ export default function LoginForm({
             <p>Universidad Fidelitas - SC-702</p>
             <p className="mt-1">Demo: Firebase Authentication</p>
           </div>
+
+          {/* Panel de recuperacion de contrasena */}
+          {showReset && (
+            <div className="absolute inset-0 bg-white rounded-xl p-8 flex flex-col justify-center">
+              <button onClick={() => { setShowReset(false); setResetMsg('') }}
+                className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-6">
+                <ArrowLeftIcon className="w-4 h-4" />
+                Volver al login
+              </button>
+              <h2 className="text-xl font-semibold text-gray-800 mb-2">Recuperar contraseña</h2>
+              <p className="text-sm text-gray-500 mb-6">
+                Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
+              </p>
+              {resetMsg && (
+                <div className="bg-blue-50 border-l-4 border-blue-400 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-blue-700">{resetMsg}</p>
+                </div>
+              )}
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <div className="form-control">
+                  <input type="email" placeholder="correo@ceviche.cr"
+                    className="input input-bordered bg-gray-50 w-full"
+                    value={resetEmail} onChange={e => setResetEmail(e.target.value)}
+                    disabled={resetLoading} />
+                </div>
+                <button type="submit" className="btn btn-primary w-full" disabled={resetLoading}>
+                  {resetLoading
+                    ? <span className="loading loading-spinner loading-sm" />
+                    : 'Enviar enlace'}
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </div>
     </div>
