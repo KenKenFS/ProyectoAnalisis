@@ -17,6 +17,8 @@ import {
   updateUserRole,
   updateUserData,
   sendUserPasswordReset,
+  deactivateUser,
+  reactivateUser,
   VALID_ROLES,
 } from '@shared/firebase/auth'
 import { useAuth } from '@shared/firebase/AuthContext'
@@ -62,13 +64,19 @@ export default function Users() {
   const [editName, setEditName] = useState('')
   const [editPhone, setEditPhone] = useState('')
   const [editRole, setEditRole] = useState('')
-  const [editStatus, setEditStatus] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
   const [editSuccess, setEditSuccess] = useState('')
   const [roleConfirmStep, setRoleConfirmStep] = useState(false)
   const [resetSending, setResetSending] = useState(false)
   const [resetMsg, setResetMsg] = useState('')
+
+  // Modal de desactivacion/reactivacion
+  const [statusModal, setStatusModal] = useState(null)
+  const [statusMotivo, setStatusMotivo] = useState('')
+  const [statusSaving, setStatusSaving] = useState(false)
+  const [statusError, setStatusError] = useState('')
+  const [statusSuccess, setStatusSuccess] = useState('')
 
   const pwErrors = validatePassword(password)
 
@@ -143,8 +151,6 @@ export default function Users() {
     setEditName(user.name || '')
     setEditPhone(user.phone || '')
     setEditRole(user.role || '')
-    const s = (user.status || '').toLowerCase()
-    setEditStatus(s === 'active' || s === 'activo' ? 'active' : 'inactive')
     setEditError(''); setEditSuccess('')
     setRoleConfirmStep(false)
     setResetMsg('')
@@ -176,15 +182,11 @@ export default function Users() {
       const dataChanges = {
         name: editName.trim(),
         phone: editPhone.trim(),
-        status: editStatus,
       }
       let saved = false
 
-      const prevStatus = (editUser.status || '').toLowerCase()
-      const normalizedPrev = (prevStatus === 'active' || prevStatus === 'activo') ? 'active' : 'inactive'
       const hasDataChanges = dataChanges.name !== editUser.name
         || dataChanges.phone !== (editUser.phone || '')
-        || dataChanges.status !== normalizedPrev
 
       if (hasDataChanges) {
         await updateUserData(editUser.id, dataChanges, currentAdmin?.uid)
@@ -226,7 +228,56 @@ export default function Users() {
     }
   }
 
-  // --- Stats ---
+  // --- Desactivar / Reactivar ---
+
+  const openStatusModal = (user) => {
+    const s = (user.status || '').toLowerCase()
+    const isActive = s === 'active' || s === 'activo'
+    if (isActive && user.id === currentAdmin?.uid) {
+      setEditError('No puede desactivar su propia cuenta.')
+      return
+    }
+    setStatusModal({ ...user, isActive })
+    setStatusMotivo('')
+    setStatusError('')
+    setStatusSuccess('')
+  }
+
+  const closeStatusModal = () => {
+    setStatusModal(null)
+    setStatusMotivo('')
+    setStatusError('')
+    setStatusSuccess('')
+  }
+
+  const handleStatusChange = async () => {
+    setStatusError('')
+    if (!statusMotivo.trim()) {
+      setStatusError('Debe ingresar un motivo valido.')
+      return
+    }
+    if (statusMotivo.trim().length > 200) {
+      setStatusError('El motivo no puede superar los 200 caracteres.')
+      return
+    }
+
+    setStatusSaving(true)
+    try {
+      if (statusModal.isActive) {
+        await deactivateUser(statusModal.id, statusMotivo.trim(), currentAdmin?.uid)
+        setStatusSuccess('Usuario desactivado correctamente.')
+      } else {
+        await reactivateUser(statusModal.id, statusMotivo.trim(), currentAdmin?.uid)
+        setStatusSuccess('Usuario reactivado correctamente.')
+      }
+      await loadUsers()
+      setTimeout(closeStatusModal, 1200)
+    } catch (err) {
+      setStatusError(err.message)
+    } finally {
+      setStatusSaving(false)
+    }
+  }
 
   const activeUsers = users.filter(u => {
     const s = (u.status || '').toLowerCase()
@@ -415,11 +466,20 @@ export default function Users() {
                         </span>
                       </td>
                       <td>
-                        <button onClick={() => openEdit(user)}
-                          className="btn btn-ghost btn-sm btn-square text-gray-400 hover:text-gray-600"
-                          title="Editar usuario">
-                          <PencilSquareIcon className="w-4 h-4" />
-                        </button>
+                        <div className="flex gap-1">
+                          <button onClick={() => openEdit(user)}
+                            className="btn btn-ghost btn-sm btn-square text-gray-400 hover:text-gray-600"
+                            title="Editar usuario">
+                            <PencilSquareIcon className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => openStatusModal(user)}
+                            className={`btn btn-ghost btn-sm btn-square ${isActive ? 'text-gray-400 hover:text-rose-500' : 'text-gray-400 hover:text-emerald-500'}`}
+                            title={isActive ? 'Desactivar' : 'Reactivar'}>
+                            {isActive
+                              ? <UserCircleIcon className="w-4 h-4" />
+                              : <ShieldCheckIcon className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -442,7 +502,6 @@ export default function Users() {
                 </button>
               </div>
 
-              {/* Email (solo lectura) */}
               <div className="bg-gray-50 rounded-lg p-4 flex items-center gap-3">
                 <EnvelopeIcon className="w-5 h-5 text-gray-400 shrink-0" />
                 <div>
@@ -467,24 +526,15 @@ export default function Users() {
                       <input type="tel" className="input input-bordered w-full"
                         value={editPhone} onChange={e => setEditPhone(e.target.value)} placeholder="Opcional" />
                     </div>
-                    <div className="form-control">
+                    <div className="form-control sm:col-span-2">
                       <label className="label"><span className="label-text">Rol</span></label>
                       <select className="select select-bordered w-full" value={editRole}
                         onChange={e => { setEditRole(e.target.value); setRoleConfirmStep(false) }}>
                         {ROLES.map(r => <option key={r} value={r}>{roleConfig[r]?.label || r}</option>)}
                       </select>
                     </div>
-                    <div className="form-control">
-                      <label className="label"><span className="label-text">Estado</span></label>
-                      <select className="select select-bordered w-full" value={editStatus}
-                        onChange={e => setEditStatus(e.target.value)}>
-                        <option value="active">Activo</option>
-                        <option value="inactive">Inactivo</option>
-                      </select>
-                    </div>
                   </div>
 
-                  {/* Aviso de cambio de rol */}
                   {roleConfirmStep && editRole !== editUser.role && (
                     <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
                       <p className="text-sm text-amber-800">
@@ -496,7 +546,6 @@ export default function Users() {
                     </div>
                   )}
 
-                  {/* Restablecer contrasena */}
                   <div className="border-t border-gray-100 pt-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -518,7 +567,6 @@ export default function Users() {
                     )}
                   </div>
 
-                  {/* Acciones */}
                   <div className="flex justify-end gap-3 pt-2">
                     <button onClick={closeEdit} className="btn btn-ghost btn-sm">Cancelar</button>
                     <button onClick={handleSaveEdit} className="btn btn-primary btn-sm" disabled={editSaving}>
@@ -527,6 +575,76 @@ export default function Users() {
                         : roleConfirmStep && editRole !== editUser.role
                           ? 'Confirmar cambios'
                           : 'Guardar'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de desactivacion / reactivacion */}
+      {statusModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-800">
+                  {statusModal.isActive ? 'Desactivar usuario' : 'Reactivar usuario'}
+                </h3>
+                <button onClick={closeStatusModal} className="btn btn-ghost btn-sm btn-square">
+                  <XMarkIcon className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-1">
+                <p className="text-sm font-medium text-gray-700">{statusModal.name}</p>
+                <p className="text-xs text-gray-500">{statusModal.email}</p>
+                <span className={`inline-flex items-center gap-1.5 text-xs font-medium mt-1 ${statusModal.isActive ? 'text-emerald-600' : 'text-gray-400'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${statusModal.isActive ? 'bg-emerald-400' : 'bg-gray-300'}`} />
+                  {statusModal.isActive ? 'Activo' : 'Inactivo'}
+                </span>
+              </div>
+
+              {statusModal.isActive && (
+                <div className="bg-rose-50 border border-rose-100 rounded-lg p-3">
+                  <p className="text-sm text-rose-700">
+                    Al desactivar este usuario, se le impedira iniciar sesion. Si tiene una sesion abierta, se le denegara el acceso en la siguiente accion.
+                  </p>
+                </div>
+              )}
+
+              {statusError && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{statusError}</div>}
+              {statusSuccess && <div className="text-sm text-emerald-600 bg-emerald-50 rounded-lg p-3">{statusSuccess}</div>}
+
+              {!statusSuccess && (
+                <>
+                  <div className="form-control">
+                    <label className="label">
+                      <span className="label-text">Motivo *</span>
+                      <span className="label-text-alt text-gray-400">{statusMotivo.length}/200</span>
+                    </label>
+                    <textarea
+                      className="textarea textarea-bordered w-full"
+                      rows={3}
+                      maxLength={200}
+                      value={statusMotivo}
+                      onChange={e => setStatusMotivo(e.target.value)}
+                      placeholder={statusModal.isActive
+                        ? 'Razon de la desactivacion...'
+                        : 'Razon de la reactivacion...'}
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button onClick={closeStatusModal} className="btn btn-ghost btn-sm">Cancelar</button>
+                    <button onClick={handleStatusChange}
+                      className={`btn btn-sm ${statusModal.isActive ? 'btn-error' : 'btn-success'}`}
+                      disabled={statusSaving}>
+                      {statusSaving
+                        ? <span className="loading loading-spinner loading-sm" />
+                        : statusModal.isActive ? 'Desactivar' : 'Reactivar'}
                     </button>
                   </div>
                 </>

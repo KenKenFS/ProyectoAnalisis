@@ -232,7 +232,7 @@ export async function updateUserData(targetUid, updates, adminUid) {
 
   const prev = userSnap.data();
   const changes = {};
-  const fields = ['name', 'phone', 'status'];
+  const fields = ['name', 'phone'];
   for (const f of fields) {
     if (updates[f] !== undefined && updates[f] !== prev[f]) {
       changes[f] = { antes: prev[f] || '', despues: updates[f] };
@@ -266,4 +266,67 @@ export async function updateUserData(targetUid, updates, adminUid) {
 export async function sendUserPasswordReset(email) {
   if (!email) throw new Error('Email requerido.');
   await sendPasswordResetEmail(auth, email);
+}
+
+export async function deactivateUser(targetUid, motivo, adminUid) {
+  if (!motivo?.trim()) throw new Error('Debe ingresar un motivo valido.');
+  if (motivo.trim().length > 200) throw new Error('El motivo no puede superar los 200 caracteres.');
+  if (targetUid === adminUid) throw new Error('No puede desactivar su propia cuenta.');
+
+  const userRef = doc(db, 'users', targetUid);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) throw new Error('El usuario no existe.');
+
+  const prev = userSnap.data();
+  const statusNorm = (prev.status || '').toLowerCase();
+  if (statusNorm === 'inactive' || statusNorm === 'inactivo') {
+    throw new Error('El usuario ya esta inactivo.');
+  }
+
+  await setDoc(userRef, {
+    status: 'inactive',
+    updatedAt: new Date(),
+  }, { merge: true });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'desactivacion_usuario',
+    targetUid,
+    targetEmail: prev.email || '',
+    targetName: prev.name || '',
+    motivo: motivo.trim(),
+    estadoAnterior: prev.status,
+    adminUid,
+    timestamp: new Date(),
+  });
+}
+
+export async function reactivateUser(targetUid, motivo, adminUid) {
+  if (!motivo?.trim()) throw new Error('Debe ingresar un motivo valido.');
+  if (motivo.trim().length > 200) throw new Error('El motivo no puede superar los 200 caracteres.');
+
+  const userRef = doc(db, 'users', targetUid);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) throw new Error('El usuario no existe.');
+
+  const prev = userSnap.data();
+  const statusNorm = (prev.status || '').toLowerCase();
+  if (statusNorm === 'active' || statusNorm === 'activo') {
+    throw new Error('El usuario ya esta activo.');
+  }
+
+  await setDoc(userRef, {
+    status: 'active',
+    updatedAt: new Date(),
+  }, { merge: true });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'reactivacion_usuario',
+    targetUid,
+    targetEmail: prev.email || '',
+    targetName: prev.name || '',
+    motivo: motivo.trim(),
+    estadoAnterior: prev.status,
+    adminUid,
+    timestamp: new Date(),
+  });
 }
