@@ -55,6 +55,16 @@ export async function registerUserWithRole(email, password, role, additionalData
     createdAt: new Date(),
   });
 
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'creacion_usuario',
+    targetUid: user.uid,
+    targetEmail: user.email,
+    targetName: additionalData.name,
+    rolAsignado: role,
+    adminUid: auth.currentUser?.uid || '',
+    timestamp: new Date(),
+  });
+
   return user;
 }
 
@@ -329,4 +339,15 @@ export async function reactivateUser(targetUid, motivo, adminUid) {
     adminUid,
     timestamp: new Date(),
   });
+}
+
+export async function getAllAuditLogs() {
+  const snap = await getDocs(collection(db, 'auditoria'));
+  const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  logs.sort((a, b) => {
+    const ta = a.timestamp?.toDate?.() || a.timestamp || 0
+    const tb = b.timestamp?.toDate?.() || b.timestamp || 0
+    return new Date(tb) - new Date(ta)
+  });
+  return logs;
 }

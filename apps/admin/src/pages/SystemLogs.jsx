@@ -1,192 +1,295 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   DocumentTextIcon,
   MagnifyingGlassIcon,
-  CheckCircleIcon,
-  ExclamationCircleIcon,
-  XCircleIcon,
   ChevronDownIcon,
+  XCircleIcon,
+  ClockIcon,
+  UserPlusIcon,
+  ArrowPathIcon,
+  ShieldCheckIcon,
+  PencilSquareIcon,
+  NoSymbolIcon,
+  CheckBadgeIcon,
 } from '@heroicons/react/24/outline'
+import { getAllAuditLogs, getAllUsers } from '@shared/firebase/auth'
 
-const logs = [
-  { id: 1, type: 'success', user: 'admin@example.com', action: 'Creó nueva orden #1255', timestamp: '2026-01-17 14:30:22', details: 'Orden de ceviche clásico por ₡45,000' },
-  { id: 2, type: 'warning', user: 'mesero@example.com', action: 'Modificó inventario - Stock bajo', timestamp: '2026-01-17 14:25:15', details: 'Producto: Camarones (2 unidades restantes)' },
-  { id: 3, type: 'success', user: 'cajero@example.com', action: 'Realizó cierre de caja', timestamp: '2026-01-17 14:20:45', details: 'Total en caja: ₡287,600 (3 discrepancias)' },
-  { id: 4, type: 'error', user: 'cocina@example.com', action: 'Falló login después de 3 intentos', timestamp: '2026-01-17 14:15:30', details: 'IP: 192.168.1.105' },
-  { id: 5, type: 'success', user: 'admin@example.com', action: 'Cambió permisos de usuario', timestamp: '2026-01-17 14:10:12', details: 'Usuario: mesero02 - Roles modificados' },
-  { id: 6, type: 'warning', user: 'sistema', action: 'Respaldo automático completado', timestamp: '2026-01-17 13:00:00', details: 'Base de datos respaldada a nube' },
-  { id: 7, type: 'success', user: 'admin@example.com', action: 'Actualizó configuración del sistema', timestamp: '2026-01-17 12:45:33', details: 'Zona horaria: America/Costa_Rica' },
-  { id: 8, type: 'error', user: 'mesero@example.com', action: 'Error al procesar transacción', timestamp: '2026-01-17 12:30:22', details: 'Tarjeta rechazada - Contactar banco' },
-]
+const TIPOS = {
+  creacion_usuario: { label: 'Creacion de usuario', icon: UserPlusIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  cambio_rol: { label: 'Cambio de rol', icon: ShieldCheckIcon, color: 'text-violet-600', bg: 'bg-violet-50' },
+  modificacion_usuario: { label: 'Modificacion de datos', icon: PencilSquareIcon, color: 'text-sky-600', bg: 'bg-sky-50' },
+  desactivacion_usuario: { label: 'Desactivacion', icon: NoSymbolIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
+  reactivacion_usuario: { label: 'Reactivacion', icon: CheckBadgeIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+}
+
+function formatTimestamp(ts) {
+  const d = ts?.toDate?.() || (ts ? new Date(ts) : null)
+  if (!d) return '-'
+  return d.toLocaleString('es-CR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
+function buildDetails(log) {
+  const parts = []
+
+  if (log.tipo === 'creacion_usuario') {
+    parts.push(`Rol asignado: ${log.rolAsignado || '-'}`)
+  }
+
+  if (log.tipo === 'cambio_rol') {
+    parts.push(`Rol anterior: ${log.rolAnterior || '-'}`)
+    parts.push(`Rol nuevo: ${log.rolNuevo || '-'}`)
+  }
+
+  if (log.tipo === 'modificacion_usuario' && log.cambios) {
+    for (const [campo, val] of Object.entries(log.cambios)) {
+      parts.push(`${campo}: ${val.antes || '(vacio)'} → ${val.despues || '(vacio)'}`)
+    }
+  }
+
+  if (log.motivo) {
+    parts.push(`Motivo: ${log.motivo}`)
+  }
+
+  if (log.estadoAnterior) {
+    parts.push(`Estado anterior: ${log.estadoAnterior}`)
+  }
+
+  return parts
+}
 
 export default function SystemLogs() {
-  const [filterType, setFilterType] = useState('all')
+  const [logs, setLogs] = useState([])
+  const [usersMap, setUsersMap] = useState({})
+  const [loading, setLoading] = useState(true)
   const [expandedLog, setExpandedLog] = useState(null)
-  const [searchText, setSearchText] = useState('')
 
-  const getTypeIcon = (type) => {
-    switch (type) {
-      case 'success':
-        return <CheckCircleIcon className="w-5 h-5 text-green-500" />
-      case 'warning':
-        return <ExclamationCircleIcon className="w-5 h-5 text-yellow-500" />
-      case 'error':
-        return <XCircleIcon className="w-5 h-5 text-red-500" />
-      default:
-        return null
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterTipo, setFilterTipo] = useState('')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [logsData, usersData] = await Promise.all([getAllAuditLogs(), getAllUsers()])
+      setLogs(logsData)
+      const map = {}
+      usersData.forEach(u => { map[u.uid || u.id] = u })
+      setUsersMap(map)
+    } catch (err) {
+      console.error('Error cargando logs:', err.message)
+    } finally {
+      setLoading(false)
     }
+  }, [])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const hasFilters = searchQuery || filterTipo || filterDateFrom || filterDateTo
+
+  const filteredLogs = useMemo(() => {
+    return logs.filter(log => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase()
+        const matchTarget = (log.targetName || '').toLowerCase().includes(q)
+          || (log.targetEmail || '').toLowerCase().includes(q)
+        const adminName = usersMap[log.adminUid]?.name || ''
+        const matchAdmin = adminName.toLowerCase().includes(q)
+        if (!matchTarget && !matchAdmin) return false
+      }
+
+      if (filterTipo && log.tipo !== filterTipo) return false
+
+      if (filterDateFrom || filterDateTo) {
+        const logDate = log.timestamp?.toDate?.() || (log.timestamp ? new Date(log.timestamp) : null)
+        if (!logDate) return false
+        if (filterDateFrom && logDate < new Date(filterDateFrom)) return false
+        if (filterDateTo) {
+          const to = new Date(filterDateTo)
+          to.setHours(23, 59, 59, 999)
+          if (logDate > to) return false
+        }
+      }
+
+      return true
+    })
+  }, [logs, searchQuery, filterTipo, filterDateFrom, filterDateTo, usersMap])
+
+  // Stats de actividad reciente (ultimas 24h)
+  const stats = useMemo(() => {
+    const now = new Date()
+    const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000)
+    const recent = logs.filter(l => {
+      const d = l.timestamp?.toDate?.() || (l.timestamp ? new Date(l.timestamp) : null)
+      return d && d >= oneDayAgo
+    })
+    const last = logs[0] || null
+    const lastAdmin = last ? (usersMap[last.adminUid]?.name || last.adminUid || '-') : '-'
+    return { recentCount: recent.length, lastAction: last, lastAdmin }
+  }, [logs, usersMap])
+
+  const clearFilters = () => {
+    setSearchQuery('')
+    setFilterTipo('')
+    setFilterDateFrom('')
+    setFilterDateTo('')
   }
 
-  const getTypeLabel = (type) => {
-    const labels = { success: 'Éxito', warning: 'Advertencia', error: 'Error' }
-    return labels[type] || type
-  }
-
-  const getTypeColor = (type) => {
-    switch (type) {
-      case 'success':
-        return 'bg-green-50 border-green-200'
-      case 'warning':
-        return 'bg-yellow-50 border-yellow-200'
-      case 'error':
-        return 'bg-red-50 border-red-200'
-      default:
-        return 'bg-gray-50 border-gray-200'
-    }
-  }
-
-  const filteredLogs = logs.filter((log) => {
-    const matchesType = filterType === 'all' || log.type === filterType
-    const matchesSearch = log.action.toLowerCase().includes(searchText.toLowerCase()) ||
-                          log.user.toLowerCase().includes(searchText.toLowerCase())
-    return matchesType && matchesSearch
-  })
-
-  const stats = {
-    success: logs.filter(l => l.type === 'success').length,
-    warning: logs.filter(l => l.type === 'warning').length,
-    error: logs.filter(l => l.type === 'error').length,
-  }
+  const getAdminName = (uid) => usersMap[uid]?.name || uid || '-'
 
   return (
     <div className="space-y-6 pb-20 md:pb-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 font-poppins">Auditoría del Sistema</h1>
-        <p className="text-gray-600 mt-1">Registro de cambios y actividades del sistema</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 font-poppins">Logs de actividad</h1>
+          <p className="text-gray-600 text-sm">Registro de acciones realizadas en el sistema</p>
+        </div>
+        <button onClick={loadData} className="btn btn-ghost btn-sm gap-1 text-gray-500">
+          <ArrowPathIcon className="w-4 h-4" />
+          Actualizar
+        </button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card bg-gradient-to-br from-green-500 to-green-600 text-white shadow-lg">
-          <div className="card-body p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-green-100 text-sm">Acciones Exitosas</div>
-                <div className="text-3xl font-bold mt-1">{stats.success}</div>
-              </div>
-              <CheckCircleIcon className="w-10 h-10 text-green-200" />
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white border border-gray-100 rounded-lg p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
+              <DocumentTextIcon className="w-5 h-5 text-slate-500" />
+            </div>
+            <div>
+              <div className="text-xl font-semibold text-gray-800">{logs.length}</div>
+              <div className="text-xs text-gray-400">Total de registros</div>
             </div>
           </div>
         </div>
-
-        <div className="card bg-gradient-to-br from-yellow-500 to-yellow-600 text-white shadow-lg">
-          <div className="card-body p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-yellow-100 text-sm">Advertencias</div>
-                <div className="text-3xl font-bold mt-1">{stats.warning}</div>
-              </div>
-              <ExclamationCircleIcon className="w-10 h-10 text-yellow-200" />
+        <div className="bg-white border border-gray-100 rounded-lg p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
+              <ClockIcon className="w-5 h-5 text-amber-500" />
+            </div>
+            <div>
+              <div className="text-xl font-semibold text-gray-800">{stats.recentCount}</div>
+              <div className="text-xs text-gray-400">Ultimas 24 horas</div>
             </div>
           </div>
         </div>
-
-        <div className="card bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg">
-          <div className="card-body p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-red-100 text-sm">Errores</div>
-                <div className="text-3xl font-bold mt-1">{stats.error}</div>
+        <div className="bg-white border border-gray-100 rounded-lg p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-sky-50 flex items-center justify-center">
+              <UserPlusIcon className="w-5 h-5 text-sky-500" />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-gray-700 truncate">
+                {stats.lastAction ? (TIPOS[stats.lastAction.tipo]?.label || stats.lastAction.tipo) : '-'}
               </div>
-              <XCircleIcon className="w-10 h-10 text-red-200" />
+              <div className="text-xs text-gray-400">Ultima accion por {stats.lastAdmin}</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="card bg-white border border-gray-100 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="form-control">
-            <div className="input-group">
-              <input
-                type="text"
-                placeholder="Buscar por acción o usuario..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="input input-bordered flex-1"
-              />
-              <span className="bg-primary text-white">
-                <MagnifyingGlassIcon className="w-5 h-5" />
-              </span>
-            </div>
-          </div>
-          <div className="form-control">
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              className="select select-bordered"
-            >
-              <option value="all">Todos los tipos</option>
-              <option value="success">Éxito</option>
-              <option value="warning">Advertencia</option>
-              <option value="error">Error</option>
-            </select>
           </div>
         </div>
       </div>
 
-      {/* Logs List */}
-      <div className="space-y-3">
-        {filteredLogs.length > 0 ? (
-          filteredLogs.map(log => (
-            <div
-              key={log.id}
-              className={`card border-l-4 ${getTypeColor(log.type)} p-4 cursor-pointer hover:shadow-md transition-shadow`}
-            >
-              <div
-                onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
-                className="flex items-center justify-between"
-              >
-                <div className="flex items-center gap-4 flex-1">
-                  {getTypeIcon(log.type)}
-                  <div className="flex-1">
-                    <div className="font-semibold text-gray-800">{log.action}</div>
-                    <div className="text-xs text-gray-500 mt-1">{log.user} — {log.timestamp}</div>
-                  </div>
-                </div>
-                <ChevronDownIcon
-                  className={`w-5 h-5 text-gray-400 transition-transform ${
-                    expandedLog === log.id ? 'rotate-180' : ''
-                  }`}
-                />
-              </div>
-
-              {expandedLog === log.id && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <div className="bg-white bg-opacity-50 rounded p-3">
-                    <span className="text-sm text-gray-700">{log.details}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            No se encontraron registros con los filtros seleccionados
-          </div>
+      {/* Filtros */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input type="text" className="input input-bordered w-full pl-9 input-sm"
+            placeholder="Buscar por usuario afectado o administrador..."
+            value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+        </div>
+        <select className="select select-bordered select-sm"
+          value={filterTipo} onChange={e => setFilterTipo(e.target.value)}>
+          <option value="">Todos los tipos</option>
+          {Object.entries(TIPOS).map(([key, val]) => (
+            <option key={key} value={key}>{val.label}</option>
+          ))}
+        </select>
+        <input type="date" className="input input-bordered input-sm"
+          value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+          title="Desde" />
+        <input type="date" className="input input-bordered input-sm"
+          value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+          title="Hasta" />
+        {hasFilters && (
+          <button onClick={clearFilters} className="btn btn-ghost btn-sm gap-1 text-gray-500">
+            <XCircleIcon className="w-4 h-4" />
+            Limpiar
+          </button>
         )}
       </div>
+
+      {/* Lista de logs */}
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <span className="loading loading-spinner loading-lg text-primary" />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredLogs.length === 0 ? (
+            <div className="text-center py-12">
+              {hasFilters ? (
+                <div className="space-y-2">
+                  <p className="text-gray-400">No se encontraron registros con los filtros aplicados</p>
+                  <button onClick={clearFilters} className="btn btn-ghost btn-sm text-primary">Limpiar filtros</button>
+                </div>
+              ) : (
+                <p className="text-gray-400">No hay registros de actividad</p>
+              )}
+            </div>
+          ) : (
+            filteredLogs.map(log => {
+              const tipo = TIPOS[log.tipo] || { label: log.tipo, icon: DocumentTextIcon, color: 'text-gray-600', bg: 'bg-gray-50' }
+              const Icon = tipo.icon
+              const details = buildDetails(log)
+              const isExpanded = expandedLog === log.id
+
+              return (
+                <div key={log.id}
+                  className="bg-white border border-gray-100 rounded-lg overflow-hidden hover:border-gray-200 transition-colors">
+                  <div className="flex items-center gap-3 p-4 cursor-pointer"
+                    onClick={() => setExpandedLog(isExpanded ? null : log.id)}>
+                    <div className={`w-9 h-9 rounded-lg ${tipo.bg} flex items-center justify-center shrink-0`}>
+                      <Icon className={`w-4 h-4 ${tipo.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${tipo.bg} ${tipo.color}`}>
+                          {tipo.label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-700 mt-0.5 truncate">
+                        {log.targetName || log.targetEmail || '-'}
+                        <span className="text-gray-400"> por </span>
+                        {getAdminName(log.adminUid)}
+                      </p>
+                    </div>
+                    <div className="text-xs text-gray-400 shrink-0 text-right">
+                      {formatTimestamp(log.timestamp)}
+                    </div>
+                    <ChevronDownIcon className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  </div>
+
+                  {isExpanded && details.length > 0 && (
+                    <div className="px-4 pb-4 pt-0">
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+                        {details.map((d, i) => (
+                          <p key={i} className="text-sm text-gray-600">{d}</p>
+                        ))}
+                        <p className="text-xs text-gray-400 pt-1">
+                          Usuario afectado: {log.targetEmail || '-'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
     </div>
   )
 }
