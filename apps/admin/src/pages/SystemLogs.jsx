@@ -11,6 +11,7 @@ import {
   PencilSquareIcon,
   NoSymbolIcon,
   CheckBadgeIcon,
+  CubeIcon,
 } from '@heroicons/react/24/outline'
 import { getAllAuditLogs, getAllUsers } from '@shared/firebase/auth'
 
@@ -20,6 +21,8 @@ const TIPOS = {
   modificacion_usuario: { label: 'Modificacion de datos', icon: PencilSquareIcon, color: 'text-sky-600', bg: 'bg-sky-50' },
   desactivacion_usuario: { label: 'Desactivacion', icon: NoSymbolIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
   reactivacion_usuario: { label: 'Reactivacion', icon: CheckBadgeIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  modificacion_producto: { label: 'Modificacion de producto', icon: CubeIcon, color: 'text-amber-600', bg: 'bg-amber-50' },
+  eliminacion_producto: { label: 'Eliminacion de producto', icon: CubeIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
 }
 
 function formatTimestamp(ts) {
@@ -43,10 +46,21 @@ function buildDetails(log) {
     parts.push(`Rol nuevo: ${log.rolNuevo || '-'}`)
   }
 
-  if (log.tipo === 'modificacion_usuario' && log.cambios) {
+  if ((log.tipo === 'modificacion_usuario' || log.tipo === 'modificacion_producto') && log.cambios) {
     for (const [campo, val] of Object.entries(log.cambios)) {
-      parts.push(`${campo}: ${val.antes || '(vacio)'} → ${val.despues || '(vacio)'}`)
+      const antes = val.antes ?? '(vacio)'
+      const despues = val.despues ?? '(vacio)'
+      parts.push(`${campo}: ${antes} → ${despues}`)
     }
+  }
+
+  if (log.tipo === 'eliminacion_producto' && log.detalles) {
+    if (log.detalles.categoria) parts.push(`Categoria: ${log.detalles.categoria}`)
+    if (log.detalles.precio) parts.push(`Precio: ₡${Number(log.detalles.precio).toLocaleString()}`)
+  }
+
+  if (log.motivoPrecio) {
+    parts.push(`Motivo del cambio de precio: ${log.motivoPrecio}`)
   }
 
   if (log.motivo) {

@@ -259,12 +259,95 @@ export async function getProductosByCategoria(categoria) {
 }
 
 /**
- * Actualiza un producto
+ * Actualiza un producto con validaciones, verificacion de nombre unico y registro en auditoria.
+ * @param {string} productoId
+ * @param {object} updates - { nombre, descripcion, precio, categoria, imagen }
+ * @param {string} adminUid - UID del admin que hace el cambio
+ * @param {string} [motivoPrecio] - Motivo obligatorio si el precio cambia
  */
-export async function updateProducto(productoId, updates) {
-  await updateDoc(doc(db, 'productos', productoId), {
-    ...updates,
-    updatedAt: new Date(),
+export async function updateProducto(productoId, updates, adminUid, motivoPrecio = '') {
+  const prevSnap = await getDoc(doc(db, 'productos', productoId));
+  if (!prevSnap.exists()) throw new Error('Producto no encontrado.');
+  const prev = prevSnap.data();
+
+  if (updates.nombre !== undefined) {
+    if (!updates.nombre || !updates.nombre.trim()) throw new Error('El nombre del producto es obligatorio.');
+    if (updates.nombre.trim() !== prev.nombre) {
+      const dupeQ = query(collection(db, 'productos'), where('nombre', '==', updates.nombre.trim()));
+      const dupeSnap = await getDocs(dupeQ);
+      const isDupe = dupeSnap.docs.some(d => d.id !== productoId);
+      if (isDupe) throw new Error('Nombre de plato ya en uso.');
+    }
+  }
+
+  if (updates.descripcion !== undefined) {
+    if (!updates.descripcion || !updates.descripcion.trim()) throw new Error('La descripcion es obligatoria.');
+    if (updates.descripcion.trim().length > 500) throw new Error('La descripcion no puede superar 500 caracteres.');
+  }
+
+  if (updates.precio !== undefined) {
+    const precioNum = Number(updates.precio);
+    if (!precioNum || precioNum <= 0) throw new Error('El precio debe ser mayor a cero.');
+    if (precioNum !== prev.precio && !motivoPrecio.trim()) {
+      throw new Error('Debe indicar un motivo para el cambio de precio.');
+    }
+    updates.precio = precioNum;
+  }
+
+  if (updates.categoria !== undefined) {
+    if (!updates.categoria || !updates.categoria.trim()) throw new Error('La categoria es obligatoria.');
+  }
+
+  const cambios = {};
+  const fieldsToTrack = ['nombre', 'descripcion', 'precio', 'categoria', 'imagen'];
+  for (const field of fieldsToTrack) {
+    if (updates[field] === undefined) continue;
+    const newVal = typeof updates[field] === 'string' ? updates[field].trim() : updates[field];
+    const oldVal = prev[field] ?? null;
+    if (newVal !== oldVal) {
+      cambios[field] = { antes: oldVal, despues: newVal };
+    }
+  }
+
+  if (Object.keys(cambios).length === 0) return;
+
+  const cleanUpdates = {};
+  for (const field of fieldsToTrack) {
+    if (updates[field] === undefined) continue;
+    cleanUpdates[field] = typeof updates[field] === 'string' ? updates[field].trim() : updates[field];
+  }
+  cleanUpdates.updatedAt = new Date();
+
+  await updateDoc(doc(db, 'productos', productoId), cleanUpdates);
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'modificacion_producto',
+    targetId: productoId,
+    targetName: cleanUpdates.nombre || prev.nombre,
+    cambios,
+    motivoPrecio: cambios.precio ? motivoPrecio.trim() : null,
+    adminUid: adminUid || '',
+    timestamp: new Date(),
+  });
+}
+
+/**
+ * Elimina un producto del catalogo y registra la accion en auditoria.
+ */
+export async function deleteProducto(productoId, adminUid) {
+  const snap = await getDoc(doc(db, 'productos', productoId));
+  if (!snap.exists()) throw new Error('Producto no encontrado.');
+  const prev = snap.data();
+
+  await deleteDoc(doc(db, 'productos', productoId));
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'eliminacion_producto',
+    targetId: productoId,
+    targetName: prev.nombre,
+    detalles: { precio: prev.precio, categoria: prev.categoria },
+    adminUid: adminUid || '',
+    timestamp: new Date(),
   });
 }
 
