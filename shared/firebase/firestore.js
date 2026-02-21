@@ -201,6 +201,55 @@ export async function getEntradasInsumos() {
   return list;
 }
 
+const MOTIVOS_SALIDA = ['consumo', 'desperdicio', 'merma', 'vencimiento', 'otro'];
+
+/**
+ * Registra una salida manual de insumo: resta stock y guarda registro.
+ */
+export async function registrarSalidaInsumo({ insumoId, cantidad, motivo, adminUid }) {
+  if (!insumoId) throw new Error('Debe seleccionar un insumo.');
+  const cantNum = Number(cantidad);
+  if (!cantNum || cantNum <= 0) throw new Error('La cantidad debe ser mayor a cero.');
+  if (!motivo || !MOTIVOS_SALIDA.includes(motivo)) throw new Error('Debe seleccionar un motivo.');
+
+  const itemRef = doc(db, 'inventario', insumoId);
+  const itemDoc = await getDoc(itemRef);
+  if (!itemDoc.exists()) throw new Error('El insumo no existe.');
+
+  const data = itemDoc.data();
+  const stockActual = data.cantidad || 0;
+  if (cantNum > stockActual) throw new Error(`Stock insuficiente. Disponible: ${stockActual} ${data.unidad || ''}`);
+
+  await updateDoc(itemRef, {
+    cantidad: stockActual - cantNum,
+    updatedAt: new Date(),
+  });
+
+  await addDoc(collection(db, 'salidas_insumos'), {
+    insumoId,
+    insumoNombre: data.nombre || '',
+    cantidad: cantNum,
+    unidad: data.unidad || '',
+    motivo,
+    adminUid: adminUid || '',
+    timestamp: new Date(),
+  });
+}
+
+/**
+ * Obtiene todas las salidas de insumos ordenadas por fecha descendente.
+ */
+export async function getSalidasInsumos() {
+  const snapshot = await getDocs(collection(db, 'salidas_insumos'));
+  const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => {
+    const ta = a.timestamp?.toDate?.() || a.timestamp || 0;
+    const tb = b.timestamp?.toDate?.() || b.timestamp || 0;
+    return new Date(tb) - new Date(ta);
+  });
+  return list;
+}
+
 // ==================== PRODUCTOS ====================
 
 /**

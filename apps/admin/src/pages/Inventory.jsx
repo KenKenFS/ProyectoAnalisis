@@ -16,7 +16,7 @@ import {
 } from '@heroicons/react/24/outline'
 import ReactCrop from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
-import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos } from '@shared/firebase/firestore'
+import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos } from '@shared/firebase/firestore'
 import { useAuth } from '@shared/firebase/AuthContext'
 
 // Aspect ratio 16:10 para coincidir con el h-40 de las cards
@@ -103,6 +103,14 @@ export default function Inventory() {
   const [entradaSuccess, setEntradaSuccess] = useState('')
   const [registrando, setRegistrando] = useState(false)
 
+  // Salidas
+  const [salidas, setSalidas] = useState([])
+  const [loadingSalidas, setLoadingSalidas] = useState(false)
+  const [salidaForm, setSalidaForm] = useState({ insumoId: '', cantidad: '', motivo: '' })
+  const [salidaError, setSalidaError] = useState('')
+  const [salidaSuccess, setSalidaSuccess] = useState('')
+  const [registrandoSalida, setRegistrandoSalida] = useState(false)
+
   const loadProductos = useCallback(async () => {
     setLoadingProductos(true)
     try {
@@ -166,8 +174,47 @@ export default function Inventory() {
   }
 
   const UNIDADES = ['kg', 'g', 'litro', 'ml', 'unidad', 'docena', 'manojo', 'libra', 'onza', 'botella', 'caja', 'bolsa']
+  const MOTIVOS_SALIDA = [
+    { value: 'consumo', label: 'Consumo' },
+    { value: 'desperdicio', label: 'Desperdicio' },
+    { value: 'merma', label: 'Merma' },
+    { value: 'vencimiento', label: 'Vencimiento' },
+    { value: 'otro', label: 'Otro' },
+  ]
 
   const insumosExistentes = useMemo(() => [...new Set(insumos.map(i => i.nombre).filter(Boolean))].sort(), [insumos])
+
+  const loadSalidas = useCallback(async () => {
+    setLoadingSalidas(true)
+    const data = await getSalidasInsumos()
+    setSalidas(data)
+    setLoadingSalidas(false)
+  }, [])
+
+  const selectedInsumo = useMemo(() => insumos.find(i => i.id === salidaForm.insumoId), [insumos, salidaForm.insumoId])
+
+  const handleRegistrarSalida = async () => {
+    setSalidaError('')
+    setSalidaSuccess('')
+    setRegistrandoSalida(true)
+    try {
+      await registrarSalidaInsumo({
+        insumoId: salidaForm.insumoId,
+        cantidad: salidaForm.cantidad,
+        motivo: salidaForm.motivo,
+        adminUid: currentAdmin?.uid || '',
+      })
+      setSalidaSuccess('Salida registrada exitosamente.')
+      setSalidaForm({ insumoId: '', cantidad: '', motivo: '' })
+      loadInsumos()
+      loadSalidas()
+      setTimeout(() => setSalidaSuccess(''), 3000)
+    } catch (err) {
+      setSalidaError(err.message)
+    } finally {
+      setRegistrandoSalida(false)
+    }
+  }
 
   const filteredProductos = useMemo(() => {
     return productos.filter(p => {
@@ -595,10 +642,12 @@ export default function Inventory() {
             {[
               { key: 'stock', label: 'Inventario' },
               { key: 'nueva', label: 'Registrar entrada' },
-              { key: 'entradas', label: 'Historial' },
+              { key: 'salida', label: 'Registrar salida' },
+              { key: 'entradas', label: 'Historial entradas' },
+              { key: 'salidas', label: 'Historial salidas' },
             ].map(t => (
               <button key={t.key}
-                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas() }}
+                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas(); if (t.key === 'salidas') loadSalidas() }}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${stockSubTab === t.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 {t.label}
               </button>
@@ -764,6 +813,114 @@ export default function Inventory() {
                             <td className="text-center text-sm text-gray-500">{e.unidad}</td>
                             <td className="text-center text-sm text-gray-500">₡{e.precioUnitario?.toLocaleString?.() || e.precioUnitario}</td>
                             <td className="text-center text-sm text-gray-500">{e.fechaCaducidad || '—'}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          )}
+
+          {/* Sub-tab: Registrar salida */}
+          {stockSubTab === 'salida' && (
+            <div className="bg-white border border-gray-100 rounded-lg p-6 max-w-xl">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Registrar salida de insumo</h3>
+
+              {salidaError && (
+                <div className="bg-rose-50 text-rose-700 text-sm rounded-lg p-3 mb-4 flex items-start gap-2">
+                  <ExclamationTriangleIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><span>{salidaError}</span>
+                </div>
+              )}
+              {salidaSuccess && (
+                <div className="bg-emerald-50 text-emerald-700 text-sm rounded-lg p-3 mb-4 flex items-start gap-2">
+                  <CheckCircleIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><span>{salidaSuccess}</span>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Insumo *</label>
+                  <select value={salidaForm.insumoId} onChange={e => setSalidaForm(f => ({ ...f, insumoId: e.target.value }))}
+                    className="select select-bordered w-full select-sm">
+                    <option value="">Seleccionar insumo...</option>
+                    {insumos.map(i => (
+                      <option key={i.id} value={i.id}>{i.nombre} — Stock: {i.cantidad || 0} {i.unidad || ''}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedInsumo && (
+                  <div className="bg-slate-50 rounded-lg p-3 text-sm">
+                    <span className="text-gray-500">Stock disponible:</span>{' '}
+                    <span className="font-semibold text-gray-800">{selectedInsumo.cantidad || 0} {selectedInsumo.unidad || ''}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Cantidad a restar *</label>
+                    <input type="number" min="0.01" step="0.01" placeholder="0"
+                      value={salidaForm.cantidad} onChange={e => setSalidaForm(f => ({ ...f, cantidad: e.target.value }))}
+                      className="input input-bordered w-full input-sm" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Motivo *</label>
+                    <select value={salidaForm.motivo} onChange={e => setSalidaForm(f => ({ ...f, motivo: e.target.value }))}
+                      className="select select-bordered w-full select-sm">
+                      <option value="">Seleccionar motivo...</option>
+                      {MOTIVOS_SALIDA.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button onClick={handleRegistrarSalida} disabled={registrandoSalida} className="btn btn-sm btn-error text-white gap-1">
+                    {registrandoSalida ? <span className="loading loading-spinner loading-xs" /> : <ArrowPathIcon className="w-4 h-4" />}
+                    Registrar salida
+                  </button>
+                  <button onClick={() => { setSalidaForm({ insumoId: '', cantidad: '', motivo: '' }); setSalidaError('') }}
+                    className="btn btn-sm btn-ghost">Limpiar</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-tab: Historial de salidas */}
+          {stockSubTab === 'salidas' && (
+            loadingSalidas ? (
+              <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
+            ) : salidas.length === 0 ? (
+              <div className="text-center py-12">
+                <CubeIcon className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-gray-400">No hay salidas registradas</p>
+              </div>
+            ) : (
+              <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="table w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-xs font-medium text-gray-500">Fecha</th>
+                        <th className="text-xs font-medium text-gray-500">Insumo</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Cantidad</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Unidad</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Motivo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salidas.map(s => {
+                        const ts = s.timestamp?.toDate?.() ? s.timestamp.toDate() : new Date(s.timestamp)
+                        const motivoLabel = MOTIVOS_SALIDA.find(m => m.value === s.motivo)?.label || s.motivo
+                        const motivoColor = { consumo: 'bg-sky-50 text-sky-700', desperdicio: 'bg-amber-50 text-amber-700', merma: 'bg-orange-50 text-orange-700', vencimiento: 'bg-rose-50 text-rose-700', otro: 'bg-slate-50 text-slate-700' }[s.motivo] || 'bg-slate-50 text-slate-700'
+                        return (
+                          <tr key={s.id} className="hover:bg-gray-50 transition-colors border-b border-gray-50">
+                            <td className="text-sm text-gray-600">{ts.toLocaleDateString('es-CR', { day: '2-digit', month: 'short', year: 'numeric' })} {ts.toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' })}</td>
+                            <td className="font-medium text-gray-800 text-sm">{s.insumoNombre}</td>
+                            <td className="text-center font-semibold text-rose-600">-{s.cantidad}</td>
+                            <td className="text-center text-sm text-gray-500">{s.unidad}</td>
+                            <td className="text-center"><span className={`text-xs font-medium px-2 py-0.5 rounded-md ${motivoColor}`}>{motivoLabel}</span></td>
                           </tr>
                         )
                       })}
