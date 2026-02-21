@@ -123,61 +123,82 @@ export async function deletePedido(pedidoId) {
 // ==================== INVENTARIO ====================
 
 /**
- * Crea un nuevo item de inventario
- * @param {object} itemData - Datos del item
- * @returns {Promise<string>} ID del item
- */
-export async function createInventarioItem(itemData) {
-  try {
-    const docRef = await addDoc(collection(db, 'inventario'), {
-      ...itemData,
-      cantidad: itemData.cantidad || 0,
-      minCantidad: itemData.minCantidad || 10,
-      createdAt: new Date(),
-    });
-    console.log('✅ Item de inventario creado:', docRef.id);
-    return docRef.id;
-  } catch (error) {
-    console.error('❌ Error al crear item de inventario:', error.message);
-    throw error;
-  }
-}
-
-/**
- * Obtiene todos los items del inventario
- * @returns {Promise<array>}
+ * Obtiene todos los items del inventario.
  */
 export async function getInventarioItems() {
-  try {
-    const snapshot = await getDocs(collection(db, 'inventario'));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  } catch (error) {
-    console.error('❌ Error al obtener inventario:', error.message);
-    return [];
-  }
+  const snapshot = await getDocs(collection(db, 'inventario'));
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 /**
- * Actualiza la cantidad de un item del inventario
- * @param {string} itemId - ID del item
- * @param {number} cantidadAjuste - Cantidad a añadir/restar
+ * Registra una entrada de insumo: si el insumo existe suma al stock, si no lo crea.
+ * Guarda el registro en la coleccion entradas_insumos.
  */
-export async function updateInventarioCantidad(itemId, cantidadAjuste) {
-  try {
-    const itemRef = doc(db, 'inventario', itemId);
-    const itemDoc = await getDoc(itemRef);
-    if (itemDoc.exists()) {
-      const nuevaCantidad = (itemDoc.data().cantidad || 0) + cantidadAjuste;
-      await updateDoc(itemRef, {
-        cantidad: nuevaCantidad,
-        updatedAt: new Date(),
-      });
-      console.log('✅ Inventario actualizado:', itemId);
-    }
-  } catch (error) {
-    console.error('❌ Error al actualizar inventario:', error.message);
-    throw error;
+export async function registrarEntradaInsumo({ nombre, cantidad, unidad, precioUnitario, fechaCaducidad = null, adminUid }) {
+  if (!nombre || !nombre.trim()) throw new Error('El nombre del insumo es obligatorio.');
+  if (!unidad || !unidad.trim()) throw new Error('La unidad de medida es obligatoria.');
+  const cantNum = Number(cantidad);
+  if (!cantNum || cantNum <= 0) throw new Error('La cantidad debe ser mayor a cero.');
+  const precioNum = Number(precioUnitario);
+  if (!precioNum || precioNum < 0) throw new Error('El precio unitario no puede ser negativo.');
+
+  if (fechaCaducidad) {
+    const caducDate = new Date(fechaCaducidad);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (caducDate < today) throw new Error('La fecha de caducidad debe ser futura.');
   }
+
+  const q = query(collection(db, 'inventario'), where('nombre', '==', nombre.trim()));
+  const snap = await getDocs(q);
+
+  let insumoId;
+  if (snap.empty) {
+    const docRef = await addDoc(collection(db, 'inventario'), {
+      nombre: nombre.trim(),
+      unidad: unidad.trim(),
+      cantidad: cantNum,
+      minCantidad: 10,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    insumoId = docRef.id;
+  } else {
+    const existing = snap.docs[0];
+    insumoId = existing.id;
+    const prev = existing.data();
+    await updateDoc(doc(db, 'inventario', insumoId), {
+      cantidad: (prev.cantidad || 0) + cantNum,
+      updatedAt: new Date(),
+    });
+  }
+
+  await addDoc(collection(db, 'entradas_insumos'), {
+    insumoId,
+    insumoNombre: nombre.trim(),
+    cantidad: cantNum,
+    unidad: unidad.trim(),
+    precioUnitario: precioNum,
+    fechaCaducidad: fechaCaducidad || null,
+    adminUid: adminUid || '',
+    timestamp: new Date(),
+  });
+
+  return insumoId;
+}
+
+/**
+ * Obtiene todas las entradas de insumos ordenadas por fecha descendente.
+ */
+export async function getEntradasInsumos() {
+  const snapshot = await getDocs(collection(db, 'entradas_insumos'));
+  const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => {
+    const ta = a.timestamp?.toDate?.() || a.timestamp || 0;
+    const tb = b.timestamp?.toDate?.() || b.timestamp || 0;
+    return new Date(tb) - new Date(ta);
+  });
+  return list;
 }
 
 // ==================== PRODUCTOS ====================

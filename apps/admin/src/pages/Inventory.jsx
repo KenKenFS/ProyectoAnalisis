@@ -16,7 +16,7 @@ import {
 } from '@heroicons/react/24/outline'
 import ReactCrop from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
-import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage } from '@shared/firebase/firestore'
+import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos } from '@shared/firebase/firestore'
 import { useAuth } from '@shared/firebase/AuthContext'
 
 // Aspect ratio 16:10 para coincidir con el h-40 de las cards
@@ -85,22 +85,23 @@ export default function Inventory() {
   const [cropSrc, setCropSrc] = useState(null)
   const [crop, setCrop] = useState(undefined)
   const [completedCrop, setCompletedCrop] = useState(null)
-  const [cropTarget, setCropTarget] = useState(null) // 'create' | 'edit'
+  const [cropTarget, setCropTarget] = useState(null)
   const cropImgRef = useRef(null)
 
-  // Datos mock de inventario/stock (se reemplazaran en HUs de inventario)
-  const inventory = [
-    { id: 1, name: 'Camarones Grandes', qty: 15, minQty: 10, unit: 'kg', lastRestock: '2025-01-15', category: 'Proteina' },
-    { id: 2, name: 'Limon Fresco', qty: 3, minQty: 20, unit: 'docena', lastRestock: '2025-01-14', category: 'Frutas' },
-    { id: 3, name: 'Cebolla Blanca', qty: 45, minQty: 30, unit: 'kg', lastRestock: '2025-01-13', category: 'Vegetales' },
-    { id: 4, name: 'Cilantro Fresco', qty: 8, minQty: 5, unit: 'manojo', lastRestock: '2025-01-16', category: 'Hierbas' },
-    { id: 5, name: 'Aji Rojo', qty: 120, minQty: 50, unit: 'kg', lastRestock: '2025-01-12', category: 'Vegetales' },
-    { id: 6, name: 'Tomate Rojo', qty: 25, minQty: 15, unit: 'kg', lastRestock: '2025-01-15', category: 'Vegetales' },
-    { id: 7, name: 'Ceviche Mix', qty: 8, minQty: 5, unit: 'kg', lastRestock: '2025-01-16', category: 'Proteina' },
-    { id: 8, name: 'Leche de Coco', qty: 12, minQty: 8, unit: 'litro', lastRestock: '2025-01-14', category: 'Bebidas' },
-    { id: 9, name: 'Sal Marina', qty: 5, minQty: 3, unit: 'kg', lastRestock: '2025-01-10', category: 'Condimentos' },
-    { id: 10, name: 'Pimienta Negra', qty: 2, minQty: 2, unit: 'kg', lastRestock: '2025-01-08', category: 'Condimentos' },
-  ]
+  // Inventario (stock real)
+  const [insumos, setInsumos] = useState([])
+  const [loadingInsumos, setLoadingInsumos] = useState(true)
+  const [stockSubTab, setStockSubTab] = useState('stock') // 'stock' | 'entradas' | 'nueva'
+
+  // Entradas
+  const [entradas, setEntradas] = useState([])
+  const [loadingEntradas, setLoadingEntradas] = useState(false)
+
+  // Formulario de nueva entrada
+  const [entradaForm, setEntradaForm] = useState({ nombre: '', cantidad: '', unidad: '', precioUnitario: '', fechaCaducidad: '' })
+  const [entradaError, setEntradaError] = useState('')
+  const [entradaSuccess, setEntradaSuccess] = useState('')
+  const [registrando, setRegistrando] = useState(false)
 
   const loadProductos = useCallback(async () => {
     setLoadingProductos(true)
@@ -117,12 +118,56 @@ export default function Inventory() {
 
   useEffect(() => { loadProductos() }, [loadProductos])
 
-  const lowStockCount = inventory.filter(i => i.qty <= i.minQty).length
-  const warningStockCount = inventory.filter(i => i.qty > i.minQty && i.qty < 20).length
+  const loadInsumos = useCallback(async () => {
+    setLoadingInsumos(true)
+    const data = await getInventarioItems()
+    setInsumos(data)
+    setLoadingInsumos(false)
+  }, [])
 
-  const filteredInventory = inventory.filter(i =>
-    i.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const loadEntradas = useCallback(async () => {
+    setLoadingEntradas(true)
+    const data = await getEntradasInsumos()
+    setEntradas(data)
+    setLoadingEntradas(false)
+  }, [])
+
+  useEffect(() => { loadInsumos() }, [loadInsumos])
+
+  const lowStockCount = insumos.filter(i => (i.cantidad || 0) <= (i.minCantidad || 10)).length
+
+  const filteredInventory = insumos.filter(i =>
+    (i.nombre || '').toLowerCase().includes(searchTerm.toLowerCase())
   )
+
+  const handleRegistrarEntrada = async () => {
+    setEntradaError('')
+    setEntradaSuccess('')
+    setRegistrando(true)
+    try {
+      await registrarEntradaInsumo({
+        nombre: entradaForm.nombre.trim(),
+        cantidad: entradaForm.cantidad,
+        unidad: entradaForm.unidad.trim(),
+        precioUnitario: entradaForm.precioUnitario,
+        fechaCaducidad: entradaForm.fechaCaducidad || null,
+        adminUid: currentAdmin?.uid || '',
+      })
+      setEntradaSuccess('Entrada registrada exitosamente.')
+      setEntradaForm({ nombre: '', cantidad: '', unidad: '', precioUnitario: '', fechaCaducidad: '' })
+      loadInsumos()
+      loadEntradas()
+      setTimeout(() => setEntradaSuccess(''), 3000)
+    } catch (err) {
+      setEntradaError(err.message)
+    } finally {
+      setRegistrando(false)
+    }
+  }
+
+  const UNIDADES = ['kg', 'g', 'litro', 'ml', 'unidad', 'docena', 'manojo', 'libra', 'onza', 'botella', 'caja', 'bolsa']
+
+  const insumosExistentes = useMemo(() => [...new Set(insumos.map(i => i.nombre).filter(Boolean))].sort(), [insumos])
 
   const filteredProductos = useMemo(() => {
     return productos.filter(p => {
@@ -443,8 +488,8 @@ export default function Inventory() {
               <CubeIcon className="w-5 h-5 text-slate-500" />
             </div>
             <div>
-              <div className="text-xl font-semibold text-gray-800">{activeTab === 'stock' ? inventory.length : productos.length}</div>
-              <div className="text-xs text-gray-400">{activeTab === 'stock' ? 'Items en stock' : 'Productos en catalogo'}</div>
+              <div className="text-xl font-semibold text-gray-800">{activeTab === 'stock' ? insumos.length : productos.length}</div>
+              <div className="text-xs text-gray-400">{activeTab === 'stock' ? 'Insumos en inventario' : 'Productos en catalogo'}</div>
             </div>
           </div>
         </div>
@@ -452,23 +497,23 @@ export default function Inventory() {
           <>
             <div className="bg-white border border-gray-100 rounded-lg p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-                  <ExclamationTriangleIcon className="w-5 h-5 text-amber-500" />
-                </div>
-                <div>
-                  <div className="text-xl font-semibold text-gray-800">{warningStockCount}</div>
-                  <div className="text-xs text-gray-400">Stock bajo</div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white border border-gray-100 rounded-lg p-4">
-              <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-rose-50 flex items-center justify-center">
                   <ExclamationTriangleIcon className="w-5 h-5 text-rose-500" />
                 </div>
                 <div>
                   <div className="text-xl font-semibold text-gray-800">{lowStockCount}</div>
-                  <div className="text-xs text-gray-400">Critico</div>
+                  <div className="text-xs text-gray-400">Stock bajo / critico</div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white border border-gray-100 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
+                  <CheckCircleIcon className="w-5 h-5 text-emerald-500" />
+                </div>
+                <div>
+                  <div className="text-xl font-semibold text-gray-800">{entradas.length}</div>
+                  <div className="text-xs text-gray-400">Entradas registradas</div>
                 </div>
               </div>
             </div>
@@ -521,7 +566,7 @@ export default function Inventory() {
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder={activeTab === 'stock' ? 'Buscar en stock...' : 'Buscar por nombre o descripcion...'}
+          <input type="text" placeholder={activeTab === 'stock' ? 'Buscar insumo...' : 'Buscar por nombre o descripcion...'}
             value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
             className="input input-bordered w-full pl-9 input-sm" />
         </div>
@@ -544,50 +589,190 @@ export default function Inventory() {
 
       {/* Stock Tab */}
       {activeTab === 'stock' && (
-        <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="table w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-xs font-medium text-gray-500">Producto</th>
-                  <th className="text-xs font-medium text-gray-500 text-center">Stock</th>
-                  <th className="text-xs font-medium text-gray-500 text-center">Minimo</th>
-                  <th className="text-xs font-medium text-gray-500 text-center">Unidad</th>
-                  <th className="text-xs font-medium text-gray-500 text-center">Categoria</th>
-                  <th className="text-xs font-medium text-gray-500 text-center">Estado</th>
-                  <th className="text-xs font-medium text-gray-500 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredInventory.map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50 transition-colors border-b border-gray-50">
-                    <td className="font-medium text-gray-800 text-sm">{item.name}</td>
-                    <td className="text-center font-semibold text-gray-700">{item.qty}</td>
-                    <td className="text-center text-sm text-gray-500">{item.minQty}</td>
-                    <td className="text-center text-sm text-gray-500">{item.unit}</td>
-                    <td className="text-center">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-slate-50 text-slate-600">{item.category}</span>
-                    </td>
-                    <td className="text-center">
-                      {item.qty <= item.minQty ? (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-rose-50 text-rose-600">Critico</span>
-                      ) : item.qty < 20 ? (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-600">Bajo</span>
-                      ) : (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-600">OK</span>
-                      )}
-                    </td>
-                    <td className="text-center">
-                      <div className="flex gap-1 justify-center">
-                        <button className="btn btn-ghost btn-xs text-gray-400"><ArrowPathIcon className="w-4 h-4" /></button>
-                        <button className="btn btn-ghost btn-xs text-gray-400"><PencilSquareIcon className="w-4 h-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="space-y-4">
+          {/* Sub-tabs de Stock */}
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+            {[
+              { key: 'stock', label: 'Inventario' },
+              { key: 'nueva', label: 'Registrar entrada' },
+              { key: 'entradas', label: 'Historial' },
+            ].map(t => (
+              <button key={t.key}
+                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas() }}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${stockSubTab === t.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                {t.label}
+              </button>
+            ))}
           </div>
+
+          {/* Sub-tab: Inventario (tabla de stock) */}
+          {stockSubTab === 'stock' && (
+            loadingInsumos ? (
+              <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
+            ) : filteredInventory.length === 0 ? (
+              <div className="text-center py-12">
+                <CubeIcon className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-gray-400">{searchTerm ? 'Sin resultados' : 'No hay insumos registrados'}</p>
+                {!searchTerm && <button onClick={() => setStockSubTab('nueva')} className="btn btn-sm btn-ghost text-primary mt-2">Registrar primera entrada</button>}
+              </div>
+            ) : (
+              <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="table w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-xs font-medium text-gray-500">Insumo</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Stock</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Minimo</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Unidad</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredInventory.map((item) => {
+                        const qty = item.cantidad || 0
+                        const minQ = item.minCantidad || 10
+                        return (
+                          <tr key={item.id} className="hover:bg-gray-50 transition-colors border-b border-gray-50">
+                            <td className="font-medium text-gray-800 text-sm">{item.nombre}</td>
+                            <td className="text-center font-semibold text-gray-700">{qty}</td>
+                            <td className="text-center text-sm text-gray-500">{minQ}</td>
+                            <td className="text-center text-sm text-gray-500">{item.unidad || '-'}</td>
+                            <td className="text-center">
+                              {qty <= minQ ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-rose-50 text-rose-600">Critico</span>
+                              ) : qty < minQ * 2 ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-600">Bajo</span>
+                              ) : (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-600">OK</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          )}
+
+          {/* Sub-tab: Registrar entrada */}
+          {stockSubTab === 'nueva' && (
+            <div className="bg-white border border-gray-100 rounded-lg p-6 max-w-xl">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Registrar entrada de insumo</h3>
+
+              {entradaError && (
+                <div className="bg-rose-50 text-rose-700 text-sm rounded-lg p-3 mb-4 flex items-start gap-2">
+                  <ExclamationTriangleIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><span>{entradaError}</span>
+                </div>
+              )}
+              {entradaSuccess && (
+                <div className="bg-emerald-50 text-emerald-700 text-sm rounded-lg p-3 mb-4 flex items-start gap-2">
+                  <CheckCircleIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><span>{entradaSuccess}</span>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Nombre del insumo *</label>
+                  <input list="insumos-list" type="text" placeholder="Ej: Camarones Grandes"
+                    value={entradaForm.nombre} onChange={e => setEntradaForm(f => ({ ...f, nombre: e.target.value }))}
+                    className="input input-bordered w-full input-sm" />
+                  <datalist id="insumos-list">
+                    {insumosExistentes.map(n => <option key={n} value={n} />)}
+                  </datalist>
+                  <p className="text-xs text-gray-400 mt-1">Si el insumo no existe, se creara automaticamente.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Cantidad *</label>
+                    <input type="number" min="0.01" step="0.01" placeholder="0"
+                      value={entradaForm.cantidad} onChange={e => setEntradaForm(f => ({ ...f, cantidad: e.target.value }))}
+                      className="input input-bordered w-full input-sm" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Unidad de medida *</label>
+                    <select value={entradaForm.unidad} onChange={e => setEntradaForm(f => ({ ...f, unidad: e.target.value }))}
+                      className="select select-bordered w-full select-sm">
+                      <option value="">Seleccionar...</option>
+                      {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Precio unitario *</label>
+                    <input type="number" min="0" step="0.01" placeholder="0.00"
+                      value={entradaForm.precioUnitario} onChange={e => setEntradaForm(f => ({ ...f, precioUnitario: e.target.value }))}
+                      className="input input-bordered w-full input-sm" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Fecha de caducidad</label>
+                    <input type="date"
+                      value={entradaForm.fechaCaducidad} onChange={e => setEntradaForm(f => ({ ...f, fechaCaducidad: e.target.value }))}
+                      className="input input-bordered w-full input-sm" />
+                    <p className="text-xs text-gray-400 mt-1">Opcional</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button onClick={handleRegistrarEntrada} disabled={registrando} className="btn btn-sm btn-primary gap-1">
+                    {registrando ? <span className="loading loading-spinner loading-xs" /> : <PlusIcon className="w-4 h-4" />}
+                    Registrar entrada
+                  </button>
+                  <button onClick={() => { setEntradaForm({ nombre: '', cantidad: '', unidad: '', precioUnitario: '', fechaCaducidad: '' }); setEntradaError('') }}
+                    className="btn btn-sm btn-ghost">Limpiar</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-tab: Historial de entradas */}
+          {stockSubTab === 'entradas' && (
+            loadingEntradas ? (
+              <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
+            ) : entradas.length === 0 ? (
+              <div className="text-center py-12">
+                <CubeIcon className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-gray-400">No hay entradas registradas</p>
+              </div>
+            ) : (
+              <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="table w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-xs font-medium text-gray-500">Fecha</th>
+                        <th className="text-xs font-medium text-gray-500">Insumo</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Cantidad</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Unidad</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Precio unit.</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Caducidad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entradas.map(e => {
+                        const ts = e.timestamp?.toDate?.() ? e.timestamp.toDate() : new Date(e.timestamp)
+                        return (
+                          <tr key={e.id} className="hover:bg-gray-50 transition-colors border-b border-gray-50">
+                            <td className="text-sm text-gray-600">{ts.toLocaleDateString('es-CR', { day: '2-digit', month: 'short', year: 'numeric' })} {ts.toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' })}</td>
+                            <td className="font-medium text-gray-800 text-sm">{e.insumoNombre}</td>
+                            <td className="text-center font-semibold text-gray-700">{e.cantidad}</td>
+                            <td className="text-center text-sm text-gray-500">{e.unidad}</td>
+                            <td className="text-center text-sm text-gray-500">₡{e.precioUnitario?.toLocaleString?.() || e.precioUnitario}</td>
+                            <td className="text-center text-sm text-gray-500">{e.fechaCaducidad || '—'}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          )}
         </div>
       )}
 
