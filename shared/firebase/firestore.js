@@ -1,4 +1,4 @@
-import { db } from './firebase';
+import { db, storage } from './firebase';
 import {
   collection,
   addDoc,
@@ -14,6 +14,7 @@ import {
   onSnapshot,
   writeBatch,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // ==================== PEDIDOS ====================
 
@@ -182,72 +183,89 @@ export async function updateInventarioCantidad(itemId, cantidadAjuste) {
 // ==================== PRODUCTOS ====================
 
 /**
- * Crea un nuevo producto (menu item)
- * @param {object} productoData - Datos del producto
- * @returns {Promise<string>} ID del producto
+ * Sube una imagen de producto a Firebase Storage.
+ * @param {File} file - Archivo de imagen
+ * @returns {Promise<string>} URL publica de descarga
  */
-export async function createProducto(productoData) {
-  try {
-    const docRef = await addDoc(collection(db, 'productos'), {
-      ...productoData,
-      precio: productoData.precio || 0,
-      disponible: productoData.disponible !== false,
-      createdAt: new Date(),
-    });
-    console.log('✅ Producto creado:', docRef.id);
-    return docRef.id;
-  } catch (error) {
-    console.error('❌ Error al crear producto:', error.message);
-    throw error;
+export async function uploadProductImage(file) {
+  const ext = file.name.split('.').pop();
+  const storageRef = ref(storage, `productos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
+  await uploadBytes(storageRef, file);
+  return await getDownloadURL(storageRef);
+}
+
+/**
+ * Crea un producto validando nombre unico, precio positivo y campos obligatorios.
+ * @returns {Promise<string>} ID del producto creado
+ */
+export async function createProducto({ nombre, descripcion, precio, categoria, imagen = null }) {
+  if (!nombre || !nombre.trim()) {
+    throw new Error('El nombre del producto es obligatorio.');
   }
+  if (!descripcion || !descripcion.trim()) {
+    throw new Error('La descripcion del producto es obligatoria.');
+  }
+  if (!categoria || !categoria.trim()) {
+    throw new Error('La categoria es obligatoria.');
+  }
+  const precioNum = Number(precio);
+  if (!precioNum || precioNum <= 0) {
+    throw new Error('El precio debe ser mayor a cero.');
+  }
+
+  const dupeQuery = query(collection(db, 'productos'), where('nombre', '==', nombre.trim()));
+  const dupeSnap = await getDocs(dupeQuery);
+  if (!dupeSnap.empty) {
+    throw new Error('Nombre de plato ya en uso.');
+  }
+
+  const docRef = await addDoc(collection(db, 'productos'), {
+    nombre: nombre.trim(),
+    descripcion: descripcion.trim(),
+    precio: precioNum,
+    categoria: categoria.trim(),
+    imagen: imagen || null,
+    disponible: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  return docRef.id;
 }
 
 /**
  * Obtiene todos los productos
- * @returns {Promise<array>}
  */
 export async function getProductos() {
-  try {
-    const snapshot = await getDocs(collection(db, 'productos'));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  } catch (error) {
-    console.error('❌ Error al obtener productos:', error.message);
-    return [];
-  }
+  const snapshot = await getDocs(collection(db, 'productos'));
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 /**
- * Obtiene productos por categoría
- * @param {string} categoria - Nombre de la categoría
- * @returns {Promise<array>}
+ * Obtiene las categorias unicas existentes en productos
+ */
+export async function getCategorias() {
+  const productos = await getProductos();
+  const set = new Set(productos.map(p => p.categoria).filter(Boolean));
+  return [...set].sort();
+}
+
+/**
+ * Obtiene productos por categoria
  */
 export async function getProductosByCategoria(categoria) {
-  try {
-    const q = query(collection(db, 'productos'), where('categoria', '==', categoria));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  } catch (error) {
-    console.error('❌ Error al obtener productos por categoría:', error.message);
-    return [];
-  }
+  const q = query(collection(db, 'productos'), where('categoria', '==', categoria));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 /**
  * Actualiza un producto
- * @param {string} productoId - ID del producto
- * @param {object} updates - Datos a actualizar
  */
 export async function updateProducto(productoId, updates) {
-  try {
-    await updateDoc(doc(db, 'productos', productoId), {
-      ...updates,
-      updatedAt: new Date(),
-    });
-    console.log('✅ Producto actualizado:', productoId);
-  } catch (error) {
-    console.error('❌ Error al actualizar producto:', error.message);
-    throw error;
-  }
+  await updateDoc(doc(db, 'productos', productoId), {
+    ...updates,
+    updatedAt: new Date(),
+  });
 }
 
 // ==================== MESAS ====================
