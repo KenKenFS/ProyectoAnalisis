@@ -16,7 +16,7 @@ import {
 } from '@heroicons/react/24/outline'
 import ReactCrop from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
-import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos } from '@shared/firebase/firestore'
+import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos, updateInsumo, deleteInsumo, ajustarStockInsumo } from '@shared/firebase/firestore'
 import { useAuth } from '@shared/firebase/AuthContext'
 
 // Aspect ratio 16:10 para coincidir con el h-40 de las cards
@@ -111,6 +111,23 @@ export default function Inventory() {
   const [salidaSuccess, setSalidaSuccess] = useState('')
   const [registrandoSalida, setRegistrandoSalida] = useState(false)
 
+  // Edicion de insumo
+  const [editInsumo, setEditInsumo] = useState(null)
+  const [editInsumoForm, setEditInsumoForm] = useState({ nombre: '', unidad: '', minCantidad: '' })
+  const [editInsumoError, setEditInsumoError] = useState('')
+  const [savingInsumo, setSavingInsumo] = useState(false)
+
+  // Eliminacion de insumo
+  const [deleteInsumoTarget, setDeleteInsumoTarget] = useState(null)
+  const [deletingInsumo, setDeletingInsumo] = useState(false)
+  const [deleteInsumoError, setDeleteInsumoError] = useState('')
+
+  // Ajuste manual de stock
+  const [ajusteTarget, setAjusteTarget] = useState(null)
+  const [ajusteCantidad, setAjusteCantidad] = useState('')
+  const [ajusteError, setAjusteError] = useState('')
+  const [ajustando, setAjustando] = useState(false)
+
   const loadProductos = useCallback(async () => {
     setLoadingProductos(true)
     try {
@@ -156,7 +173,7 @@ export default function Inventory() {
       await registrarEntradaInsumo({
         nombre: entradaForm.nombre.trim(),
         cantidad: entradaForm.cantidad,
-        unidad: entradaForm.unidad.trim(),
+        unidad: (entradaInsumoMatch?.unidad || entradaForm.unidad).trim(),
         precioUnitario: entradaForm.precioUnitario,
         fechaCaducidad: entradaForm.fechaCaducidad || null,
         adminUid: currentAdmin?.uid || '',
@@ -183,6 +200,11 @@ export default function Inventory() {
   ]
 
   const insumosExistentes = useMemo(() => [...new Set(insumos.map(i => i.nombre).filter(Boolean))].sort(), [insumos])
+
+  const entradaInsumoMatch = useMemo(() => {
+    if (!entradaForm.nombre.trim()) return null
+    return insumos.find(i => i.nombre?.toLowerCase() === entradaForm.nombre.trim().toLowerCase()) || null
+  }, [insumos, entradaForm.nombre])
 
   const loadSalidas = useCallback(async () => {
     setLoadingSalidas(true)
@@ -213,6 +235,55 @@ export default function Inventory() {
       setSalidaError(err.message)
     } finally {
       setRegistrandoSalida(false)
+    }
+  }
+
+  const openEditInsumo = (item) => {
+    setEditInsumo(item)
+    setEditInsumoForm({ nombre: item.nombre || '', unidad: item.unidad || '', minCantidad: String(item.minCantidad ?? 10) })
+    setEditInsumoError('')
+  }
+
+  const handleEditInsumo = async () => {
+    setEditInsumoError('')
+    setSavingInsumo(true)
+    try {
+      await updateInsumo(editInsumo.id, { ...editInsumoForm, adminUid: currentAdmin?.uid || '' })
+      setEditInsumo(null)
+      loadInsumos()
+    } catch (err) {
+      setEditInsumoError(err.message)
+    } finally {
+      setSavingInsumo(false)
+    }
+  }
+
+  const handleDeleteInsumo = async () => {
+    setDeleteInsumoError('')
+    setDeletingInsumo(true)
+    try {
+      await deleteInsumo(deleteInsumoTarget.id, currentAdmin?.uid || '')
+      setDeleteInsumoTarget(null)
+      loadInsumos()
+    } catch (err) {
+      setDeleteInsumoError(err.message)
+    } finally {
+      setDeletingInsumo(false)
+    }
+  }
+
+  const handleAjusteStock = async () => {
+    setAjusteError('')
+    setAjustando(true)
+    try {
+      await ajustarStockInsumo(ajusteTarget.id, ajusteCantidad, currentAdmin?.uid || '')
+      setAjusteTarget(null)
+      setAjusteCantidad('')
+      loadInsumos()
+    } catch (err) {
+      setAjusteError(err.message)
+    } finally {
+      setAjustando(false)
     }
   }
 
@@ -675,6 +746,7 @@ export default function Inventory() {
                         <th className="text-xs font-medium text-gray-500 text-center">Minimo</th>
                         <th className="text-xs font-medium text-gray-500 text-center">Unidad</th>
                         <th className="text-xs font-medium text-gray-500 text-center">Estado</th>
+                        <th className="text-xs font-medium text-gray-500 text-center">Acciones</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -695,6 +767,19 @@ export default function Inventory() {
                               ) : (
                                 <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-600">OK</span>
                               )}
+                            </td>
+                            <td className="text-center">
+                              <div className="flex gap-1 justify-center">
+                                <button onClick={() => openEditInsumo(item)} className="btn btn-ghost btn-xs text-gray-400 tooltip" data-tip="Editar">
+                                  <PencilSquareIcon className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => { setAjusteTarget(item); setAjusteCantidad(String(item.cantidad || 0)); setAjusteError('') }} className="btn btn-ghost btn-xs text-gray-400 tooltip" data-tip="Ajustar stock">
+                                  <ArrowPathIcon className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => { setDeleteInsumoTarget(item); setDeleteInsumoError('') }} className="btn btn-ghost btn-xs text-rose-400 tooltip" data-tip="Eliminar">
+                                  <TrashIcon className="w-4 h-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )
@@ -726,12 +811,20 @@ export default function Inventory() {
                 <div>
                   <label className="text-sm font-medium text-gray-700 mb-1 block">Nombre del insumo *</label>
                   <input list="insumos-list" type="text" placeholder="Ej: Camarones Grandes"
-                    value={entradaForm.nombre} onChange={e => setEntradaForm(f => ({ ...f, nombre: e.target.value }))}
+                    value={entradaForm.nombre} onChange={e => {
+                      const val = e.target.value
+                      const match = insumos.find(i => i.nombre?.toLowerCase() === val.trim().toLowerCase())
+                      setEntradaForm(f => ({ ...f, nombre: val, unidad: match?.unidad || f.unidad }))
+                    }}
                     className="input input-bordered w-full input-sm" />
                   <datalist id="insumos-list">
                     {insumosExistentes.map(n => <option key={n} value={n} />)}
                   </datalist>
-                  <p className="text-xs text-gray-400 mt-1">Si el insumo no existe, se creara automaticamente.</p>
+                  {entradaInsumoMatch ? (
+                    <p className="text-xs text-sky-500 mt-1">Insumo existente — unidad: <span className="font-medium">{entradaInsumoMatch.unidad}</span>, stock actual: <span className="font-medium">{entradaInsumoMatch.cantidad || 0}</span></p>
+                  ) : (
+                    <p className="text-xs text-gray-400 mt-1">Si el insumo no existe, se creara automaticamente.</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -743,8 +836,10 @@ export default function Inventory() {
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-700 mb-1 block">Unidad de medida *</label>
-                    <select value={entradaForm.unidad} onChange={e => setEntradaForm(f => ({ ...f, unidad: e.target.value }))}
-                      className="select select-bordered w-full select-sm">
+                    <select value={entradaInsumoMatch ? entradaInsumoMatch.unidad : entradaForm.unidad}
+                      onChange={e => setEntradaForm(f => ({ ...f, unidad: e.target.value }))}
+                      disabled={!!entradaInsumoMatch}
+                      className={`select select-bordered w-full select-sm ${entradaInsumoMatch ? 'bg-gray-100' : ''}`}>
                       <option value="">Seleccionar...</option>
                       {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
@@ -1286,6 +1381,111 @@ export default function Inventory() {
                   Confirmar recorte
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de edicion de insumo */}
+      {editInsumo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-800">Editar insumo</h3>
+              <button onClick={() => setEditInsumo(null)} className="btn btn-ghost btn-sm btn-circle"><XMarkIcon className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              {editInsumoError && (
+                <div className="bg-rose-50 text-rose-700 text-sm rounded-lg p-3 flex items-start gap-2">
+                  <ExclamationTriangleIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><span>{editInsumoError}</span>
+                </div>
+              )}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Nombre *</label>
+                <input type="text" value={editInsumoForm.nombre} onChange={e => setEditInsumoForm(f => ({ ...f, nombre: e.target.value }))}
+                  className="input input-bordered w-full input-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Unidad *</label>
+                  <select value={editInsumoForm.unidad} onChange={e => setEditInsumoForm(f => ({ ...f, unidad: e.target.value }))}
+                    className="select select-bordered w-full select-sm">
+                    <option value="">Seleccionar...</option>
+                    {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Stock minimo</label>
+                  <input type="number" min="0" step="1" value={editInsumoForm.minCantidad} onChange={e => setEditInsumoForm(f => ({ ...f, minCantidad: e.target.value }))}
+                    className="input input-bordered w-full input-sm" />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-100">
+              <button onClick={() => setEditInsumo(null)} className="btn btn-ghost btn-sm">Cancelar</button>
+              <button onClick={handleEditInsumo} disabled={savingInsumo} className="btn btn-sm btn-primary gap-1">
+                {savingInsumo ? <span className="loading loading-spinner loading-xs" /> : <CheckCircleIcon className="w-4 h-4" />}
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de eliminacion de insumo */}
+      {deleteInsumoTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+            <div className="p-5 text-center">
+              <ExclamationTriangleIcon className="w-12 h-12 text-rose-400 mx-auto mb-3" />
+              <h3 className="text-lg font-semibold text-gray-800 mb-1">Eliminar insumo</h3>
+              <p className="text-sm text-gray-500 mb-1">Se eliminara permanentemente:</p>
+              <p className="font-medium text-gray-800 mb-4">{deleteInsumoTarget.nombre}</p>
+              {deleteInsumoError && (
+                <div className="bg-rose-50 text-rose-700 text-sm rounded-lg p-3 mb-4">{deleteInsumoError}</div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={() => setDeleteInsumoTarget(null)} className="btn btn-ghost btn-sm flex-1">Cancelar</button>
+                <button onClick={handleDeleteInsumo} disabled={deletingInsumo} className="btn btn-sm btn-error text-white flex-1 gap-1">
+                  {deletingInsumo ? <span className="loading loading-spinner loading-xs" /> : <TrashIcon className="w-4 h-4" />}
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de ajuste manual de stock */}
+      {ajusteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-800">Ajustar stock</h3>
+              <button onClick={() => setAjusteTarget(null)} className="btn btn-ghost btn-sm btn-circle"><XMarkIcon className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="bg-slate-50 rounded-lg p-3 text-sm">
+                <span className="text-gray-500">Insumo:</span> <span className="font-medium text-gray-800">{ajusteTarget.nombre}</span>
+                <br />
+                <span className="text-gray-500">Stock actual:</span> <span className="font-semibold text-gray-800">{ajusteTarget.cantidad || 0} {ajusteTarget.unidad || ''}</span>
+              </div>
+              {ajusteError && (
+                <div className="bg-rose-50 text-rose-700 text-sm rounded-lg p-3">{ajusteError}</div>
+              )}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Nueva cantidad</label>
+                <input type="number" min="0" step="0.01" value={ajusteCantidad} onChange={e => setAjusteCantidad(e.target.value)}
+                  className="input input-bordered w-full input-sm" />
+                <p className="text-xs text-gray-400 mt-1">Este ajuste no genera registro de entrada ni salida.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-100">
+              <button onClick={() => setAjusteTarget(null)} className="btn btn-ghost btn-sm">Cancelar</button>
+              <button onClick={handleAjusteStock} disabled={ajustando} className="btn btn-sm btn-primary gap-1">
+                {ajustando ? <span className="loading loading-spinner loading-xs" /> : <ArrowPathIcon className="w-4 h-4" />}
+                Ajustar
+              </button>
             </div>
           </div>
         </div>

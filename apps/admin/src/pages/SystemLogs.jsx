@@ -12,6 +12,10 @@ import {
   NoSymbolIcon,
   CheckBadgeIcon,
   CubeIcon,
+  ArrowDownTrayIcon,
+  ArrowUpTrayIcon,
+  TrashIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline'
 import { getAllAuditLogs, getAllUsers } from '@shared/firebase/auth'
 
@@ -23,6 +27,11 @@ const TIPOS = {
   reactivacion_usuario: { label: 'Reactivacion', icon: CheckBadgeIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   modificacion_producto: { label: 'Modificacion de producto', icon: CubeIcon, color: 'text-amber-600', bg: 'bg-amber-50' },
   eliminacion_producto: { label: 'Eliminacion de producto', icon: CubeIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
+  entrada_insumo: { label: 'Entrada de insumo', icon: ArrowDownTrayIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  salida_insumo: { label: 'Salida de insumo', icon: ArrowUpTrayIcon, color: 'text-orange-600', bg: 'bg-orange-50' },
+  modificacion_insumo: { label: 'Modificacion de insumo', icon: PencilSquareIcon, color: 'text-sky-600', bg: 'bg-sky-50' },
+  eliminacion_insumo: { label: 'Eliminacion de insumo', icon: TrashIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
+  ajuste_stock: { label: 'Ajuste de stock', icon: WrenchScrewdriverIcon, color: 'text-violet-600', bg: 'bg-violet-50' },
 }
 
 function formatTimestamp(ts) {
@@ -57,6 +66,34 @@ function buildDetails(log) {
   if (log.tipo === 'eliminacion_producto' && log.detalles) {
     if (log.detalles.categoria) parts.push(`Categoria: ${log.detalles.categoria}`)
     if (log.detalles.precio) parts.push(`Precio: ₡${Number(log.detalles.precio).toLocaleString()}`)
+  }
+
+  if (log.tipo === 'entrada_insumo' && log.detalles) {
+    parts.push(`Cantidad: ${log.detalles.cantidad} ${log.detalles.unidad || ''}`)
+    parts.push(`Precio unitario: ₡${Number(log.detalles.precioUnitario || 0).toLocaleString()}`)
+    if (log.detalles.fechaCaducidad) parts.push(`Caducidad: ${log.detalles.fechaCaducidad}`)
+    if (log.detalles.esNuevo) parts.push('(Insumo nuevo creado)')
+  }
+
+  if (log.tipo === 'salida_insumo' && log.detalles) {
+    parts.push(`Cantidad: -${log.detalles.cantidad} ${log.detalles.unidad || ''}`)
+    const motivoLabels = { consumo: 'Consumo', desperdicio: 'Desperdicio', merma: 'Merma', vencimiento: 'Vencimiento', otro: 'Otro' }
+    parts.push(`Motivo: ${motivoLabels[log.detalles.motivo] || log.detalles.motivo}`)
+    parts.push(`Stock: ${log.detalles.stockAnterior} → ${log.detalles.stockNuevo}`)
+  }
+
+  if (log.tipo === 'modificacion_insumo' && log.cambios) {
+    for (const [campo, val] of Object.entries(log.cambios)) {
+      parts.push(`${campo}: ${val.antes ?? '(vacio)'} → ${val.despues ?? '(vacio)'}`)
+    }
+  }
+
+  if (log.tipo === 'eliminacion_insumo' && log.detalles) {
+    parts.push(`Stock al eliminar: ${log.detalles.cantidad} ${log.detalles.unidad || ''}`)
+  }
+
+  if (log.tipo === 'ajuste_stock' && log.detalles) {
+    parts.push(`Stock: ${log.detalles.stockAnterior} → ${log.detalles.stockNuevo} ${log.detalles.unidad || ''}`)
   }
 
   if (log.motivoPrecio) {
@@ -110,6 +147,7 @@ export default function SystemLogs() {
         const q = searchQuery.toLowerCase()
         const matchTarget = (log.targetName || '').toLowerCase().includes(q)
           || (log.targetEmail || '').toLowerCase().includes(q)
+          || (log.tipo || '').toLowerCase().includes(q)
         const adminName = usersMap[log.adminUid]?.name || ''
         const matchAdmin = adminName.toLowerCase().includes(q)
         if (!matchTarget && !matchAdmin) return false

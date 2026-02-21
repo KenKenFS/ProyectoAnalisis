@@ -167,6 +167,9 @@ export async function registrarEntradaInsumo({ nombre, cantidad, unidad, precioU
     const existing = snap.docs[0];
     insumoId = existing.id;
     const prev = existing.data();
+    if (prev.unidad && unidad.trim().toLowerCase() !== prev.unidad.toLowerCase()) {
+      throw new Error(`El insumo "${nombre.trim()}" esta registrado en "${prev.unidad}". Use la misma unidad.`);
+    }
     await updateDoc(doc(db, 'inventario', insumoId), {
       cantidad: (prev.cantidad || 0) + cantNum,
       updatedAt: new Date(),
@@ -181,6 +184,14 @@ export async function registrarEntradaInsumo({ nombre, cantidad, unidad, precioU
     precioUnitario: precioNum,
     fechaCaducidad: fechaCaducidad || null,
     adminUid: adminUid || '',
+    timestamp: new Date(),
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'entrada_insumo',
+    adminUid: adminUid || '',
+    targetName: nombre.trim(),
+    detalles: { cantidad: cantNum, unidad: unidad.trim(), precioUnitario: precioNum, fechaCaducidad: fechaCaducidad || null, esNuevo: snap.empty },
     timestamp: new Date(),
   });
 
@@ -234,6 +245,14 @@ export async function registrarSalidaInsumo({ insumoId, cantidad, motivo, adminU
     adminUid: adminUid || '',
     timestamp: new Date(),
   });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'salida_insumo',
+    adminUid: adminUid || '',
+    targetName: data.nombre || '',
+    detalles: { cantidad: cantNum, unidad: data.unidad || '', motivo, stockAnterior: stockActual, stockNuevo: stockActual - cantNum },
+    timestamp: new Date(),
+  });
 }
 
 /**
@@ -248,6 +267,102 @@ export async function getSalidasInsumos() {
     return new Date(tb) - new Date(ta);
   });
   return list;
+}
+
+/**
+ * Actualiza un insumo existente (nombre, unidad, minCantidad).
+ * Valida nombre duplicado si cambia.
+ */
+export async function updateInsumo(insumoId, { nombre, unidad, minCantidad, adminUid }) {
+  if (!insumoId) throw new Error('ID de insumo requerido.');
+  if (!nombre || !nombre.trim()) throw new Error('El nombre es obligatorio.');
+  if (!unidad || !unidad.trim()) throw new Error('La unidad es obligatoria.');
+  const minNum = Number(minCantidad);
+  if (isNaN(minNum) || minNum < 0) throw new Error('El stock minimo debe ser mayor o igual a cero.');
+
+  const itemRef = doc(db, 'inventario', insumoId);
+  const itemDoc = await getDoc(itemRef);
+  if (!itemDoc.exists()) throw new Error('El insumo no existe.');
+
+  const prev = itemDoc.data();
+  if (nombre.trim() !== prev.nombre) {
+    const q = query(collection(db, 'inventario'), where('nombre', '==', nombre.trim()));
+    const snap = await getDocs(q);
+    if (!snap.empty) throw new Error('Ya existe un insumo con ese nombre.');
+  }
+
+  const cambios = {};
+  if (nombre.trim() !== prev.nombre) cambios.nombre = { antes: prev.nombre, despues: nombre.trim() };
+  if (unidad.trim() !== prev.unidad) cambios.unidad = { antes: prev.unidad, despues: unidad.trim() };
+  if (minNum !== (prev.minCantidad ?? 10)) cambios.minCantidad = { antes: prev.minCantidad ?? 10, despues: minNum };
+
+  await updateDoc(itemRef, {
+    nombre: nombre.trim(),
+    unidad: unidad.trim(),
+    minCantidad: minNum,
+    updatedAt: new Date(),
+  });
+
+  if (Object.keys(cambios).length > 0) {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'modificacion_insumo',
+      adminUid: adminUid || '',
+      targetName: prev.nombre,
+      cambios,
+      timestamp: new Date(),
+    });
+  }
+}
+
+/**
+ * Elimina un insumo del inventario.
+ */
+export async function deleteInsumo(insumoId, adminUid) {
+  if (!insumoId) throw new Error('ID de insumo requerido.');
+  const itemRef = doc(db, 'inventario', insumoId);
+  const itemDoc = await getDoc(itemRef);
+  const data = itemDoc.exists() ? itemDoc.data() : {};
+
+  await deleteDoc(itemRef);
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'eliminacion_insumo',
+    adminUid: adminUid || '',
+    targetName: data.nombre || '',
+    detalles: { cantidad: data.cantidad || 0, unidad: data.unidad || '' },
+    timestamp: new Date(),
+  });
+}
+
+/**
+ * Ajusta el stock de un insumo a un valor exacto (correccion manual).
+ */
+export async function ajustarStockInsumo(insumoId, nuevaCantidad, adminUid) {
+  if (!insumoId) throw new Error('ID de insumo requerido.');
+  const cantNum = Number(nuevaCantidad);
+  if (isNaN(cantNum) || cantNum < 0) throw new Error('La cantidad debe ser mayor o igual a cero.');
+
+  const itemRef = doc(db, 'inventario', insumoId);
+  const itemDoc = await getDoc(itemRef);
+  if (!itemDoc.exists()) throw new Error('El insumo no existe.');
+
+  const prev = itemDoc.data();
+  const stockAnterior = prev.cantidad || 0;
+
+  await updateDoc(itemRef, {
+    cantidad: cantNum,
+    updatedAt: new Date(),
+  });
+
+  if (cantNum !== stockAnterior) {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'ajuste_stock',
+      adminUid: adminUid || '',
+      targetName: prev.nombre || '',
+      detalles: { stockAnterior, stockNuevo: cantNum, unidad: prev.unidad || '' },
+      timestamp: new Date(),
+    });
+  }
 }
 
 // ==================== PRODUCTOS ====================
