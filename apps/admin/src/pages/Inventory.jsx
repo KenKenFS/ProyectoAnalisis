@@ -17,7 +17,7 @@ import {
 } from '@heroicons/react/24/outline'
 import ReactCrop from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
-import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos, updateInsumo, deleteInsumo, ajustarStockInsumo, createConteoFisico, getConteoFisico, addItemToConteo, removeItemFromConteo, aplicarConteoFisico, cancelarConteoFisico, getConteosFisicos } from '@shared/firebase/firestore'
+import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos, updateInsumo, deleteInsumo, ajustarStockInsumo, createConteoFisico, getConteoFisico, addItemToConteo, removeItemFromConteo, aplicarConteoFisico, cancelarConteoFisico, getConteosFisicos, getAlertasCaducidad } from '@shared/firebase/firestore'
 import { useAuth } from '@shared/firebase/AuthContext'
 
 // Aspect ratio 16:10 para coincidir con el h-40 de las cards
@@ -138,6 +138,15 @@ export default function Inventory() {
   const [conteosHistorial, setConteosHistorial] = useState([])
   const [conteosHistorialLoading, setConteosHistorialLoading] = useState(false)
   const [conteoExpandedId, setConteoExpandedId] = useState(null)
+
+  // Alertas de caducidad
+  const [alertasCaducidad, setAlertasCaducidad] = useState([])
+  const [loadingAlertas, setLoadingAlertas] = useState(false)
+  const [alertasFiltro, setAlertasFiltro] = useState('todos')
+  const [alertasVistas, setAlertasVistas] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('alertas_caducidad_vistas') || '[]') } catch (_e) { return [] }
+  })
+  const [mostrarVistas, setMostrarVistas] = useState(false)
 
   const loadProductos = useCallback(async () => {
     setLoadingProductos(true)
@@ -389,6 +398,42 @@ export default function Inventory() {
     setConteosHistorial(data)
     setConteosHistorialLoading(false)
   }, [])
+
+  const loadAlertasCaducidad = useCallback(async () => {
+    setLoadingAlertas(true)
+    const data = await getAlertasCaducidad()
+    setAlertasCaducidad(data)
+    setLoadingAlertas(false)
+  }, [])
+
+  useEffect(() => { loadAlertasCaducidad() }, [loadAlertasCaducidad])
+
+  const alertasFiltradas = useMemo(() => {
+    let list = alertasCaducidad
+    if (alertasFiltro === 'vencidos') list = list.filter(a => a.estado === 'vencido')
+    else if (alertasFiltro === '3') list = list.filter(a => a.diasRestantes >= 0 && a.diasRestantes <= 3)
+    else if (alertasFiltro === '7') list = list.filter(a => a.diasRestantes >= 0 && a.diasRestantes <= 7)
+    else if (alertasFiltro === '15') list = list.filter(a => a.diasRestantes >= 0 && a.diasRestantes <= 15)
+    else list = list.filter(a => a.estado !== 'ok')
+
+    if (!mostrarVistas) list = list.filter(a => !alertasVistas.includes(a.id))
+    return list
+  }, [alertasCaducidad, alertasFiltro, alertasVistas, mostrarVistas])
+
+  const marcarAlertaVista = (alertaId) => {
+    const updated = [...alertasVistas, alertaId]
+    setAlertasVistas(updated)
+    localStorage.setItem('alertas_caducidad_vistas', JSON.stringify(updated))
+  }
+
+  const restaurarAlertas = () => {
+    setAlertasVistas([])
+    localStorage.removeItem('alertas_caducidad_vistas')
+  }
+
+  const alertasActivas = useMemo(() => {
+    return alertasCaducidad.filter(a => a.estado !== 'ok' && !alertasVistas.includes(a.id)).length
+  }, [alertasCaducidad, alertasVistas])
 
   const filteredProductos = useMemo(() => {
     return productos.filter(p => {
@@ -817,13 +862,14 @@ export default function Inventory() {
               { key: 'stock', label: 'Inventario' },
               { key: 'nueva', label: 'Registrar entrada' },
               { key: 'salida', label: 'Registrar salida' },
+              { key: 'alertas', label: <>Caducidad {alertasActivas > 0 && <span className="ml-1 text-xs bg-rose-500 text-white px-1.5 py-0.5 rounded-full">{alertasActivas}</span>}</> },
               { key: 'conteo', label: 'Conteo fisico' },
               { key: 'entradas', label: 'Historial entradas' },
               { key: 'salidas', label: 'Historial salidas' },
               { key: 'conteo_historial', label: 'Historial conteos' },
             ].map(t => (
               <button key={t.key}
-                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas(); if (t.key === 'salidas') loadSalidas(); if (t.key === 'conteo_historial') loadConteosHistorial() }}
+                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas(); if (t.key === 'salidas') loadSalidas(); if (t.key === 'conteo_historial') loadConteosHistorial(); if (t.key === 'alertas') loadAlertasCaducidad() }}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${stockSubTab === t.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 {t.label}
               </button>
@@ -1085,6 +1131,88 @@ export default function Inventory() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Sub-tab: Alertas de caducidad */}
+          {stockSubTab === 'alertas' && (
+            loadingAlertas ? (
+              <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <select value={alertasFiltro} onChange={e => setAlertasFiltro(e.target.value)}
+                    className="select select-bordered select-sm">
+                    <option value="todos">Vencidos y proximos</option>
+                    <option value="vencidos">Solo vencidos</option>
+                    <option value="3">Proximos 3 dias</option>
+                    <option value="7">Proximos 7 dias</option>
+                    <option value="15">Proximos 15 dias</option>
+                  </select>
+                  <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
+                    <input type="checkbox" checked={mostrarVistas} onChange={e => setMostrarVistas(e.target.checked)}
+                      className="checkbox checkbox-xs" />
+                    Mostrar marcadas como vistas
+                  </label>
+                  {alertasVistas.length > 0 && (
+                    <button onClick={restaurarAlertas} className="btn btn-ghost btn-xs text-gray-500">Restaurar todas</button>
+                  )}
+                </div>
+
+                {alertasFiltradas.length === 0 ? (
+                  <div className="text-center py-12">
+                    <CheckCircleIcon className="w-12 h-12 text-emerald-300 mx-auto mb-2" />
+                    <p className="text-gray-400">No hay alertas de caducidad pendientes</p>
+                  </div>
+                ) : (
+                  <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="table w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-xs font-medium text-gray-500">Estado</th>
+                            <th className="text-xs font-medium text-gray-500">Insumo</th>
+                            <th className="text-xs font-medium text-gray-500 text-center">Cantidad entrada</th>
+                            <th className="text-xs font-medium text-gray-500 text-center">Unidad</th>
+                            <th className="text-xs font-medium text-gray-500 text-center">Fecha caducidad</th>
+                            <th className="text-xs font-medium text-gray-500 text-center">Dias restantes</th>
+                            <th className="text-xs font-medium text-gray-500 w-20"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {alertasFiltradas.map(a => (
+                            <tr key={a.id} className={`border-b border-gray-50 ${a.estado === 'vencido' ? 'bg-rose-50/50' : a.estado === 'critico' ? 'bg-amber-50/50' : ''}`}>
+                              <td>
+                                {a.estado === 'vencido' ? (
+                                  <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-rose-100 text-rose-700">Vencido</span>
+                                ) : a.estado === 'critico' ? (
+                                  <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-amber-100 text-amber-700">Critico</span>
+                                ) : (
+                                  <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-sky-100 text-sky-700">Proximo</span>
+                                )}
+                              </td>
+                              <td className="font-medium text-gray-800 text-sm">{a.insumoNombre}</td>
+                              <td className="text-center text-sm text-gray-600">{a.cantidad}</td>
+                              <td className="text-center text-sm text-gray-500">{a.unidad}</td>
+                              <td className="text-center text-sm font-medium text-gray-700">{a.fechaCaducidad}</td>
+                              <td className={`text-center font-semibold text-sm ${a.estado === 'vencido' ? 'text-rose-600' : a.estado === 'critico' ? 'text-amber-600' : 'text-sky-600'}`}>
+                                {a.diasRestantes < 0 ? `${Math.abs(a.diasRestantes)}d vencido` : a.diasRestantes === 0 ? 'Hoy' : `${a.diasRestantes}d`}
+                              </td>
+                              <td>
+                                {!alertasVistas.includes(a.id) && (
+                                  <button onClick={() => marcarAlertaVista(a.id)} className="btn btn-ghost btn-xs text-gray-400 tooltip" data-tip="Marcar como vista">
+                                    <EyeIcon className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
           )}
 
           {/* Sub-tab: Conteo fisico */}

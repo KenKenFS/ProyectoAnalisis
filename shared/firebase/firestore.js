@@ -199,6 +199,44 @@ export async function registrarEntradaInsumo({ nombre, cantidad, unidad, precioU
 }
 
 /**
+ * Obtiene entradas de insumos que tienen fecha de caducidad, con estado calculado.
+ * Retorna lista ordenada por fecha de caducidad ascendente (mas proximos primero).
+ */
+export async function getAlertasCaducidad() {
+  const snapshot = await getDocs(collection(db, 'entradas_insumos'));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const alertas = [];
+  for (const d of snapshot.docs) {
+    const data = d.data();
+    if (!data.fechaCaducidad) continue;
+
+    const caducDate = new Date(data.fechaCaducidad);
+    caducDate.setHours(0, 0, 0, 0);
+    const diffMs = caducDate - today;
+    const diffDias = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    let estado;
+    if (diffDias < 0) estado = 'vencido';
+    else if (diffDias <= 3) estado = 'critico';
+    else if (diffDias <= 7) estado = 'proximo';
+    else estado = 'ok';
+
+    alertas.push({
+      id: d.id,
+      ...data,
+      fechaCaducidadDate: caducDate,
+      diasRestantes: diffDias,
+      estado,
+    });
+  }
+
+  alertas.sort((a, b) => a.fechaCaducidadDate - b.fechaCaducidadDate);
+  return alertas;
+}
+
+/**
  * Obtiene todas las entradas de insumos ordenadas por fecha descendente.
  */
 export async function getEntradasInsumos() {
