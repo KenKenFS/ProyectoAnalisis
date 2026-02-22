@@ -13,10 +13,11 @@ import {
   EyeIcon,
   ArrowLeftIcon,
   ScissorsIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline'
 import ReactCrop from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
-import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos, updateInsumo, deleteInsumo, ajustarStockInsumo } from '@shared/firebase/firestore'
+import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos, updateInsumo, deleteInsumo, ajustarStockInsumo, createConteoFisico, getConteoFisico, addItemToConteo, removeItemFromConteo, aplicarConteoFisico, cancelarConteoFisico, getConteosFisicos } from '@shared/firebase/firestore'
 import { useAuth } from '@shared/firebase/AuthContext'
 
 // Aspect ratio 16:10 para coincidir con el h-40 de las cards
@@ -127,6 +128,16 @@ export default function Inventory() {
   const [ajusteCantidad, setAjusteCantidad] = useState('')
   const [ajusteError, setAjusteError] = useState('')
   const [ajustando, setAjustando] = useState(false)
+
+  // Conteo fisico
+  const [conteoId, setConteoId] = useState(null)
+  const [conteoData, setConteoData] = useState(null)
+  const [conteoForm, setConteoForm] = useState({ insumoId: '', cantidadContada: '' })
+  const [conteoError, setConteoError] = useState('')
+  const [conteoLoading, setConteoLoading] = useState(false)
+  const [conteosHistorial, setConteosHistorial] = useState([])
+  const [conteosHistorialLoading, setConteosHistorialLoading] = useState(false)
+  const [conteoExpandedId, setConteoExpandedId] = useState(null)
 
   const loadProductos = useCallback(async () => {
     setLoadingProductos(true)
@@ -286,6 +297,98 @@ export default function Inventory() {
       setAjustando(false)
     }
   }
+
+  const iniciarConteo = async () => {
+    setConteoError('')
+    setConteoLoading(true)
+    try {
+      const id = await createConteoFisico(currentAdmin?.uid || '')
+      setConteoId(id)
+      const data = await getConteoFisico(id)
+      setConteoData(data)
+      setConteoForm({ insumoId: '', cantidadContada: '' })
+    } catch (err) {
+      setConteoError(err.message)
+    } finally {
+      setConteoLoading(false)
+    }
+  }
+
+  const loadConteo = useCallback(async () => {
+    if (!conteoId) return
+    const data = await getConteoFisico(conteoId)
+    setConteoData(data)
+  }, [conteoId])
+
+  useEffect(() => { loadConteo() }, [loadConteo])
+
+  const agregarItemConteo = async () => {
+    setConteoError('')
+    if (!conteoForm.insumoId || conteoForm.cantidadContada === '') {
+      setConteoError('Seleccione un insumo e ingrese la cantidad contada.')
+      return
+    }
+    setConteoLoading(true)
+    try {
+      await addItemToConteo(conteoId, conteoForm.insumoId, conteoForm.cantidadContada)
+      await loadConteo()
+      setConteoForm({ insumoId: '', cantidadContada: '' })
+    } catch (err) {
+      setConteoError(err.message)
+    } finally {
+      setConteoLoading(false)
+    }
+  }
+
+  const quitarItemConteo = async (insumoId) => {
+    setConteoError('')
+    setConteoLoading(true)
+    try {
+      await removeItemFromConteo(conteoId, insumoId)
+      await loadConteo()
+    } catch (err) {
+      setConteoError(err.message)
+    } finally {
+      setConteoLoading(false)
+    }
+  }
+
+  const aplicarConteo = async () => {
+    setConteoError('')
+    setConteoLoading(true)
+    try {
+      await aplicarConteoFisico(conteoId, currentAdmin?.uid || '')
+      setConteoId(null)
+      setConteoData(null)
+      loadInsumos()
+      loadConteosHistorial()
+    } catch (err) {
+      setConteoError(err.message)
+    } finally {
+      setConteoLoading(false)
+    }
+  }
+
+  const cancelarConteo = async () => {
+    setConteoError('')
+    setConteoLoading(true)
+    try {
+      await cancelarConteoFisico(conteoId)
+      setConteoId(null)
+      setConteoData(null)
+    } catch (err) {
+      setConteoError(err.message)
+    } finally {
+      setConteoLoading(false)
+    }
+  }
+
+  const loadConteosHistorial = useCallback(async () => {
+    setConteosHistorialLoading(true)
+    const data = await getConteosFisicos()
+    setConteosHistorial(data)
+    setConteosHistorialLoading(false)
+  }, [])
 
   const filteredProductos = useMemo(() => {
     return productos.filter(p => {
@@ -714,11 +817,13 @@ export default function Inventory() {
               { key: 'stock', label: 'Inventario' },
               { key: 'nueva', label: 'Registrar entrada' },
               { key: 'salida', label: 'Registrar salida' },
+              { key: 'conteo', label: 'Conteo fisico' },
               { key: 'entradas', label: 'Historial entradas' },
               { key: 'salidas', label: 'Historial salidas' },
+              { key: 'conteo_historial', label: 'Historial conteos' },
             ].map(t => (
               <button key={t.key}
-                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas(); if (t.key === 'salidas') loadSalidas() }}
+                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas(); if (t.key === 'salidas') loadSalidas(); if (t.key === 'conteo_historial') loadConteosHistorial() }}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${stockSubTab === t.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 {t.label}
               </button>
@@ -982,6 +1087,101 @@ export default function Inventory() {
             </div>
           )}
 
+          {/* Sub-tab: Conteo fisico */}
+          {stockSubTab === 'conteo' && (
+            <div className="space-y-4">
+              {conteoError && (
+                <div className="bg-rose-50 text-rose-700 text-sm rounded-lg p-3 flex items-start gap-2">
+                  <ExclamationTriangleIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><span>{conteoError}</span>
+                </div>
+              )}
+
+              {!conteoId ? (
+                <div className="bg-white border border-gray-100 rounded-lg p-8 max-w-md text-center">
+                  <CubeIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Conteo fisico de inventario</h3>
+                  <p className="text-sm text-gray-500 mb-4">Inicie un conteo para registrar cantidades reales y luego aplicar ajustes.</p>
+                  <button onClick={iniciarConteo} disabled={conteoLoading} className="btn btn-sm btn-primary gap-1">
+                    {conteoLoading ? <span className="loading loading-spinner loading-xs" /> : <PlusIcon className="w-4 h-4" />}
+                    Iniciar conteo
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-white border border-gray-100 rounded-lg p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Conteo en progreso</h3>
+
+                  <div className="flex flex-wrap gap-4 mb-6">
+                    <div className="flex gap-2 items-center">
+                      <label className="text-sm font-medium text-gray-700">Insumo</label>
+                      <select value={conteoForm.insumoId} onChange={e => setConteoForm(f => ({ ...f, insumoId: e.target.value }))}
+                        className="select select-bordered select-sm w-48">
+                        <option value="">Seleccionar...</option>
+                        {insumos.map(i => (
+                          <option key={i.id} value={i.id}>{i.nombre} ({i.cantidad ?? 0} {i.unidad || ''})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <label className="text-sm font-medium text-gray-700">Cantidad contada</label>
+                      <input type="number" min="0" step="0.01" value={conteoForm.cantidadContada} onChange={e => setConteoForm(f => ({ ...f, cantidadContada: e.target.value }))}
+                        className="input input-bordered input-sm w-28" placeholder="0" />
+                    </div>
+                    <button onClick={agregarItemConteo} disabled={conteoLoading} className="btn btn-sm btn-ghost btn-primary gap-1">
+                      {conteoLoading ? <span className="loading loading-spinner loading-xs" /> : <PlusIcon className="w-4 h-4" />}
+                      Agregar
+                    </button>
+                  </div>
+
+                  {conteoData?.items?.length > 0 ? (
+                    <>
+                      <div className="overflow-x-auto rounded-lg border border-gray-100 mb-4">
+                        <table className="table table-sm w-full">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="text-xs font-medium text-gray-500">Insumo</th>
+                              <th className="text-xs font-medium text-gray-500 text-center">Registrado</th>
+                              <th className="text-xs font-medium text-gray-500 text-center">Contado</th>
+                              <th className="text-xs font-medium text-gray-500 text-center">Diferencia</th>
+                              <th className="text-xs font-medium text-gray-500 w-16"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {conteoData.items.map(it => (
+                              <tr key={it.insumoId} className="border-b border-gray-50">
+                                <td className="font-medium text-sm">{it.insumoNombre}</td>
+                                <td className="text-center text-sm">{it.cantidadRegistrada} {it.unidad}</td>
+                                <td className="text-center font-semibold text-sm">{it.cantidadContada}</td>
+                                <td className={`text-center font-semibold text-sm ${it.diferencia > 0 ? 'text-emerald-600' : it.diferencia < 0 ? 'text-rose-600' : 'text-gray-500'}`}>
+                                  {it.diferencia > 0 ? '+' : ''}{it.diferencia}
+                                </td>
+                                <td>
+                                  <button onClick={() => quitarItemConteo(it.insumoId)} className="btn btn-ghost btn-xs text-rose-400" title="Quitar">
+                                    <TrashIcon className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={aplicarConteo} disabled={conteoLoading} className="btn btn-sm btn-primary gap-1">
+                          {conteoLoading ? <span className="loading loading-spinner loading-xs" /> : <CheckCircleIcon className="w-4 h-4" />}
+                          Aplicar ajustes
+                        </button>
+                        <button onClick={cancelarConteo} disabled={conteoLoading} className="btn btn-sm btn-ghost text-gray-500">
+                          Cancelar conteo
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-500 mb-4">Agregue al menos un insumo con su cantidad contada para ver el resumen y aplicar.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Sub-tab: Historial de salidas */}
           {stockSubTab === 'salidas' && (
             loadingSalidas ? (
@@ -1022,6 +1222,74 @@ export default function Inventory() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )
+          )}
+
+          {/* Sub-tab: Historial de conteos fisicos */}
+          {stockSubTab === 'conteo_historial' && (
+            conteosHistorialLoading ? (
+              <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
+            ) : conteosHistorial.length === 0 ? (
+              <div className="text-center py-12">
+                <CubeIcon className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-gray-400">No hay conteos registrados</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {conteosHistorial.map(c => {
+                  const ts = c.timestamp?.toDate?.() ? c.timestamp.toDate() : new Date(c.timestamp)
+                  const isExpanded = conteoExpandedId === c.id
+                  const items = c.items || []
+                  const conDiferencias = items.filter(i => i.diferencia !== 0).length
+                  return (
+                    <div key={c.id} className="bg-white border border-gray-100 rounded-lg overflow-hidden">
+                      <div className="flex items-center gap-3 p-4 cursor-pointer" onClick={() => setConteoExpandedId(isExpanded ? null : c.id)}>
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${c.estado === 'aplicado' ? 'bg-emerald-50' : c.estado === 'cancelado' ? 'bg-gray-100' : 'bg-amber-50'}`}>
+                          <CubeIcon className={`w-4 h-4 ${c.estado === 'aplicado' ? 'text-emerald-600' : c.estado === 'cancelado' ? 'text-gray-500' : 'text-amber-600'}`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${c.estado === 'aplicado' ? 'bg-emerald-50 text-emerald-600' : c.estado === 'cancelado' ? 'bg-gray-100 text-gray-600' : 'bg-amber-50 text-amber-600'}`}>
+                            {c.estado === 'aplicado' ? 'Aplicado' : c.estado === 'cancelado' ? 'Cancelado' : 'En progreso'}
+                          </span>
+                          <p className="text-sm text-gray-600 mt-0.5">{items.length} insumos · {conDiferencias} con diferencias</p>
+                        </div>
+                        <div className="text-xs text-gray-400 shrink-0">
+                          {ts.toLocaleDateString('es-CR', { day: '2-digit', month: 'short', year: 'numeric' })} {ts.toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                        <ChevronDownIcon className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </div>
+                      {isExpanded && items.length > 0 && (
+                        <div className="px-4 pb-4">
+                          <div className="overflow-x-auto rounded border border-gray-100">
+                            <table className="table table-sm w-full">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="text-xs font-medium text-gray-500">Insumo</th>
+                                  <th className="text-xs font-medium text-gray-500 text-center">Registrado</th>
+                                  <th className="text-xs font-medium text-gray-500 text-center">Contado</th>
+                                  <th className="text-xs font-medium text-gray-500 text-center">Diferencia</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {items.map(it => (
+                                  <tr key={it.insumoId} className="border-b border-gray-50">
+                                    <td className="text-sm">{it.insumoNombre}</td>
+                                    <td className="text-center text-sm">{it.cantidadRegistrada} {it.unidad}</td>
+                                    <td className="text-center font-semibold text-sm">{it.cantidadContada}</td>
+                                    <td className={`text-center font-semibold text-sm ${it.diferencia > 0 ? 'text-emerald-600' : it.diferencia < 0 ? 'text-rose-600' : 'text-gray-500'}`}>
+                                      {it.diferencia > 0 ? '+' : ''}{it.diferencia}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )
           )}

@@ -365,6 +365,136 @@ export async function ajustarStockInsumo(insumoId, nuevaCantidad, adminUid) {
   }
 }
 
+// ==================== CONTEO FISICO ====================
+
+/**
+ * Crea un nuevo conteo fisico en progreso.
+ */
+export async function createConteoFisico(adminUid) {
+  const ref = await addDoc(collection(db, 'conteos_fisicos'), {
+    adminUid: adminUid || '',
+    estado: 'en_progreso',
+    items: [],
+    timestamp: new Date(),
+  });
+  return ref.id;
+}
+
+/**
+ * Obtiene un conteo fisico por ID.
+ */
+export async function getConteoFisico(conteoId) {
+  const d = await getDoc(doc(db, 'conteos_fisicos', conteoId));
+  if (!d.exists()) return null;
+  return { id: d.id, ...d.data() };
+}
+
+/**
+ * Agrega o actualiza un item en el conteo. Calcula cantidad registrada desde inventario y la diferencia.
+ */
+export async function addItemToConteo(conteoId, insumoId, cantidadContada) {
+  const cantNum = Number(cantidadContada);
+  if (isNaN(cantNum) || cantNum < 0) throw new Error('La cantidad contada debe ser mayor o igual a cero.');
+
+  const conteoRef = doc(db, 'conteos_fisicos', conteoId);
+  const conteoDoc = await getDoc(conteoRef);
+  if (!conteoDoc.exists()) throw new Error('El conteo no existe.');
+  const conteo = conteoDoc.data();
+  if (conteo.estado !== 'en_progreso') throw new Error('Este conteo ya fue aplicado o cancelado.');
+
+  const insumoDoc = await getDoc(doc(db, 'inventario', insumoId));
+  if (!insumoDoc.exists()) throw new Error('El insumo no existe.');
+  const insumo = insumoDoc.data();
+  const cantidadRegistrada = insumo.cantidad || 0;
+  const diferencia = cantNum - cantidadRegistrada;
+
+  const items = [...(conteo.items || [])];
+  const idx = items.findIndex(i => i.insumoId === insumoId);
+  const item = {
+    insumoId,
+    insumoNombre: insumo.nombre || '',
+    unidad: insumo.unidad || '',
+    cantidadRegistrada,
+    cantidadContada: cantNum,
+    diferencia,
+  };
+  if (idx >= 0) items[idx] = item;
+  else items.push(item);
+
+  await updateDoc(conteoRef, { items });
+}
+
+/**
+ * Quita un item del conteo en progreso.
+ */
+export async function removeItemFromConteo(conteoId, insumoId) {
+  const conteoRef = doc(db, 'conteos_fisicos', conteoId);
+  const conteoDoc = await getDoc(conteoRef);
+  if (!conteoDoc.exists()) throw new Error('El conteo no existe.');
+  const conteo = conteoDoc.data();
+  if (conteo.estado !== 'en_progreso') throw new Error('Este conteo ya fue aplicado o cancelado.');
+
+  const items = (conteo.items || []).filter(i => i.insumoId !== insumoId);
+  await updateDoc(conteoRef, { items });
+}
+
+/**
+ * Aplica el conteo: ajusta stock de cada item y marca el conteo como aplicado.
+ */
+export async function aplicarConteoFisico(conteoId, adminUid) {
+  const conteoRef = doc(db, 'conteos_fisicos', conteoId);
+  const conteoDoc = await getDoc(conteoRef);
+  if (!conteoDoc.exists()) throw new Error('El conteo no existe.');
+  const conteo = conteoDoc.data();
+  if (conteo.estado !== 'en_progreso') throw new Error('Este conteo ya fue aplicado o cancelado.');
+
+  const items = conteo.items || [];
+  for (const it of items) {
+    if (it.diferencia !== 0) {
+      await updateDoc(doc(db, 'inventario', it.insumoId), {
+        cantidad: it.cantidadContada,
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  await updateDoc(conteoRef, { estado: 'aplicado' });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'conteo_fisico_aplicado',
+    adminUid: adminUid || '',
+    targetName: `Conteo ${conteoId}`,
+    detalles: { conteoId, itemsCount: items.length, conDiferencias: items.filter(i => i.diferencia !== 0).length },
+    timestamp: new Date(),
+  });
+}
+
+/**
+ * Cancela un conteo en progreso.
+ */
+export async function cancelarConteoFisico(conteoId) {
+  const conteoRef = doc(db, 'conteos_fisicos', conteoId);
+  const conteoDoc = await getDoc(conteoRef);
+  if (!conteoDoc.exists()) throw new Error('El conteo no existe.');
+  const conteo = conteoDoc.data();
+  if (conteo.estado !== 'en_progreso') throw new Error('Este conteo ya fue aplicado o cancelado.');
+  await updateDoc(conteoRef, { estado: 'cancelado' });
+}
+
+/**
+ * Lista todos los conteos fisicos ordenados por fecha descendente.
+ */
+export async function getConteosFisicos() {
+  const snapshot = await getDocs(collection(db, 'conteos_fisicos'));
+  const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => {
+    const ta = a.timestamp?.toDate?.() || a.timestamp || 0;
+    const tb = b.timestamp?.toDate?.() || b.timestamp || 0;
+    return new Date(tb) - new Date(ta);
+  });
+  return list;
+}
+
 // ==================== PRODUCTOS ====================
 
 /**

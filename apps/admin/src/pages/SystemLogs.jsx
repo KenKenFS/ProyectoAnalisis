@@ -32,6 +32,7 @@ const TIPOS = {
   modificacion_insumo: { label: 'Modificacion de insumo', icon: PencilSquareIcon, color: 'text-sky-600', bg: 'bg-sky-50' },
   eliminacion_insumo: { label: 'Eliminacion de insumo', icon: TrashIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
   ajuste_stock: { label: 'Ajuste de stock', icon: WrenchScrewdriverIcon, color: 'text-violet-600', bg: 'bg-violet-50' },
+  conteo_fisico_aplicado: { label: 'Conteo fisico aplicado', icon: CubeIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
 }
 
 function formatTimestamp(ts) {
@@ -94,6 +95,11 @@ function buildDetails(log) {
 
   if (log.tipo === 'ajuste_stock' && log.detalles) {
     parts.push(`Stock: ${log.detalles.stockAnterior} → ${log.detalles.stockNuevo} ${log.detalles.unidad || ''}`)
+  }
+
+  if (log.tipo === 'conteo_fisico_aplicado' && log.detalles) {
+    parts.push(`Insumos contados: ${log.detalles.itemsCount || 0}`)
+    parts.push(`Con diferencias: ${log.detalles.conDiferencias || 0}`)
   }
 
   if (log.motivoPrecio) {
