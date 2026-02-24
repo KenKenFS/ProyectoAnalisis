@@ -945,23 +945,149 @@ export async function addCuentaItem({ cuentaId, productoId, comensalId, createdB
 }
 
 /**
- * Elimina un ítem de la cuenta. Solo ítems pendientes (no pagados).
- * @param {string} cuentaId
- * @param {string} itemId
+ * Anula un ítem de cuenta con motivo obligatorio.
+ * No elimina físicamente el documento; cambia estadoItem a "anulado".
  */
-export async function deleteCuentaItem({ cuentaId, itemId }) {
-  const itemSnap = await getDoc(doc(db, 'cuentas', cuentaId, 'items', itemId));
+export async function anularCuentaItem({
+  cuentaId,
+  itemId,
+  motivo,
+  usuarioId = null,
+  rolUsuario = null,
+}) {
+  if (!motivo || !String(motivo).trim()) {
+    const err = new Error('Debe indicar un motivo de anulación.');
+    err.code = 'MOTIVO_REQUIRED';
+    throw err;
+  }
+
+  const role = String(rolUsuario || '').toLowerCase();
+  if (role !== 'cajero' && role !== 'admin') {
+    const err = new Error('No tienes permiso para anular ítems.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const itemRef = doc(db, 'cuentas', cuentaId, 'items', itemId);
+  const itemSnap = await getDoc(itemRef);
   if (!itemSnap.exists()) {
     const err = new Error('Ítem no encontrado');
     err.code = 'ITEM_NOT_FOUND';
     throw err;
   }
-  if (itemSnap.data().estadoItem === 'pagado') {
-    const err = new Error('No se puede eliminar un ítem ya pagado.');
+
+  const item = itemSnap.data();
+  if (item.estadoItem === 'pagado') {
+    const err = new Error('No se puede anular un ítem ya pagado.');
     err.code = 'ITEM_ALREADY_PAID';
     throw err;
   }
-  await deleteDoc(doc(db, 'cuentas', cuentaId, 'items', itemId));
+  if (item.estadoItem === 'anulado') {
+    const err = new Error('El ítem ya está anulado.');
+    err.code = 'ITEM_ALREADY_ANNULLED';
+    throw err;
+  }
+  if (item.estadoItem !== 'pendiente') {
+    const err = new Error('Solo se pueden anular ítems pendientes.');
+    err.code = 'INVALID_ITEM_STATE';
+    throw err;
+  }
+
+  await updateDoc(itemRef, {
+    estadoItem: 'anulado',
+    updatedAt: new Date(),
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'anulacion_item_cuenta',
+    adminUid: usuarioId || '',
+    targetId: itemId,
+    targetName: item.nombreSnapshot || item.productoId || 'Item',
+    detalles: {
+      cuentaId,
+      itemId,
+      comensalId: item.comensalId || null,
+      motivo: String(motivo).trim(),
+      estadoAnterior: 'pendiente',
+      estadoNuevo: 'anulado',
+      monto: Number(item.precioUnitSnapshot || 0) * Number(item.cantidad || 1),
+    },
+    timestamp: new Date(),
+  });
+}
+
+/**
+ * Revierte una anulación y vuelve el ítem a pendiente.
+ */
+export async function revertirAnulacionCuentaItem({
+  cuentaId,
+  itemId,
+  motivo,
+  usuarioId = null,
+  rolUsuario = null,
+}) {
+  if (!motivo || !String(motivo).trim()) {
+    const err = new Error('Debe indicar un motivo para revertir.');
+    err.code = 'MOTIVO_REQUIRED';
+    throw err;
+  }
+
+  const role = String(rolUsuario || '').toLowerCase();
+  if (role !== 'cajero' && role !== 'admin') {
+    const err = new Error('No tienes permiso para revertir anulación.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const itemRef = doc(db, 'cuentas', cuentaId, 'items', itemId);
+  const itemSnap = await getDoc(itemRef);
+  if (!itemSnap.exists()) {
+    const err = new Error('Ítem no encontrado');
+    err.code = 'ITEM_NOT_FOUND';
+    throw err;
+  }
+
+  const item = itemSnap.data();
+  if (item.estadoItem !== 'anulado') {
+    const err = new Error('Solo se puede revertir un ítem anulado.');
+    err.code = 'INVALID_ITEM_STATE';
+    throw err;
+  }
+
+  await updateDoc(itemRef, {
+    estadoItem: 'pendiente',
+    updatedAt: new Date(),
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'reversion_anulacion_item_cuenta',
+    adminUid: usuarioId || '',
+    targetId: itemId,
+    targetName: item.nombreSnapshot || item.productoId || 'Item',
+    detalles: {
+      cuentaId,
+      itemId,
+      comensalId: item.comensalId || null,
+      motivo: String(motivo).trim(),
+      estadoAnterior: 'anulado',
+      estadoNuevo: 'pendiente',
+      monto: Number(item.precioUnitSnapshot || 0) * Number(item.cantidad || 1),
+    },
+    timestamp: new Date(),
+  });
+}
+
+/**
+ * Compatibilidad: mantiene firma anterior, usando anulación con motivo genérico.
+ */
+export async function deleteCuentaItem({ cuentaId, itemId }) {
+  return anularCuentaItem({
+    cuentaId,
+    itemId,
+    motivo: 'Anulación sin motivo explícito (compatibilidad)',
+    usuarioId: null,
+    rolUsuario: 'admin',
+  });
 }
 
 /**

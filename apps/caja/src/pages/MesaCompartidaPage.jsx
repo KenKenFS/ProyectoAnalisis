@@ -11,6 +11,7 @@ import {
   TrashIcon,
   XMarkIcon,
   LockClosedIcon,
+  ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline'
 
 import { useAuth } from '@shared/firebase/AuthContext'
@@ -23,7 +24,8 @@ import {
   getProductos,
   assignCuentaItemToComensal,
   addCuentaItem,
-  deleteCuentaItem,
+  anularCuentaItem,
+  revertirAnulacionCuentaItem,
   payPartialForComensal,
   cerrarCuentaReabierta,
 } from '@shared/firebase/firestore'
@@ -59,6 +61,8 @@ function ItemEstadoBadge({ estado }) {
   const cfg =
     estado === 'pagado'
       ? { cls: 'bg-green-100 text-green-700 border-green-200', text: 'Pagado' }
+      : estado === 'anulado'
+        ? { cls: 'bg-rose-100 text-rose-700 border-rose-200', text: 'Anulado' }
       : estado === 'pendiente'
         ? { cls: 'bg-amber-100 text-amber-800 border-amber-200', text: 'Pendiente' }
         : { cls: 'bg-gray-100 text-gray-700 border-gray-200', text: estado || 'N/A' }
@@ -165,7 +169,7 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
 }
 
 export default function MesaCompartidaPage() {
-  const { user } = useAuth()
+  const { user, role, isAdmin, isCajero } = useAuth()
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -190,6 +194,12 @@ export default function MesaCompartidaPage() {
   const [productos, setProductos] = useState([])
   const [addingProduct, setAddingProduct] = useState(false)
   const [deletingItemId, setDeletingItemId] = useState(null)
+  const [anularTarget, setAnularTarget] = useState(null)
+  const [anularMotivo, setAnularMotivo] = useState('')
+  const [anulando, setAnulando] = useState(false)
+  const [revertTarget, setRevertTarget] = useState(null)
+  const [revertMotivo, setRevertMotivo] = useState('')
+  const [revirtiendo, setRevirtiendo] = useState(false)
 
   const [confirmCerrarOpen, setConfirmCerrarOpen] = useState(false)
   const [cerrarLoading, setCerrarLoading] = useState(false)
@@ -220,6 +230,7 @@ export default function MesaCompartidaPage() {
     () => itemsDelComensal.filter(i => i.estadoItem === 'pendiente'),
     [itemsDelComensal]
   )
+  const canManageAnulacion = isAdmin || isCajero || ['admin', 'cajero'].includes(String(role || '').toLowerCase())
 
   const resumenPago = useMemo(() => {
     const subtotal = Math.round(
@@ -352,19 +363,69 @@ export default function MesaCompartidaPage() {
     }
   }
 
-  async function removeItem(itemId) {
-    if (!cuenta?.id) return
-    setDeletingItemId(itemId)
+  async function confirmAnularItem() {
+    if (!cuenta?.id || !anularTarget?.id) return
+    setAnulando(true)
+    setDeletingItemId(anularTarget.id)
     setError(null)
     try {
-      await deleteCuentaItem({ cuentaId: cuenta.id, itemId })
+      await anularCuentaItem({
+        cuentaId: cuenta.id,
+        itemId: anularTarget.id,
+        motivo: anularMotivo,
+        usuarioId: user?.uid || null,
+        rolUsuario: role || null,
+      })
+      setAnularTarget(null)
+      setAnularMotivo('')
       await refresh()
     } catch (e) {
-      if (e?.code === 'ITEM_ALREADY_PAID') setError('No se puede eliminar un ítem ya pagado.')
-      else setError(e?.message || 'Error al eliminar ítem')
+      if (e?.code === 'MOTIVO_REQUIRED') setError('Debe indicar un motivo de anulación.')
+      else if (e?.code === 'PERMISSION_DENIED') setError('No tienes permisos para anular ítems.')
+      else if (e?.code === 'ITEM_ALREADY_PAID') setError('No se puede anular un ítem ya pagado.')
+      else setError(e?.message || 'Error al anular ítem')
     } finally {
+      setAnulando(false)
       setDeletingItemId(null)
     }
+  }
+
+  async function confirmRevertirItem() {
+    if (!cuenta?.id || !revertTarget?.id) return
+    setRevirtiendo(true)
+    setDeletingItemId(revertTarget.id)
+    setError(null)
+    try {
+      await revertirAnulacionCuentaItem({
+        cuentaId: cuenta.id,
+        itemId: revertTarget.id,
+        motivo: revertMotivo,
+        usuarioId: user?.uid || null,
+        rolUsuario: role || null,
+      })
+      setRevertTarget(null)
+      setRevertMotivo('')
+      await refresh()
+    } catch (e) {
+      if (e?.code === 'MOTIVO_REQUIRED') setError('Debe indicar un motivo para revertir.')
+      else if (e?.code === 'PERMISSION_DENIED') setError('No tienes permisos para revertir anulación.')
+      else setError(e?.message || 'Error al revertir anulación')
+    } finally {
+      setRevirtiendo(false)
+      setDeletingItemId(null)
+    }
+  }
+
+  async function removeItem(itemId) {
+    if (!cuenta?.id) return
+    const item = items.find(i => i.id === itemId)
+    if (!item) return
+    if (!canManageAnulacion) {
+      setError('No tienes permisos para anular ítems.')
+      return
+    }
+    setAnularTarget(item)
+    setAnularMotivo('')
   }
 
   async function startPay() {
@@ -705,12 +766,31 @@ export default function MesaCompartidaPage() {
                                         onClick={() => removeItem(i.id)}
                                         className="p-1.5 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
                                         disabled={deletingItemId === i.id}
-                                        title="Eliminar ítem"
+                                        title="Anular ítem"
                                       >
                                         {deletingItemId === i.id ? (
                                           <span className="loading loading-spinner loading-xs" />
                                         ) : (
                                           <TrashIcon className="w-4 h-4" />
+                                        )}
+                                      </button>
+                                    )}
+                                    {i.estadoItem === 'anulado' && canManageAnulacion && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setRevertTarget(i)
+                                          setRevertMotivo('')
+                                          setError(null)
+                                        }}
+                                        className="p-1.5 rounded border border-cyan-200 text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                                        disabled={deletingItemId === i.id}
+                                        title="Revertir anulación"
+                                      >
+                                        {deletingItemId === i.id ? (
+                                          <span className="loading loading-spinner loading-xs" />
+                                        ) : (
+                                          <ArrowUturnLeftIcon className="w-4 h-4" />
                                         )}
                                       </button>
                                     )}
@@ -852,6 +932,82 @@ export default function MesaCompartidaPage() {
                   disabled={cerrarLoading}
                 >
                   {cerrarLoading ? 'Cerrando...' : 'Sí, cerrar cuenta'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal anular ítem */}
+      {anularTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="font-bold text-gray-900">Anular ítem</div>
+              <button type="button" onClick={() => setAnularTarget(null)} className="p-1 rounded hover:bg-gray-100">
+                <XMarkIcon className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="text-sm text-gray-600">
+                Ítem: <span className="font-semibold text-gray-900">{anularTarget.nombreSnapshot || anularTarget.productoId || 'Item'}</span>
+              </div>
+              <textarea
+                value={anularMotivo}
+                onChange={(e) => setAnularMotivo(e.target.value)}
+                placeholder="Motivo de anulación (obligatorio)"
+                className="textarea textarea-bordered w-full min-h-[100px]"
+              />
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setAnularTarget(null)} className="flex-1 btn btn-ghost" disabled={anulando}>
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAnularItem}
+                  className="flex-1 btn bg-red-600 hover:bg-red-700 text-white border-0"
+                  disabled={anulando}
+                >
+                  {anulando ? 'Anulando...' : 'Confirmar anulación'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal revertir anulación */}
+      {revertTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="font-bold text-gray-900">Revertir anulación</div>
+              <button type="button" onClick={() => setRevertTarget(null)} className="p-1 rounded hover:bg-gray-100">
+                <XMarkIcon className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="text-sm text-gray-600">
+                Ítem: <span className="font-semibold text-gray-900">{revertTarget.nombreSnapshot || revertTarget.productoId || 'Item'}</span>
+              </div>
+              <textarea
+                value={revertMotivo}
+                onChange={(e) => setRevertMotivo(e.target.value)}
+                placeholder="Motivo de reversión (obligatorio)"
+                className="textarea textarea-bordered w-full min-h-[100px]"
+              />
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setRevertTarget(null)} className="flex-1 btn btn-ghost" disabled={revirtiendo}>
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRevertirItem}
+                  className="flex-1 btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
+                  disabled={revirtiendo}
+                >
+                  {revirtiendo ? 'Revirtiendo...' : 'Confirmar reversión'}
                 </button>
               </div>
             </div>

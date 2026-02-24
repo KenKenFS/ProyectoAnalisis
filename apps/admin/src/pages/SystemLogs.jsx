@@ -33,6 +33,8 @@ const TIPOS = {
   eliminacion_insumo: { label: 'Eliminacion de insumo', icon: TrashIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
   ajuste_stock: { label: 'Ajuste de stock', icon: WrenchScrewdriverIcon, color: 'text-violet-600', bg: 'bg-violet-50' },
   conteo_fisico_aplicado: { label: 'Conteo fisico aplicado', icon: CubeIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  anulacion_item_cuenta: { label: 'Anulacion de item', icon: TrashIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
+  reversion_anulacion_item_cuenta: { label: 'Reversion de anulacion', icon: ArrowPathIcon, color: 'text-sky-600', bg: 'bg-sky-50' },
 }
 
 function formatTimestamp(ts) {
@@ -100,6 +102,18 @@ function buildDetails(log) {
   if (log.tipo === 'conteo_fisico_aplicado' && log.detalles) {
     parts.push(`Insumos contados: ${log.detalles.itemsCount || 0}`)
     parts.push(`Con diferencias: ${log.detalles.conDiferencias || 0}`)
+  }
+
+  if ((log.tipo === 'anulacion_item_cuenta' || log.tipo === 'reversion_anulacion_item_cuenta') && log.detalles) {
+    parts.push(`Cuenta: ${log.detalles.cuentaId || '-'}`)
+    parts.push(`Comensal: ${log.detalles.comensalId || '-'}`)
+    if (log.detalles.monto !== undefined) {
+      parts.push(`Monto referencial: ₡${Number(log.detalles.monto || 0).toLocaleString()}`)
+    }
+    parts.push(`Motivo: ${log.detalles.motivo || '-'}`)
+    if (log.detalles.estadoAnterior || log.detalles.estadoNuevo) {
+      parts.push(`Estado: ${log.detalles.estadoAnterior || '-'} → ${log.detalles.estadoNuevo || '-'}`)
+    }
   }
 
   if (log.motivoPrecio) {
