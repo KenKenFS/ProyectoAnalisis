@@ -1,371 +1,259 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  PlusIcon,
-  MinusIcon,
-  TrashIcon,
-  PaperAirplaneIcon,
-  CheckCircleIcon,
-  XMarkIcon,
   TableCellsIcon,
-  ClipboardDocumentListIcon,
+  CheckCircleIcon,
   UserGroupIcon,
   ClockIcon,
+  FunnelIcon,
+  ExclamationTriangleIcon,
+  ArrowRightCircleIcon,
 } from '@heroicons/react/24/outline'
+import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore'
 
-// Datos de ejemplo - Mesas
-const tablesData = [
-  { id: 1, table: 1, capacity: 4, status: 'disponible' },
-  { id: 2, table: 2, capacity: 4, status: 'disponible' },
-  { id: 3, table: 3, capacity: 6, status: 'ocupada' },
-  { id: 4, table: 4, capacity: 2, status: 'disponible' },
-  { id: 5, table: 5, capacity: 6, status: 'ocupada' },
-  { id: 6, table: 6, capacity: 4, status: 'disponible' },
-  { id: 7, table: 7, capacity: 8, status: 'disponible' },
-  { id: 8, table: 8, capacity: 4, status: 'ocupada' },
-]
+import { db } from '@shared/firebase/firebase'
+import { useAuth } from '@shared/firebase/AuthContext'
 
-// Menu disponible
-const menuItems = [
-  { id: 1, name: 'Ceviche Clasico', category: 'Ceviches', price: 12.5 },
-  { id: 2, name: 'Ceviche Mixto', category: 'Ceviches', price: 14 },
-  { id: 3, name: 'Causa Limena', category: 'Entradas', price: 8 },
-  { id: 4, name: 'Tiradito', category: 'Ceviches', price: 13 },
-  { id: 5, name: 'Papa a la Huancaina', category: 'Acompañamientos', price: 6 },
-  { id: 6, name: 'Coca Cola', category: 'Bebidas', price: 2 },
-  { id: 7, name: 'Inca Kola', category: 'Bebidas', price: 2.5 },
-  { id: 8, name: 'Leche de Tigre', category: 'Bebidas', price: 3 },
-]
-
-const categories = ['Todos', ...new Set(menuItems.map(m => m.category))]
-
-function TableCard({ table, isSelected, onClick }) {
-  const statusColors = {
-    disponible: 'bg-green-50 border-green-300 hover:border-green-500',
-    ocupada: 'bg-blue-50 border-blue-300',
-    reservada: 'bg-yellow-50 border-yellow-300',
+function normalizeMesaStatus(rawStatus) {
+  const value = String(rawStatus || '').trim().toLowerCase()
+  if (value === 'libre' || value === 'disponible') return 'libre'
+  if (value === 'ocupada' || value === 'ocupado') return 'ocupada'
+  if (value === 'esperandocuenta' || value === 'esperando_cuenta' || value === 'esperandocobro') {
+    return 'esperandoCuenta'
   }
+  return 'libre'
+}
 
-  const StatusIcon = table.status === 'disponible' ? CheckCircleIcon : 
-                     table.status === 'ocupada' ? UserGroupIcon : ClockIcon
+function getStatusUI(status) {
+  if (status === 'ocupada') {
+    return {
+      label: 'Ocupada',
+      cardClass: 'bg-blue-50 border-blue-300',
+      textClass: 'text-blue-700',
+      icon: UserGroupIcon,
+    }
+  }
+  if (status === 'esperandoCuenta') {
+    return {
+      label: 'Esperando cuenta',
+      cardClass: 'bg-amber-50 border-amber-300',
+      textClass: 'text-amber-700',
+      icon: ClockIcon,
+    }
+  }
+  return {
+    label: 'Libre',
+    cardClass: 'bg-green-50 border-green-300',
+    textClass: 'text-green-700',
+    icon: CheckCircleIcon,
+  }
+}
 
+function MesaCard({ mesa, selected, onSelect }) {
+  const ui = getStatusUI(mesa.estadoMesa)
+  const StatusIcon = ui.icon
   return (
     <button
-      onClick={onClick}
-      className={`border-2 rounded-lg p-4 transition-all ${statusColors[table.status]} ${
-        isSelected ? 'ring-4 ring-cyan-500 shadow-lg' : 'hover:shadow-md'
-      }`}
+      onClick={() => onSelect(mesa)}
+      className={`border-2 rounded-lg p-4 text-left transition ${
+        ui.cardClass
+      } ${selected ? 'ring-4 ring-cyan-500 shadow-lg' : 'hover:shadow-md'}`}
     >
-      <div className="mb-2">
-        <StatusIcon className={`w-8 h-8 mx-auto ${
-          table.status === 'disponible' ? 'text-green-600' :
-          table.status === 'ocupada' ? 'text-blue-600' : 'text-yellow-600'
-        }`} />
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-lg font-bold text-gray-900">Mesa {mesa.numero ?? mesa.id}</div>
+          <div className="text-xs text-gray-600 mt-1">
+            Capacidad: {Number(mesa.capacidad || 0) || 'N/D'} | Zona: {mesa.zona || 'General'}
+          </div>
+        </div>
+        <StatusIcon className={`w-6 h-6 ${ui.textClass}`} />
       </div>
-      <div className="text-xl font-bold text-gray-900">Mesa {table.table}</div>
-      <div className="text-xs text-gray-600 mt-1">Capacidad: {table.capacity}</div>
-      <div className="text-xs font-semibold text-gray-700 mt-2 capitalize">{table.status}</div>
+      <div className={`text-xs font-semibold mt-3 ${ui.textClass}`}>{ui.label}</div>
     </button>
   )
 }
 
-function MenuItemCard({ item, onAdd }) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition">
-      <div className="text-sm font-semibold text-gray-800">{item.name}</div>
-      <div className="text-xs text-gray-500 mb-2">{item.category}</div>
-      <div className="flex justify-between items-center">
-        <div className="font-bold text-cyan-600">₡{(item.price * 700).toLocaleString()}</div>
-        <button
-          onClick={() => onAdd(item)}
-          className="bg-cyan-600 hover:bg-cyan-700 text-white p-1.5 rounded transition active:scale-95"
-        >
-          <PlusIcon className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function OrderItem({ item, onIncrease, onDecrease, onRemove }) {
-  return (
-    <div className="flex items-center gap-2 p-2 bg-gray-50 rounded hover:bg-gray-100 transition">
-      <div className="flex-1 min-w-0">
-        <div className="font-semibold text-sm text-gray-800 truncate">{item.name}</div>
-        <div className="text-xs text-gray-500">₡{(item.price * 700).toLocaleString()}</div>
-      </div>
-
-      <div className="flex items-center gap-1 bg-white border border-gray-200 rounded">
-        <button
-          onClick={onDecrease}
-          className="p-1 hover:bg-gray-100 transition"
-        >
-          <MinusIcon className="w-3 h-3 text-gray-600" />
-        </button>
-        <span className="w-6 text-center text-sm font-semibold">{item.qty}</span>
-        <button
-          onClick={onIncrease}
-          className="p-1 hover:bg-gray-100 transition"
-        >
-          <PlusIcon className="w-3 h-3 text-gray-600" />
-        </button>
-      </div>
-
-      <button
-        onClick={onRemove}
-        className="p-1 hover:bg-red-50 text-red-500 rounded transition"
-      >
-        <TrashIcon className="w-4 h-4" />
-      </button>
-    </div>
-  )
-}
-
 export default function MeserosPage() {
-  const [tables, setTables] = useState(tablesData)
-  const [selectedTable, setSelectedTable] = useState(null)
-  const [cart, setCart] = useState([])
-  const [selectedCategory, setSelectedCategory] = useState('Todos')
-  const [showConfirm, setShowConfirm] = useState(false)
+  const { isMesero, isAdmin, loading: authLoading } = useAuth()
+  const [mesas, setMesas] = useState([])
+  const [selectedMesaId, setSelectedMesaId] = useState(null)
+  const [filterEstado, setFilterEstado] = useState('todos')
+  const [loadingMesas, setLoadingMesas] = useState(true)
+  const [error, setError] = useState('')
+  const [updatingMesaId, setUpdatingMesaId] = useState(null)
 
-  const filteredItems = menuItems.filter(item =>
-    selectedCategory === 'Todos' || item.category === selectedCategory
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      collection(db, 'mesas'),
+      (snapshot) => {
+        const mapped = snapshot.docs
+          .map((docSnap) => {
+            const data = docSnap.data()
+            const rawEstado = data.estadoMesa ?? data.estado ?? 'libre'
+            return {
+              id: docSnap.id,
+              ...data,
+              estadoMesa: normalizeMesaStatus(rawEstado),
+            }
+          })
+          .sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0))
+        setMesas(mapped)
+        setLoadingMesas(false)
+        setError('')
+      },
+      (err) => {
+        setError(err?.message || 'No se pudieron cargar las mesas.')
+        setLoadingMesas(false)
+      }
+    )
+    return () => unsubscribe()
+  }, [])
+
+  const filteredMesas = useMemo(() => {
+    if (filterEstado === 'todos') return mesas
+    return mesas.filter((m) => m.estadoMesa === filterEstado)
+  }, [mesas, filterEstado])
+
+  const selectedMesa = useMemo(
+    () => mesas.find((m) => m.id === selectedMesaId) || null,
+    [mesas, selectedMesaId]
   )
 
-  function addToCart(item) {
-    setCart(prev => {
-      const existing = prev.find(p => p.id === item.id)
-      if (existing) {
-        return prev.map(p => p.id === item.id ? { ...p, qty: p.qty + 1 } : p)
-      }
-      return [...prev, { ...item, qty: 1 }]
-    })
+  async function toggleSolicitarCuenta(mesa) {
+    if (!mesa?.id || updatingMesaId) return
+    setUpdatingMesaId(mesa.id)
+    try {
+      const nextEstado = mesa.estadoMesa === 'esperandoCuenta' ? 'ocupada' : 'esperandoCuenta'
+      await updateDoc(doc(db, 'mesas', mesa.id), {
+        estadoMesa: nextEstado,
+        estado: nextEstado, // compatibilidad con datos antiguos
+        updatedAt: new Date(),
+      })
+    } catch (e) {
+      setError(e?.message || 'No se pudo actualizar el estado de la mesa.')
+    } finally {
+      setUpdatingMesaId(null)
+    }
   }
 
-  function updateQty(id, delta) {
-    setCart(prev =>
-      prev.map(p => p.id === id ? { ...p, qty: Math.max(0, p.qty + delta) } : p)
-          .filter(p => p.qty > 0)
+  if (authLoading) {
+    return <div className="text-sm text-gray-600">Cargando permisos...</div>
+  }
+
+  if (!isMesero && !isAdmin) {
+    return (
+      <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">
+        No tienes permisos para acceder al estado de mesas.
+      </div>
     )
   }
-
-  function removeItem(id) {
-    setCart(prev => prev.filter(p => p.id !== id))
-  }
-
-  function sendOrder() {
-    if (!selectedTable || cart.length === 0) return
-
-    // Cambiar estado de mesa a ocupada
-    setTables(prev =>
-      prev.map(t =>
-        t.id === selectedTable.id ? { ...t, status: 'ocupada' } : t
-      )
-    )
-
-    // Limpiar
-    setShowConfirm(false)
-    setCart([])
-    setSelectedTable(null)
-  }
-
-  const subtotal = Math.round(cart.reduce((s, i) => s + i.price * i.qty * 700, 0))
-  const tax = Math.round(subtotal * 0.13)
-  const total = subtotal + tax
 
   return (
     <div className="space-y-6 pb-4">
-      {/* Header */}
       <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white rounded-lg p-6 shadow-lg">
-        <h1 className="text-4xl font-bold flex items-center gap-3">
-          <UserGroupIcon className="w-10 h-10" />
-          MESEROS
+        <h1 className="text-3xl font-bold flex items-center gap-3">
+          <TableCellsIcon className="w-8 h-8" />
+          Estado de mesas
         </h1>
-        <p className="text-blue-200 mt-2">Toma de ordenes desde tablet</p>
+        <p className="text-blue-200 mt-2">Visualizacion en tiempo real para organizacion de atencion</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Mesas */}
-        <div className="lg:col-span-2">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <TableCellsIcon className="w-6 h-6 text-cyan-600" />
-            Mesas Disponibles
-          </h2>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {tables.map(table => (
-              <TableCard
-                key={table.id}
-                table={table}
-                isSelected={selectedTable?.id === table.id}
-                onClick={() => setSelectedTable(table)}
-              />
-            ))}
-          </div>
+      <div className="flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-lg p-3">
+        <div className="text-sm text-gray-700">
+          Total mesas: <span className="font-bold">{mesas.length}</span> (esperadas: 20)
         </div>
+        <div className="flex items-center gap-2">
+          <FunnelIcon className="w-4 h-4 text-gray-500" />
+          <select
+            value={filterEstado}
+            onChange={(e) => setFilterEstado(e.target.value)}
+            className="select select-bordered select-sm"
+          >
+            <option value="todos">Todos</option>
+            <option value="libre">Libres</option>
+            <option value="ocupada">Ocupadas</option>
+            <option value="esperandoCuenta">Esperando cuenta</option>
+          </select>
+        </div>
+      </div>
 
-        {/* Orden */}
-          <aside className="lg:sticky lg:top-0 bg-white border border-gray-200 rounded-lg shadow-lg h-fit max-h-[calc(100vh-10rem)]">
-          <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-cyan-50">
-            <div className="flex items-center gap-2">
-              <ClipboardDocumentListIcon className="w-5 h-5 text-cyan-600" />
-              <h3 className="font-bold text-gray-900">Nueva Orden</h3>
-            </div>
-            {selectedTable && (
-              <div className="mt-2 text-sm font-semibold text-blue-700">
-                Mesa {selectedTable.table}
-              </div>
-            )}
-          </div>
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+          {error}
+        </div>
+      )}
 
-          {!selectedTable ? (
-            <div className="p-6 text-center text-gray-500">
-              <TableCellsIcon className="w-12 h-12 mx-auto mb-2 opacity-30" />
-              <p className="text-sm font-medium">Selecciona una mesa para empezar</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          {loadingMesas ? (
+            <div className="text-sm text-gray-600">Cargando mesas...</div>
+          ) : filteredMesas.length === 0 ? (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg p-4 text-sm flex items-center gap-2">
+              <ExclamationTriangleIcon className="w-5 h-5" />
+              No hay mesas para el filtro seleccionado.
             </div>
           ) : (
-            <>
-              {/* Menu */}
-              <div className="p-4 border-b border-gray-100 max-h-[300px] overflow-y-auto">
-                {/* Categorias */}
-                <div className="flex gap-2 mb-3 flex-wrap">
-                  {categories.map(cat => (
-                    <button
-                      key={cat}
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
-                        selectedCategory === cat
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {filteredMesas.map((mesa) => (
+                <MesaCard
+                  key={mesa.id}
+                  mesa={mesa}
+                  selected={selectedMesaId === mesa.id}
+                  onSelect={(m) => setSelectedMesaId(m.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
 
-                {/* Items */}
-                <div className="space-y-2">
-                  {filteredItems.map(item => (
-                    <MenuItemCard key={item.id} item={item} onAdd={addToCart} />
-                  ))}
+        <aside className="bg-white border border-gray-200 rounded-lg shadow-lg h-fit">
+          <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-cyan-50">
+            <h2 className="font-bold text-gray-900">Detalle de mesa</h2>
+          </div>
+
+          {!selectedMesa ? (
+            <div className="p-5 text-sm text-gray-500">Selecciona una mesa para ver su detalle.</div>
+          ) : (
+            <div className="p-5 space-y-4">
+              <div>
+                <div className="text-xl font-bold text-gray-900">Mesa {selectedMesa.numero ?? selectedMesa.id}</div>
+                <div className="text-sm text-gray-600 mt-1">Zona: {selectedMesa.zona || 'General'}</div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Estado</span>
+                  <span className="font-semibold">{getStatusUI(selectedMesa.estadoMesa).label}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Capacidad</span>
+                  <span className="font-semibold">{selectedMesa.capacidad || 'N/D'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Cuenta activa</span>
+                  <span className="font-semibold">{selectedMesa.cuentaActivaId ? 'Si' : 'No'}</span>
                 </div>
               </div>
 
-              {/* Carrito */}
-              <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-[200px]">
-                {cart.length === 0 ? (
-                  <div className="text-center text-gray-400 py-4">
-                    <p className="text-sm">Sin items</p>
-                  </div>
-                ) : (
-                  cart.map(item => (
-                    <OrderItem
-                      key={item.id}
-                      item={item}
-                      onIncrease={() => updateQty(item.id, 1)}
-                      onDecrease={() => updateQty(item.id, -1)}
-                      onRemove={() => removeItem(item.id)}
-                    />
-                  ))
-                )}
-              </div>
-
-              {/* Totales */}
-              {cart.length > 0 && (
-                <div className="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
-                  <div className="text-xs">
-                    <div className="flex justify-between text-gray-600">
-                      <span>Subtotal</span>
-                      <span>₡{subtotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-gray-600">
-                      <span>IVA (13%)</span>
-                      <span>₡{tax.toLocaleString()}</span>
-                    </div>
-                  </div>
-                  <div className="divider my-2"></div>
-                  <div className="flex justify-between font-bold text-gray-900 bg-white p-2 rounded border">
-                    <span>Total</span>
-                    <span className="text-cyan-600">₡{total.toLocaleString()}</span>
-                  </div>
-
-                  {/* Botones */}
-                  <button
-                    onClick={() => setShowConfirm(true)}
-                    className="w-full bg-cyan-600 hover:bg-blue-700 text-white py-2 rounded-lg transition font-semibold flex items-center justify-center gap-2 active:scale-95"
-                  >
-                    <PaperAirplaneIcon className="w-4 h-4" />
-                    Enviar a Cocina
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setCart([])
-                      setSelectedTable(null)
-                    }}
-                    className="w-full text-red-600 hover:bg-red-50 py-2 rounded-lg transition font-semibold border border-red-300"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              )}
-            </>
+              <button
+                onClick={() => toggleSolicitarCuenta(selectedMesa)}
+                disabled={updatingMesaId === selectedMesa.id}
+                className={`w-full btn btn-sm border-0 text-white ${
+                  selectedMesa.estadoMesa === 'esperandoCuenta'
+                    ? 'bg-slate-600 hover:bg-slate-700'
+                    : 'bg-amber-600 hover:bg-amber-700'
+                }`}
+              >
+                <ArrowRightCircleIcon className="w-4 h-4" />
+                {updatingMesaId === selectedMesa.id
+                  ? 'Actualizando...'
+                  : selectedMesa.estadoMesa === 'esperandoCuenta'
+                    ? 'Quitar solicitud de cuenta'
+                    : 'Solicitar cuenta'}
+              </button>
+            </div>
           )}
         </aside>
       </div>
-
-      {/* Confirm Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full">
-            <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex justify-between items-center">
-              <h3 className="font-bold text-lg">Confirmar Orden</h3>
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="p-1 hover:bg-white/20 rounded transition"
-              >
-                <XMarkIcon className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-2xl font-bold text-gray-900 mb-2">Mesa {selectedTable?.table}</div>
-                <div className="space-y-1 text-sm text-gray-700">
-                  {cart.map(item => (
-                    <div key={item.id} className="flex justify-between">
-                      <span>{item.qty}x {item.name}</span>
-                      <span>₡{(item.price * item.qty * 700).toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-blue-200 pt-2 mt-2">
-                  <div className="flex justify-between font-bold">
-                    <span>TOTAL</span>
-                    <span className="text-cyan-600">₡{total.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setShowConfirm(false)}
-                  className="bg-gray-300 hover:bg-gray-400 text-gray-900 py-2 rounded-lg transition font-semibold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={sendOrder}
-                  className="bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg transition font-semibold flex items-center justify-center gap-2"
-                >
-                  <CheckCircleIcon className="w-4 h-4" />
-                  Confirmar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
