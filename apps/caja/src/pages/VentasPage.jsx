@@ -7,28 +7,23 @@ import {
   TrashIcon,
   CreditCardIcon,
   BanknotesIcon,
-  PrinterIcon,
-  XMarkIcon,
   MagnifyingGlassIcon,
   CheckCircleIcon,
   ClockIcon,
+  ArchiveBoxIcon,
 } from '@heroicons/react/24/outline'
 
-import { getMesasConCuentaActivaOrThrow, getCuentaItems } from '@shared/firebase/firestore'
-
-// Datos de ejemplo - Menu para venta directa
-const menuItems = [
-  { id: 1, name: 'Ceviche Clasico', category: 'Ceviches', price: 12.5, desc: 'Ceviche tradicional con limon' },
-  { id: 2, name: 'Ceviche Mixto', category: 'Ceviches', price: 14, desc: 'Mixto de mariscos premium' },
-  { id: 3, name: 'Causa Limena', category: 'Entradas', price: 8, desc: 'Causa de papa con pulpa de atun' },
-  { id: 4, name: 'Tiradito', category: 'Ceviches', price: 13, desc: 'Lomo de atun en tecnica tiradito' },
-  { id: 5, name: 'Papa a la Huancaina', category: 'Acompañamientos', price: 6, desc: 'Papa criolla con salsa huancaina' },
-  { id: 6, name: 'Coca Cola', category: 'Bebidas', price: 2, desc: 'Bebida refrescante' },
-  { id: 7, name: 'Inca Kola', category: 'Bebidas', price: 2.5, desc: 'Bebida peruana' },
-  { id: 8, name: 'Leche de Tigre', category: 'Bebidas', price: 3, desc: 'Bebida tipica del ceviche' },
-]
-
-const categories = ['Todos', ...new Set(menuItems.map(m => m.category))]
+import { useAuth } from '@shared/firebase/AuthContext'
+import {
+  getMesasConCuentaActivaOrThrow,
+  getCuentaItems,
+  getProductos,
+  createVentaDirectaCuenta,
+  addVentaDirectaItem,
+  cerrarVentaDirectaCuenta,
+  getVentasDirectasPendientesEntrega,
+  marcarVentaDirectaEntregada,
+} from '@shared/firebase/firestore'
 
 function OrderTableCard({ order, onSelect }) {
   const statusColors = {
@@ -91,7 +86,7 @@ function MenuCard({ item, onAdd }) {
         <p className="text-xs text-gray-500 line-clamp-1">{item.desc}</p>
 
         <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-          <div className="font-bold text-cyan-600 text-base">₡{(item.price * 700).toLocaleString()}</div>
+          <div className="font-bold text-cyan-600 text-base">₡{Number(item.price || 0).toLocaleString()}</div>
           <button
             onClick={() => onAdd(item)}
             className="bg-cyan-600 hover:bg-cyan-700 text-white p-1.5 rounded-lg transition-all duration-200 active:scale-95"
@@ -109,7 +104,7 @@ function CartItem({ item, onIncrease, onDecrease, onRemove }) {
     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-gray-800 text-sm truncate">{item.name}</div>
-        <div className="text-xs text-gray-500">₡{(item.price * 700).toLocaleString()} c/u</div>
+        <div className="text-xs text-gray-500">₡{Number(item.price || 0).toLocaleString()} c/u</div>
       </div>
 
       <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg">
@@ -129,7 +124,7 @@ function CartItem({ item, onIncrease, onDecrease, onRemove }) {
       </div>
 
       <div className="font-bold text-gray-800 w-20 text-right text-sm">
-        ₡{(item.price * item.qty * 700).toLocaleString()}
+        ₡{(Number(item.price || 0) * Number(item.qty || 0)).toLocaleString()}
       </div>
 
       <button
@@ -142,138 +137,92 @@ function CartItem({ item, onIncrease, onDecrease, onRemove }) {
   )
 }
 
-function OrderDetailModal({ order, visible, onClose, onPay }) {
-  if (!visible || !order) return null
+function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
+  const [metodo, setMetodo] = useState('efectivo')
 
-  const subtotal = Math.round(order.items.reduce((s, i) => s + i.price * i.qty * 700, 0))
+  useEffect(() => {
+    if (open) setMetodo('efectivo')
+  }, [open])
+
+  if (!open) return null
+
+  const subtotal = Math.round(cart.reduce((s, i) => s + Number(i.price || 0) * Number(i.qty || 0), 0))
   const tax = Math.round(subtotal * 0.13)
   const total = subtotal + tax
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex justify-between items-center">
-          <h3 className="font-bold text-lg">Mesa {order.table}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-white/20 rounded transition">
-            <XMarkIcon className="w-5 h-5" />
-          </button>
+      <div className="bg-white rounded-lg shadow-2xl max-w-lg w-full overflow-hidden">
+        <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex items-center justify-between">
+          <div className="font-bold text-lg">Confirmar cobro — Para llevar</div>
+          <button onClick={onClose} className="btn btn-ghost btn-sm text-white">Cerrar</button>
         </div>
 
-        <div className="p-6 space-y-4">
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <div className="text-sm text-gray-600 mb-2">
-              <span className="font-semibold">Estado:</span> {order.status}
-            </div>
-            <div className="text-sm text-gray-600">
-              <span className="font-semibold">Tiempo:</span> {order.time}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="font-semibold text-gray-900">Productos</h4>
-            {order.items.map(item => (
-              <div key={item.id} className="flex justify-between p-2 bg-gray-50 rounded">
-                <span className="text-gray-800">{item.qty}x {item.name}</span>
-                <span className="font-semibold">₡{(item.price * item.qty * 700).toLocaleString()}</span>
+        <div className="p-5 space-y-4">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 max-h-48 overflow-y-auto space-y-1">
+            {cart.map((item) => (
+              <div key={item.id} className="flex justify-between text-sm text-gray-700">
+                <span>{item.qty}x {item.name}</span>
+                <span className="font-semibold">₡{(Number(item.price || 0) * item.qty).toLocaleString()}</span>
               </div>
             ))}
           </div>
 
-          <div className="border-t pt-4 space-y-2">
+          <div className="space-y-1 text-sm">
             <div className="flex justify-between text-gray-600">
               <span>Subtotal</span>
-              <span>₡{subtotal.toLocaleString()}</span>
+              <span className="font-semibold">₡{subtotal.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-gray-600">
               <span>IVA (13%)</span>
-              <span>₡{tax.toLocaleString()}</span>
+              <span className="font-semibold">₡{tax.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between text-lg font-bold text-gray-900 bg-cyan-50 p-3 rounded border-2 border-cyan-300">
-              <span>TOTAL A PAGAR</span>
-              <span className="text-cyan-600">₡{total.toLocaleString()}</span>
+            <div className="flex justify-between text-lg font-bold text-gray-900 bg-cyan-50 border border-cyan-200 rounded p-2 mt-2">
+              <span>Total</span>
+              <span>₡{total.toLocaleString()}</span>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 pt-4">
-            <button
-              onClick={() => onPay('efectivo')}
-              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg transition font-semibold"
-            >
-              <BanknotesIcon className="w-5 h-5" />
-              Efectivo
-            </button>
-            <button
-              onClick={() => onPay('tarjeta')}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition font-semibold"
-            >
-              <CreditCardIcon className="w-5 h-5" />
-              Tarjeta
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ReceiptModal({ visible, order, onClose }) {
-  if (!visible || !order) return null
-
-  const subtotal = Math.round(order.items.reduce((s, i) => s + i.price * i.qty * 700, 0))
-  const tax = Math.round(subtotal * 0.13)
-  const total = subtotal + tax
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex justify-between items-center">
-          <h3 className="font-bold text-lg">Recibo - Mesa {order.table}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-white/20 rounded transition">
-            <XMarkIcon className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-4">
-          <div className="text-center pb-4 border-b-2 border-dashed border-gray-300">
-            <div className="font-bold text-lg text-gray-900">Ceviche del Rey</div>
-            <div className="text-xs text-gray-600 mt-1">San Jose, Costa Rica</div>
-          </div>
-
-          <div className="space-y-2 pb-4 border-b-2 border-dashed border-gray-300">
-            {order.items.map(item => (
-              <div key={item.id} className="flex justify-between text-sm">
-                <span>{item.qty}x {item.name}</span>
-                <span className="font-semibold">₡{(item.price * item.qty * 700).toLocaleString()}</span>
-              </div>
-            ))}
           </div>
 
           <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span>Subtotal:</span>
-              <span>₡{subtotal.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span>IVA (13%):</span>
-              <span>₡{tax.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-lg font-bold text-gray-900 bg-cyan-50 p-2 rounded">
-              <span>TOTAL:</span>
-              <span className="text-cyan-600">₡{total.toLocaleString()}</span>
+            <div className="font-semibold text-gray-800">Método de pago</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setMetodo('efectivo')}
+                className={`flex items-center justify-center gap-2 py-2 rounded-lg border font-semibold transition ${
+                  metodo === 'efectivo' ? 'bg-green-600 text-white border-green-700' : 'bg-white text-gray-700 border-gray-200'
+                }`}
+              >
+                <BanknotesIcon className="w-5 h-5" />
+                Efectivo
+              </button>
+              <button
+                onClick={() => setMetodo('tarjeta')}
+                className={`flex items-center justify-center gap-2 py-2 rounded-lg border font-semibold transition ${
+                  metodo === 'tarjeta' ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-gray-700 border-gray-200'
+                }`}
+              >
+                <CreditCardIcon className="w-5 h-5" />
+                Tarjeta
+              </button>
             </div>
           </div>
 
-          <div className="text-center text-xs text-gray-500 pt-4 border-t-2 border-dashed">
-            Gracias por su visita
-          </div>
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+              {error}
+            </div>
+          )}
 
-          <div className="flex gap-2">
-            <button className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition font-semibold">
-              <PrinterIcon className="w-4 h-4" />
-              Imprimir
+          <div className="flex gap-2 pt-2">
+            <button onClick={onClose} className="flex-1 btn btn-ghost" disabled={loading}>
+              Cancelar
             </button>
-            <button onClick={onClose} className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 rounded-lg transition font-semibold">
-              Cerrar
+            <button
+              onClick={() => onConfirm(metodo)}
+              className="flex-1 btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
+              disabled={loading}
+            >
+              {loading ? 'Procesando...' : 'Confirmar cobro'}
             </button>
           </div>
         </div>
@@ -284,14 +233,40 @@ function ReceiptModal({ visible, order, onClose }) {
 
 export default function VentasPage() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [cart, setCart] = useState([])
-  const [selectedCategory, setSelectedCategory] = useState('Todos')
+  const [selectedCategory, setSelectedCategory] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedOrder, setSelectedOrder] = useState(null)
-  const [showReceipt, setShowReceipt] = useState(false)
+  const [productos, setProductos] = useState([])
   const [mesasConCuenta, setMesasConCuenta] = useState([])
   const [mesasError, setMesasError] = useState('')
   const [mesasLoading, setMesasLoading] = useState(true)
+  const [ventaError, setVentaError] = useState('')
+  const [procesandoVenta, setProcesandoVenta] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pedidosPendientes, setPedidosPendientes] = useState([])
+  const [entregando, setEntregando] = useState(null)
+
+  async function loadPedidosPendientes() {
+    try {
+      const pendientes = await getVentasDirectasPendientesEntrega()
+      const enriched = await Promise.all(
+        pendientes.map(async (p) => {
+          try {
+            const items = await getCuentaItems(p.id)
+            return { ...p, itemsDetalle: items }
+          } catch {
+            return { ...p, itemsDetalle: [] }
+          }
+        })
+      )
+      setPedidosPendientes(enriched)
+    } catch { /* silenciar */ }
+  }
+
+  useEffect(() => {
+    loadPedidosPendientes()
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -299,7 +274,10 @@ export default function VentasPage() {
       try {
         setMesasLoading(true)
         setMesasError('')
-        const mesas = await getMesasConCuentaActivaOrThrow()
+        const [mesas, productosDB] = await Promise.all([
+          getMesasConCuentaActivaOrThrow(),
+          getProductos(),
+        ])
 
         // Enriquecer con un resumen rápido de ítems pendientes (para el card)
         const enriched = await Promise.all(
@@ -325,7 +303,10 @@ export default function VentasPage() {
           })
         )
 
-        if (mounted) setMesasConCuenta(enriched)
+        if (mounted) {
+          setMesasConCuenta(enriched)
+          setProductos(productosDB || [])
+        }
       } catch (e) {
         if (mounted) setMesasError(e?.message || 'Error al cargar mesas')
       } finally {
@@ -337,13 +318,36 @@ export default function VentasPage() {
     }
   }, [])
 
-  const filteredItems = menuItems.filter(item => {
-    const matchesCategory = selectedCategory === 'Todos' || item.category === selectedCategory
+  const categories = [...new Set((productos || []).map(m => m.categoria || 'General'))]
+  const categoryCountMap = categories.reduce((acc, cat) => {
+    acc[cat] = (productos || []).filter((p) => (p.categoria || 'General') === cat).length
+    return acc
+  }, {})
+
+  useEffect(() => {
+    if (!selectedCategory && categories.length > 0) {
+      setSelectedCategory(categories[0])
+    }
+  }, [categories, selectedCategory])
+
+  const filteredItems = (productos || []).map(item => {
+    const precio = Number(item.precioUnit ?? item.precio ?? 0)
+    return {
+      id: item.id,
+      productoId: item.id,
+      name: item.nombre ?? item.name ?? item.id,
+      category: item.categoria || 'General',
+      price: precio,
+      desc: item.descripcion || '',
+    }
+  }).filter(item => {
+    const matchesCategory = selectedCategory ? item.category === selectedCategory : true
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase())
     return matchesCategory && matchesSearch
   })
 
   function addToCart(item) {
+    setVentaError('')
     setCart(prev => {
       const existing = prev.find(p => p.id === item.id)
       if (existing) {
@@ -361,12 +365,73 @@ export default function VentasPage() {
   }
 
   function removeItem(id) {
+    setVentaError('')
     setCart(prev => prev.filter(p => p.id !== id))
   }
 
-  const subtotal = Math.round(cart.reduce((s, i) => s + i.price * i.qty * 700, 0))
+  const subtotal = Math.round(cart.reduce((s, i) => s + Number(i.price || 0) * Number(i.qty || 0), 0))
   const tax = Math.round(subtotal * 0.13)
   const total = subtotal + tax
+
+  async function cobrarVentaDirecta(metodo) {
+    if (procesandoVenta) return
+    setVentaError('')
+    if (cart.length === 0) {
+      setVentaError('Agregue al menos un producto.')
+      return
+    }
+
+    setProcesandoVenta(true)
+    try {
+      const cuentaId = await createVentaDirectaCuenta({
+        createdByUid: user?.uid || null,
+        tipoVenta: 'directa_para_llevar',
+        tipoPedido: 'para_llevar',
+        terminalId: 'Caja',
+      })
+
+      for (const item of cart) {
+        await addVentaDirectaItem({
+          cuentaId,
+          productoId: item.productoId || item.id,
+          cantidad: item.qty,
+          createdByUid: user?.uid || null,
+        })
+      }
+
+      await cerrarVentaDirectaCuenta({
+        cuentaId,
+        metodo,
+        cajeroUid: user?.uid || null,
+        impuestoRate: 0.13,
+      })
+
+      setCart([])
+      setConfirmOpen(false)
+      await loadPedidosPendientes()
+    } catch (e) {
+      if (e?.code === 'EMPTY_SALE') setVentaError('Agregue al menos un producto.')
+      else setVentaError(e?.message || 'Error al procesar venta directa.')
+    } finally {
+      setProcesandoVenta(false)
+    }
+  }
+
+  async function handleEntregado(cuentaId) {
+    if (entregando) return
+    setEntregando(cuentaId)
+    try {
+      await marcarVentaDirectaEntregada({
+        cuentaId,
+        cajeroUid: user?.uid || null,
+      })
+      await loadPedidosPendientes()
+    } catch (e) {
+      setVentaError(e?.message || 'Error al marcar como entregado.')
+    } finally {
+      setEntregando(null)
+    }
+  }
 
   return (
     <div className="space-y-6 pb-4">
@@ -396,7 +461,6 @@ export default function VentasPage() {
                 total: Number(mesa.resumen?.total || 0),
               }}
               onSelect={() => {
-                setSelectedOrder({ mesaId: mesa.id, cuentaId: mesa.cuentaActivaId })
                 navigate(`/mesa-compartida?mesaId=${encodeURIComponent(mesa.id)}`)
               }}
             />
@@ -417,6 +481,82 @@ export default function VentasPage() {
         )}
       </div>
 
+      {/* SECTION 2: PEDIDOS PARA LLEVAR (cobrados, pendientes de entrega) */}
+      {pedidosPendientes.length > 0 && (
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <ArchiveBoxIcon className="w-6 h-6 text-orange-500" />
+            Pedidos Para Llevar
+            <span className="badge badge-warning badge-sm ml-2">{pedidosPendientes.length}</span>
+          </h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {pedidosPendientes.map((pedido) => {
+              const cobradoDate = pedido.cobradoAt?.toDate?.()
+                || (pedido.cobradoAt ? new Date(pedido.cobradoAt) : null)
+              const timeStr = cobradoDate
+                ? cobradoDate.toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' })
+                : ''
+              const items = pedido.itemsDetalle || []
+              const pagados = items.filter((i) => i.estadoItem === 'pagado')
+
+              return (
+                <div
+                  key={pedido.id}
+                  className="border-2 rounded-lg p-4 bg-orange-50 border-orange-300 shadow-sm"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="text-lg font-bold text-gray-900">Para llevar</div>
+                      <div className="text-xs text-gray-600">{timeStr}</div>
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-1 rounded text-sm font-semibold bg-orange-100 text-orange-800">
+                      <ClockIcon className="w-4 h-4" />
+                      Cobrado
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 mb-3 max-h-24 overflow-y-auto">
+                    {pagados.map((item) => (
+                      <div key={item.id} className="text-xs text-gray-700">
+                        {item.cantidad || 1}x {item.nombreSnapshot || item.productoId}
+                      </div>
+                    ))}
+                    {pagados.length === 0 && (
+                      <div className="text-xs text-gray-400">Sin ítems</div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-orange-200 pt-2 mb-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">
+                        {pedido.metodoPago === 'tarjeta' ? 'Tarjeta' : 'Efectivo'}
+                      </span>
+                      <span className="font-bold text-lg text-gray-900">
+                        ₡{Number(pedido.montoTotal || 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleEntregado(pedido.id)}
+                    disabled={entregando === pedido.id}
+                    className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg transition font-semibold active:scale-95 disabled:opacity-50"
+                  >
+                    {entregando === pedido.id ? (
+                      <span className="loading loading-spinner loading-xs" />
+                    ) : (
+                      <CheckCircleIcon className="w-5 h-5" />
+                    )}
+                    Entregado
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* SEPARATOR */}
       <div className="border-t-2 border-gray-200 pt-6 my-6">
         <div className="text-center mb-6">
@@ -435,49 +575,65 @@ export default function VentasPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Menu Section */}
-          <div className="lg:col-span-2 flex flex-col gap-4">
-            {/* Search Bar */}
-            <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Buscar producto..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
-              />
+          <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Categories Panel */}
+            <div className="md:col-span-1 bg-white border border-gray-200 rounded-lg p-3 max-h-[65vh] overflow-y-auto">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Categorías</div>
+              <div className="space-y-2">
+                {categories.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`w-full text-left px-3 py-2 rounded-lg border transition flex items-center justify-between ${
+                      selectedCategory === cat
+                        ? 'bg-cyan-50 border-cyan-300 text-cyan-800'
+                        : 'bg-white border-gray-200 text-gray-700 hover:border-cyan-300 hover:bg-cyan-50/40'
+                    }`}
+                  >
+                    <span className="text-sm font-medium truncate">{cat}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                      {categoryCountMap[cat] || 0}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Category Filter */}
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
-                    selectedCategory === cat
-                      ? 'bg-cyan-600 text-white shadow-lg'
-                      : 'bg-white border border-gray-200 text-gray-700 hover:border-cyan-300'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
+            {/* Product List by Selected Category */}
+            <div className="md:col-span-3 flex flex-col gap-3">
+              <div className="relative">
+                <MagnifyingGlassIcon className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder={selectedCategory ? `Buscar en ${selectedCategory}...` : 'Buscar producto...'}
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
+                />
+              </div>
 
-            {/* Products Grid */}
-            <div className="flex-1 overflow-y-auto pr-2 min-h-0">
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
-                {filteredItems.length > 0 ? (
-                  filteredItems.map(item => (
-                    <MenuCard key={item.id} item={item} onAdd={addToCart} />
-                  ))
-                ) : (
-                  <div className="col-span-full text-center py-12 text-gray-500">
-                    <MagnifyingGlassIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p>No hay productos que coincidan</p>
-                  </div>
-                )}
+              <div className="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+                <div className="font-semibold text-gray-900">
+                  {selectedCategory || 'Productos'}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {filteredItems.length} resultado{filteredItems.length === 1 ? '' : 's'}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-1 min-h-0 max-h-[55vh]">
+                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-3 gap-3">
+                  {filteredItems.length > 0 ? (
+                    filteredItems.map(item => (
+                      <MenuCard key={item.id} item={item} onAdd={addToCart} />
+                    ))
+                  ) : (
+                    <div className="col-span-full text-center py-12 text-gray-500 bg-white border border-gray-200 rounded-lg">
+                      <MagnifyingGlassIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>No hay productos en esta categoría con ese filtro</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -533,28 +689,25 @@ export default function VentasPage() {
                   </div>
                 </div>
 
-                {/* Payment Buttons */}
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setShowReceipt(true)}
-                    className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg transition font-semibold active:scale-95"
-                  >
-                    <BanknotesIcon className="w-4 h-4" />
-                    Efectivo
-                  </button>
-                  <button
-                    onClick={() => setShowReceipt(true)}
-                    className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg transition font-semibold active:scale-95"
-                  >
-                    <CreditCardIcon className="w-4 h-4" />
-                    Tarjeta
-                  </button>
-                </div>
+                {ventaError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-2 text-xs">
+                    {ventaError}
+                  </div>
+                )}
 
-                {/* Clear Cart */}
+                <button
+                  onClick={() => { setVentaError(''); setConfirmOpen(true) }}
+                  className="w-full flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white py-2.5 rounded-lg transition font-semibold active:scale-95"
+                  disabled={procesandoVenta}
+                >
+                  <CreditCardIcon className="w-5 h-5" />
+                  Cobrar
+                </button>
+
                 <button
                   onClick={() => setCart([])}
                   className="w-full px-3 py-2 border border-red-300 text-red-600 hover:bg-red-50 rounded-lg transition font-semibold text-sm"
+                  disabled={procesandoVenta}
                 >
                   Limpiar carrito
                 </button>
@@ -564,15 +717,13 @@ export default function VentasPage() {
         </div>
       </div>
 
-      {/* MODALS */}
-      <ReceiptModal
-        visible={showReceipt}
-        order={selectedOrder || { table: 'Mostrador', items: cart }}
-        onClose={() => {
-          setShowReceipt(false)
-          setCart([])
-          setSelectedOrder(null)
-        }}
+      <ConfirmCobro
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={(metodo) => cobrarVentaDirecta(metodo)}
+        loading={procesandoVenta}
+        cart={cart}
+        error={ventaError}
       />
     </div>
   )

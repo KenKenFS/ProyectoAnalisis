@@ -18,6 +18,8 @@ import {
   WrenchScrewdriverIcon,
   PauseIcon,
   PlayIcon,
+  CreditCardIcon,
+  CheckCircleIcon,
 } from '@heroicons/react/24/outline'
 import { getAllAuditLogs, getAllUsers } from '@shared/firebase/auth'
 
@@ -41,6 +43,8 @@ const TIPOS = {
   cierre_turno: { label: 'Cierre de turno', icon: ClockIcon, color: 'text-amber-700', bg: 'bg-amber-50' },
   pausa_turno_inicio: { label: 'Inicio de pausa', icon: PauseIcon, color: 'text-amber-700', bg: 'bg-amber-50' },
   pausa_turno_fin: { label: 'Fin de pausa', icon: PlayIcon, color: 'text-cyan-700', bg: 'bg-cyan-50' },
+  venta_directa_cobrada: { label: 'Venta directa cobrada', icon: CreditCardIcon, color: 'text-emerald-700', bg: 'bg-emerald-50' },
+  venta_directa_entregada: { label: 'Venta directa entregada', icon: CheckCircleIcon, color: 'text-green-700', bg: 'bg-green-50' },
 }
 
 function formatTimestamp(ts) {
@@ -138,6 +142,15 @@ function buildDetails(log) {
     if (log.detalles.motivoTexto) parts.push(`Detalle: ${log.detalles.motivoTexto}`)
     if (log.detalles.duracionMinutos !== undefined) parts.push(`Duracion pausa: ${log.detalles.duracionMinutos} min`)
     if (log.detalles.totalPausaMinutos !== undefined) parts.push(`Pausa acumulada: ${log.detalles.totalPausaMinutos} min`)
+  }
+
+  if ((log.tipo === 'venta_directa_cobrada' || log.tipo === 'venta_directa_entregada') && log.detalles) {
+    if (log.detalles.cuentaId) parts.push(`Cuenta: ${log.detalles.cuentaId}`)
+    if (log.detalles.metodo) parts.push(`Método: ${log.detalles.metodo}`)
+    if (log.detalles.itemsCount !== undefined) parts.push(`Ítems: ${log.detalles.itemsCount}`)
+    if (log.detalles.subtotal !== undefined) parts.push(`Subtotal: ₡${Number(log.detalles.subtotal || 0).toLocaleString()}`)
+    if (log.detalles.impuesto !== undefined) parts.push(`Impuesto: ₡${Number(log.detalles.impuesto || 0).toLocaleString()}`)
+    if (log.detalles.total !== undefined) parts.push(`Total: ₡${Number(log.detalles.total || 0).toLocaleString()}`)
   }
 
   if (log.motivoPrecio) {

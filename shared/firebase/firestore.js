@@ -1322,6 +1322,213 @@ export async function addCuentaItem({ cuentaId, productoId, comensalId, createdB
 }
 
 /**
+ * POS-005 (MVP): Crea una cuenta de venta directa / para llevar (sin mesa).
+ * @returns {Promise<string>} cuentaId
+ */
+export async function createVentaDirectaCuenta({
+  createdByUid = null,
+  tipoVenta = 'directa_para_llevar',
+  tipoPedido = 'para_llevar',
+  terminalId = 'Caja',
+} = {}) {
+  const now = new Date();
+  const ref = await addDoc(collection(db, 'cuentas'), {
+    estadoCuenta: 'abierta',
+    estadoEntrega: 'pendiente',
+    tipoVenta,
+    tipoPedido,
+    terminalId,
+    mesaId: null,
+    createdByUid,
+    openedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return ref.id;
+}
+
+/**
+ * POS-005 (MVP): Agrega ítem a cuenta de venta directa.
+ * @returns {Promise<string>} itemId
+ */
+export async function addVentaDirectaItem({
+  cuentaId,
+  productoId,
+  cantidad = 1,
+  createdByUid = null,
+}) {
+  const qty = Number(cantidad || 0);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    const err = new Error('Cantidad inválida.');
+    err.code = 'INVALID_QTY';
+    throw err;
+  }
+
+  const productSnap = await getDoc(doc(db, 'productos', productoId));
+  if (!productSnap.exists()) {
+    const err = new Error('Producto no encontrado');
+    err.code = 'PRODUCT_NOT_FOUND';
+    throw err;
+  }
+  const p = productSnap.data();
+  const nombreSnapshot = p.nombre ?? p.name ?? productoId;
+  const precioUnitSnapshot = Number(p.precioUnit ?? p.precio ?? 0);
+
+  const itemRef = await addDoc(collection(db, 'cuentas', cuentaId, 'items'), {
+    productoId,
+    nombreSnapshot,
+    precioUnitSnapshot,
+    cantidad: qty,
+    comensalId: null,
+    estadoItem: 'pendiente',
+    createdByUid,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  return itemRef.id;
+}
+
+/**
+ * POS-005 (MVP): Cierra/cobra una venta directa.
+ * Marca ítems pendientes como pagados y cierra la cuenta.
+ */
+export async function cerrarVentaDirectaCuenta({
+  cuentaId,
+  metodo = 'efectivo',
+  cajeroUid = null,
+  impuestoRate = 0.13,
+}) {
+  const cuenta = await getCuenta(cuentaId);
+  if (!cuenta) {
+    const err = new Error('Cuenta no encontrada.');
+    err.code = 'CUENTA_NOT_FOUND';
+    throw err;
+  }
+  if (cuenta.estadoCuenta === 'cerrada' || cuenta.estadoCuenta === 'cobrada') {
+    const err = new Error('La cuenta ya está cerrada o cobrada.');
+    err.code = 'CUENTA_ALREADY_CLOSED';
+    throw err;
+  }
+
+  const items = await getCuentaItems(cuentaId);
+  const pendientes = items.filter((i) => i.estadoItem === 'pendiente');
+  if (pendientes.length === 0) {
+    const err = new Error('Agregue al menos un producto.');
+    err.code = 'EMPTY_SALE';
+    throw err;
+  }
+
+  const subtotal = Math.round(
+    pendientes.reduce((s, i) => s + Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1), 0)
+  );
+  const impuesto = Math.round(subtotal * Number(impuestoRate || 0));
+  const total = subtotal + impuesto;
+  const now = new Date();
+
+  const batch = writeBatch(db);
+  for (const item of pendientes) {
+    batch.update(doc(db, 'cuentas', cuentaId, 'items', item.id), {
+      estadoItem: 'pagado',
+      paidAt: now,
+      updatedAt: now,
+    });
+  }
+
+  batch.update(doc(db, 'cuentas', cuentaId), {
+    estadoCuenta: 'cobrada',
+    estadoPago: 'pagado',
+    estadoEntrega: 'pendiente_entrega',
+    metodoPago: metodo,
+    montoSubtotal: subtotal,
+    montoImpuesto: impuesto,
+    montoTotal: total,
+    cobradoAt: now,
+    closedByUid: cajeroUid,
+    updatedAt: now,
+  });
+  await batch.commit();
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'venta_directa_cobrada',
+    adminUid: cajeroUid || '',
+    targetId: cuentaId,
+    targetName: 'Venta directa',
+    detalles: {
+      cuentaId,
+      metodo,
+      itemsCount: pendientes.length,
+      subtotal,
+      impuesto,
+      total,
+    },
+    timestamp: now,
+  });
+
+  return { subtotal, impuesto, total, itemsCount: pendientes.length };
+}
+
+/**
+ * POS-005 (MVP): Obtiene ventas directas cobradas pendientes de entrega.
+ */
+export async function getVentasDirectasPendientesEntrega() {
+  const q = query(
+    collection(db, 'cuentas'),
+    where('tipoVenta', '==', 'directa_para_llevar'),
+    where('estadoEntrega', '==', 'pendiente_entrega')
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => {
+    const ta = a.cobradoAt?.toDate?.() || a.cobradoAt || 0;
+    const tb = b.cobradoAt?.toDate?.() || b.cobradoAt || 0;
+    return new Date(tb) - new Date(ta);
+  });
+  return list;
+}
+
+/**
+ * POS-005 (MVP): Marca una venta directa como entregada (cierre definitivo).
+ */
+export async function marcarVentaDirectaEntregada({
+  cuentaId,
+  cajeroUid = null,
+}) {
+  const cuenta = await getCuenta(cuentaId);
+  if (!cuenta) {
+    const err = new Error('Cuenta no encontrada.');
+    err.code = 'CUENTA_NOT_FOUND';
+    throw err;
+  }
+  if (cuenta.estadoEntrega === 'entregado') {
+    const err = new Error('La venta ya fue entregada.');
+    err.code = 'ALREADY_DELIVERED';
+    throw err;
+  }
+
+  const now = new Date();
+  await updateDoc(doc(db, 'cuentas', cuentaId), {
+    estadoCuenta: 'cerrada',
+    estadoEntrega: 'entregado',
+    entregadoAt: now,
+    timestampCierre: now,
+    closedAt: now,
+    noReapertura: true,
+    updatedAt: now,
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'venta_directa_entregada',
+    adminUid: cajeroUid || '',
+    targetId: cuentaId,
+    targetName: 'Venta directa',
+    detalles: { cuentaId },
+    timestamp: now,
+  });
+}
+
+/**
  * Anula un ítem de cuenta con motivo obligatorio.
  * No elimina físicamente el documento; cambia estadoItem a "anulado".
  */
@@ -1608,6 +1815,9 @@ export async function getCuentasCerradas() {
 export function puedeReabrirCuenta(cuenta) {
   if (!cuenta || cuenta.estadoCuenta !== 'cerrada') {
     return { permitido: false, mensaje: 'La cuenta no está cerrada o no existe.' };
+  }
+  if (cuenta.noReapertura) {
+    return { permitido: false, mensaje: 'Esta cuenta no permite reapertura (venta directa entregada).' };
   }
   const ts = cuenta.timestampCierre ?? cuenta.closedAt;
   if (!ts) {
