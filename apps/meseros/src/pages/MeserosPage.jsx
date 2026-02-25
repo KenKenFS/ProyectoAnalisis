@@ -34,7 +34,7 @@ function getStatusUI(status) {
   }
   if (status === 'esperandoCuenta') {
     return {
-      label: 'Esperando cuenta',
+      label: 'Lista para pagar',
       cardClass: 'bg-amber-50 border-amber-300',
       textClass: 'text-amber-700',
       icon: ClockIcon,
@@ -171,7 +171,7 @@ export default function MeserosPage() {
             <option value="todos">Todos</option>
             <option value="libre">Libres</option>
             <option value="ocupada">Ocupadas</option>
-            <option value="esperandoCuenta">Esperando cuenta</option>
+            <option value="esperandoCuenta">Lista para pagar</option>
           </select>
         </div>
       </div>
@@ -247,8 +247,8 @@ export default function MeserosPage() {
                 {updatingMesaId === selectedMesa.id
                   ? 'Actualizando...'
                   : selectedMesa.estadoMesa === 'esperandoCuenta'
-                    ? 'Quitar solicitud de cuenta'
-                    : 'Solicitar cuenta'}
+                    ? 'Quitar lista para pagar'
+                    : 'Marcar lista para pagar'}
               </button>
             </div>
           )}

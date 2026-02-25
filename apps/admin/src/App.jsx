@@ -19,7 +19,7 @@ import './index.css'
 
 const sidebarLinks = [
   { to: '/admin', label: 'Dashboard', icon: 'HomeIcon', roles: ['Admin'] },
-  { to: '/orders', label: 'Ordenes', icon: 'ClipboardDocumentListIcon', roles: ['Admin'] },
+  { to: '/orders', label: 'Mesas', icon: 'TableCellsIcon', roles: ['Admin'] },
   { to: '/inventory', label: 'Inventario', icon: 'CubeIcon', roles: ['Admin'] },
   { to: '/accounting', label: 'Contabilidad', icon: 'BanknotesIcon', roles: ['Admin'] },
   { to: '/reports', label: 'Reporteria', icon: 'ChartBarIcon', roles: ['Admin'] },

@@ -713,10 +713,16 @@ export async function deleteProducto(productoId, adminUid) {
  */
 export async function createMesa(mesaData) {
   try {
+    const estadoNormalizado = mesaData.estadoMesa || mesaData.estado || 'libre';
     const docRef = await addDoc(collection(db, 'mesas'), {
-      ...mesaData,
-      estado: mesaData.estado || 'disponible',
+      numero: Number(mesaData.numero || 0),
+      capacidad: Number(mesaData.capacidad || 4),
+      zona: String(mesaData.zona || 'General').trim(),
+      estadoMesa: estadoNormalizado,
+      estado: estadoNormalizado, // compatibilidad con documentos antiguos
+      cuentaActivaId: mesaData.cuentaActivaId || null,
       createdAt: new Date(),
+      updatedAt: new Date(),
     });
     console.log('✅ Mesa creada:', docRef.id);
     return docRef.id;
@@ -778,6 +784,7 @@ export async function getMesasConCuentaActivaOrThrow() {
 export async function updateMesaEstado(mesaId, estado) {
   try {
     await updateDoc(doc(db, 'mesas', mesaId), {
+      estadoMesa: estado,
       estado: estado,
       updatedAt: new Date(),
     });
@@ -786,6 +793,58 @@ export async function updateMesaEstado(mesaId, estado) {
     console.error('❌ Error al actualizar mesa:', error.message);
     throw error;
   }
+}
+
+/**
+ * Actualiza los datos editables de una mesa.
+ * @param {string} mesaId
+ * @param {object} data - { numero, capacidad, zona, estadoMesa }
+ */
+export async function updateMesa(mesaId, data) {
+  const mesaRef = doc(db, 'mesas', mesaId);
+  const snap = await getDoc(mesaRef);
+  if (!snap.exists()) {
+    const err = new Error('Mesa no encontrada.');
+    err.code = 'MESA_NOT_FOUND';
+    throw err;
+  }
+
+  const payload = {
+    numero: Number(data.numero || 0),
+    capacidad: Number(data.capacidad || 4),
+    zona: String(data.zona || 'General').trim(),
+    updatedAt: new Date(),
+  };
+
+  if (data.estadoMesa) {
+    payload.estadoMesa = data.estadoMesa;
+    payload.estado = data.estadoMesa;
+  }
+
+  await updateDoc(mesaRef, payload);
+}
+
+/**
+ * Elimina una mesa si no tiene cuenta activa.
+ * @param {string} mesaId
+ */
+export async function deleteMesa(mesaId) {
+  const mesaRef = doc(db, 'mesas', mesaId);
+  const snap = await getDoc(mesaRef);
+  if (!snap.exists()) {
+    const err = new Error('Mesa no encontrada.');
+    err.code = 'MESA_NOT_FOUND';
+    throw err;
+  }
+
+  const mesa = snap.data();
+  if (mesa.cuentaActivaId) {
+    const err = new Error('No se puede eliminar una mesa con cuenta activa.');
+    err.code = 'MESA_CON_CUENTA';
+    throw err;
+  }
+
+  await deleteDoc(mesaRef);
 }
 
 // ==================== TRANSACCIONES (CONTABILIDAD) ====================
