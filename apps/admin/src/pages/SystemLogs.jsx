@@ -16,6 +16,8 @@ import {
   ArrowUpTrayIcon,
   TrashIcon,
   WrenchScrewdriverIcon,
+  PauseIcon,
+  PlayIcon,
 } from '@heroicons/react/24/outline'
 import { getAllAuditLogs, getAllUsers } from '@shared/firebase/auth'
 
@@ -35,6 +37,10 @@ const TIPOS = {
   conteo_fisico_aplicado: { label: 'Conteo fisico aplicado', icon: CubeIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   anulacion_item_cuenta: { label: 'Anulacion de item', icon: TrashIcon, color: 'text-rose-600', bg: 'bg-rose-50' },
   reversion_anulacion_item_cuenta: { label: 'Reversion de anulacion', icon: ArrowPathIcon, color: 'text-sky-600', bg: 'bg-sky-50' },
+  apertura_turno: { label: 'Apertura de turno', icon: ClockIcon, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  cierre_turno: { label: 'Cierre de turno', icon: ClockIcon, color: 'text-amber-700', bg: 'bg-amber-50' },
+  pausa_turno_inicio: { label: 'Inicio de pausa', icon: PauseIcon, color: 'text-amber-700', bg: 'bg-amber-50' },
+  pausa_turno_fin: { label: 'Fin de pausa', icon: PlayIcon, color: 'text-cyan-700', bg: 'bg-cyan-50' },
 }
 
 function formatTimestamp(ts) {
@@ -116,6 +122,24 @@ function buildDetails(log) {
     }
   }
 
+  if ((log.tipo === 'apertura_turno' || log.tipo === 'cierre_turno') && log.detalles) {
+    if (log.detalles.turnoId) parts.push(`Turno: ${log.detalles.turnoId}`)
+    if (log.detalles.rolUsuario) parts.push(`Rol usuario: ${log.detalles.rolUsuario}`)
+    if (log.detalles.terminalId) parts.push(`Terminal: ${log.detalles.terminalId}`)
+    if (log.detalles.duracionMinutos !== undefined) parts.push(`Duracion: ${log.detalles.duracionMinutos} min`)
+    if (log.detalles.cierreForzado) parts.push('Cierre forzado: sí')
+    if (log.detalles.observacionCierre) parts.push(`Observacion: ${log.detalles.observacionCierre}`)
+  }
+
+  if ((log.tipo === 'pausa_turno_inicio' || log.tipo === 'pausa_turno_fin') && log.detalles) {
+    if (log.detalles.turnoId) parts.push(`Turno: ${log.detalles.turnoId}`)
+    if (log.detalles.terminalId) parts.push(`Terminal: ${log.detalles.terminalId}`)
+    if (log.detalles.motivoTipo) parts.push(`Motivo: ${log.detalles.motivoTipo}`)
+    if (log.detalles.motivoTexto) parts.push(`Detalle: ${log.detalles.motivoTexto}`)
+    if (log.detalles.duracionMinutos !== undefined) parts.push(`Duracion pausa: ${log.detalles.duracionMinutos} min`)
+    if (log.detalles.totalPausaMinutos !== undefined) parts.push(`Pausa acumulada: ${log.detalles.totalPausaMinutos} min`)
+  }
+
   if (log.motivoPrecio) {
     parts.push(`Motivo del cambio de precio: ${log.motivoPrecio}`)
   }
@@ -136,11 +160,13 @@ export default function SystemLogs() {
   const [usersMap, setUsersMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [expandedLog, setExpandedLog] = useState(null)
+  const [technicalLogsOpen, setTechnicalLogsOpen] = useState([])
 
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterTipo, setFilterTipo] = useState('')
+  const [filterTipos, setFilterTipos] = useState([])
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
+  const [showTiposDropdown, setShowTiposDropdown] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -159,7 +185,7 @@ export default function SystemLogs() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const hasFilters = searchQuery || filterTipo || filterDateFrom || filterDateTo
+  const hasFilters = searchQuery || filterTipos.length > 0 || filterDateFrom || filterDateTo
 
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
@@ -173,7 +199,7 @@ export default function SystemLogs() {
         if (!matchTarget && !matchAdmin) return false
       }
 
-      if (filterTipo && log.tipo !== filterTipo) return false
+      if (filterTipos.length > 0 && !filterTipos.includes(log.tipo)) return false
 
       if (filterDateFrom || filterDateTo) {
         const logDate = log.timestamp?.toDate?.() || (log.timestamp ? new Date(log.timestamp) : null)
@@ -188,7 +214,7 @@ export default function SystemLogs() {
 
       return true
     })
-  }, [logs, searchQuery, filterTipo, filterDateFrom, filterDateTo, usersMap])
+  }, [logs, searchQuery, filterTipos, filterDateFrom, filterDateTo, usersMap])
 
   // Stats de actividad reciente (ultimas 24h)
   const stats = useMemo(() => {
@@ -205,12 +231,61 @@ export default function SystemLogs() {
 
   const clearFilters = () => {
     setSearchQuery('')
-    setFilterTipo('')
+    setFilterTipos([])
     setFilterDateFrom('')
     setFilterDateTo('')
+    setShowTiposDropdown(false)
   }
 
   const getAdminName = (uid) => usersMap[uid]?.name || uid || '-'
+  const toggleTipoFilter = (tipo) => {
+    setFilterTipos((prev) => (
+      prev.includes(tipo) ? prev.filter((t) => t !== tipo) : [...prev, tipo]
+    ))
+  }
+
+  const looksLikeId = (value) => {
+    const text = String(value || '').trim()
+    if (!text) return false
+    if (text.includes(' ')) return false
+    // IDs típicos de Firestore: alfanuméricos largos sin espacios.
+    return /^[A-Za-z0-9_-]{12,}$/.test(text)
+  }
+
+  const isTechnicalOpen = (logId) => technicalLogsOpen.includes(logId)
+  const toggleTechnicalForLog = (logId) => {
+    setTechnicalLogsOpen((prev) => (
+      prev.includes(logId) ? prev.filter((id) => id !== logId) : [...prev, logId]
+    ))
+  }
+
+  const getLogDisplayName = (log, index) => {
+    if (log.targetName && !looksLikeId(log.targetName)) return log.targetName
+    if (log.targetEmail) return log.targetEmail
+
+    const targetUserName = usersMap[log.targetId]?.name
+      || usersMap[log.targetId]?.email
+      || ''
+
+    if ((log.tipo === 'anulacion_item_cuenta' || log.tipo === 'reversion_anulacion_item_cuenta') && log.detalles) {
+      const cuenta = log.detalles.cuentaId ? `Cuenta ${log.detalles.cuentaId}` : ''
+      const comensal = log.detalles.comensalId ? `Comensal ${log.detalles.comensalId}` : ''
+      if (cuenta || comensal) return [cuenta, comensal].filter(Boolean).join(' · ')
+    }
+
+    if (log.tipo === 'apertura_turno' || log.tipo === 'cierre_turno' || log.tipo === 'pausa_turno_inicio' || log.tipo === 'pausa_turno_fin') {
+      if (targetUserName) return `Turno de ${targetUserName}`
+      if (log.detalles?.terminalId) return `Turno en ${log.detalles.terminalId}`
+      return 'Turno de usuario'
+    }
+
+    if ((log.tipo === 'entrada_insumo' || log.tipo === 'salida_insumo' || log.tipo === 'modificacion_insumo' || log.tipo === 'eliminacion_insumo' || log.tipo === 'ajuste_stock') && log.detalles?.insumoNombre) {
+      return `Insumo: ${log.detalles.insumoNombre}`
+    }
+
+    const seq = String(index + 1).padStart(4, '0')
+    return `Registro ${seq}`
+  }
 
   return (
     <div className="space-y-6 pb-20 md:pb-6">
@@ -272,13 +347,34 @@ export default function SystemLogs() {
             placeholder="Buscar por usuario afectado o administrador..."
             value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
         </div>
-        <select className="select select-bordered select-sm"
-          value={filterTipo} onChange={e => setFilterTipo(e.target.value)}>
-          <option value="">Todos los tipos</option>
-          {Object.entries(TIPOS).map(([key, val]) => (
-            <option key={key} value={key}>{val.label}</option>
-          ))}
-        </select>
+        <div className="relative">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm min-w-[190px] justify-between"
+            onClick={() => setShowTiposDropdown((v) => !v)}
+          >
+            <span className="truncate">
+              {filterTipos.length > 0 ? `Tipos (${filterTipos.length})` : 'Todos los tipos'}
+            </span>
+            <ChevronDownIcon className={`w-4 h-4 transition-transform ${showTiposDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          {showTiposDropdown && (
+            <div className="absolute z-20 mt-1 w-72 max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg p-2">
+              <div className="text-[11px] font-medium text-gray-500 px-1 pb-1">Selecciona uno o varios tipos</div>
+              {Object.entries(TIPOS).map(([key, val]) => (
+                <label key={key} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="checkbox checkbox-xs"
+                    checked={filterTipos.includes(key)}
+                    onChange={() => toggleTipoFilter(key)}
+                  />
+                  <span className={`text-xs px-2 py-0.5 rounded ${val.bg} ${val.color}`}>{val.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         <input type="date" className="input input-bordered input-sm"
           value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
           title="Desde" />
@@ -312,11 +408,12 @@ export default function SystemLogs() {
               )}
             </div>
           ) : (
-            filteredLogs.map(log => {
+            filteredLogs.map((log, index) => {
               const tipo = TIPOS[log.tipo] || { label: log.tipo, icon: DocumentTextIcon, color: 'text-gray-600', bg: 'bg-gray-50' }
               const Icon = tipo.icon
               const details = buildDetails(log)
               const isExpanded = expandedLog === log.id
+              const displayName = getLogDisplayName(log, index)
 
               return (
                 <div key={log.id}
@@ -333,7 +430,7 @@ export default function SystemLogs() {
                         </span>
                       </div>
                       <p className="text-sm text-gray-700 mt-0.5 truncate">
-                        {log.targetName || log.targetEmail || '-'}
+                        {displayName}
                         <span className="text-gray-400"> por </span>
                         {getAdminName(log.adminUid)}
                       </p>
@@ -347,9 +444,23 @@ export default function SystemLogs() {
                   {isExpanded && details.length > 0 && (
                     <div className="px-4 pb-4 pt-0">
                       <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+                        <div className="flex items-center justify-end">
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs"
+                            onClick={() => toggleTechnicalForLog(log.id)}
+                          >
+                            {isTechnicalOpen(log.id) ? 'Ocultar IDs técnicos' : 'Mostrar IDs técnicos'}
+                          </button>
+                        </div>
                         {details.map((d, i) => (
                           <p key={i} className="text-sm text-gray-600">{d}</p>
                         ))}
+                        {isTechnicalOpen(log.id) && (
+                          <p className="text-xs text-gray-400 pt-1">
+                            Log ID: {log.id} · Target ID: {log.targetId || '-'} · Admin UID: {log.adminUid || '-'}
+                          </p>
+                        )}
                         <p className="text-xs text-gray-400 pt-1">
                           Usuario afectado: {log.targetEmail || '-'}
                         </p>

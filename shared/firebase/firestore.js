@@ -849,6 +849,383 @@ export async function getTransaccionesPorFecha(fechaInicio, fechaFin) {
   }
 }
 
+// ==================== TURNOS POS ====================
+
+/**
+ * Abre un turno para un usuario del POS.
+ * Bloquea apertura si ya existe uno abierto para el usuario.
+ */
+export async function abrirTurnoUsuario({
+  usuarioId,
+  rolUsuario,
+  terminalId,
+  abiertoPorUid = null,
+  rolEjecutor = null,
+}) {
+  if (!usuarioId) throw new Error('usuarioId es obligatorio.');
+  if (!rolUsuario) throw new Error('rolUsuario es obligatorio.');
+  if (!terminalId || !String(terminalId).trim()) throw new Error('terminalId es obligatorio.');
+
+  const role = String(rolEjecutor || '').toLowerCase();
+  if (role !== 'admin') {
+    const err = new Error('Solo admin puede abrir turnos.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const snapshot = await getDocs(collection(db, 'turnos_pos'));
+  const yaAbierto = snapshot.docs.some(d => {
+    const t = d.data();
+    return t.usuarioId === usuarioId && t.estadoTurno === 'abierto';
+  });
+  if (yaAbierto) {
+    const err = new Error('Ya existe un turno activo para este usuario.');
+    err.code = 'TURNO_ACTIVO';
+    throw err;
+  }
+
+  const now = new Date();
+  const eventoInicio = {
+    tipo: 'inicio',
+    timestamp: now,
+    actorUid: abiertoPorUid || '',
+  };
+  const turnoRef = await addDoc(collection(db, 'turnos_pos'), {
+    usuarioId,
+    rolUsuario,
+    terminalId: String(terminalId).trim(),
+    horaInicio: now,
+    horaCierre: null,
+    observacionCierre: '',
+    cierreForzado: false,
+    estadoTurno: 'abierto',
+    pausaActiva: null,
+    totalPausaMinutos: 0,
+    duracionBrutaMinutos: null,
+    duracionNetaMinutos: null,
+    eventosTurno: [eventoInicio],
+    abiertoPorUid: abiertoPorUid || '',
+    cerradoPorUid: '',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'apertura_turno',
+    adminUid: abiertoPorUid || '',
+    targetId: usuarioId,
+    targetName: usuarioId,
+    detalles: {
+      turnoId: turnoRef.id,
+      rolUsuario,
+      terminalId: String(terminalId).trim(),
+      estadoTurno: 'abierto',
+    },
+    timestamp: now,
+  });
+
+  return turnoRef.id;
+}
+
+const MOTIVOS_PAUSA_VALIDOS = ['almuerzo', 'descanso', 'bano', 'diligencia', 'reunion', 'otro'];
+
+/**
+ * Inicia una pausa en un turno abierto.
+ */
+export async function iniciarPausaTurnoUsuario({
+  turnoId,
+  motivoTipo,
+  motivoTexto = '',
+  actorUid = null,
+  rolEjecutor = null,
+}) {
+  if (!turnoId) throw new Error('turnoId es obligatorio.');
+  if (!motivoTipo || !MOTIVOS_PAUSA_VALIDOS.includes(String(motivoTipo).toLowerCase())) {
+    const err = new Error('Motivo de pausa inválido.');
+    err.code = 'MOTIVO_INVALIDO';
+    throw err;
+  }
+  if (String(motivoTipo).toLowerCase() === 'otro' && !String(motivoTexto).trim()) {
+    const err = new Error('Debe indicar un motivo cuando selecciona "Otro".');
+    err.code = 'MOTIVO_REQUIRED';
+    throw err;
+  }
+
+  const role = String(rolEjecutor || '').toLowerCase();
+  if (role !== 'admin') {
+    const err = new Error('Solo admin puede iniciar pausas.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const turnoRef = doc(db, 'turnos_pos', turnoId);
+  const turnoSnap = await getDoc(turnoRef);
+  if (!turnoSnap.exists()) {
+    const err = new Error('Turno no encontrado.');
+    err.code = 'TURNO_NOT_FOUND';
+    throw err;
+  }
+
+  const turno = turnoSnap.data();
+  if (turno.estadoTurno !== 'abierto') {
+    const err = new Error('Solo se puede pausar un turno abierto.');
+    err.code = 'TURNO_INVALIDO';
+    throw err;
+  }
+
+  const now = new Date();
+  const evento = {
+    tipo: 'pausa_inicio',
+    timestamp: now,
+    motivoTipo: String(motivoTipo).toLowerCase(),
+    motivoTexto: String(motivoTexto || '').trim(),
+    actorUid: actorUid || '',
+  };
+
+  const eventos = [...(turno.eventosTurno || []), evento];
+  await updateDoc(turnoRef, {
+    estadoTurno: 'pausado',
+    pausaActiva: {
+      inicio: now,
+      motivoTipo: evento.motivoTipo,
+      motivoTexto: evento.motivoTexto,
+      actorUid: actorUid || '',
+    },
+    eventosTurno: eventos,
+    updatedAt: now,
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'pausa_turno_inicio',
+    adminUid: actorUid || '',
+    targetId: turno.usuarioId,
+    targetName: turno.usuarioId,
+    detalles: {
+      turnoId,
+      motivoTipo: evento.motivoTipo,
+      motivoTexto: evento.motivoTexto,
+      terminalId: turno.terminalId || '',
+    },
+    timestamp: now,
+  });
+}
+
+/**
+ * Reanuda un turno pausado.
+ */
+export async function reanudarTurnoUsuario({
+  turnoId,
+  actorUid = null,
+  rolEjecutor = null,
+}) {
+  if (!turnoId) throw new Error('turnoId es obligatorio.');
+
+  const role = String(rolEjecutor || '').toLowerCase();
+  if (role !== 'admin') {
+    const err = new Error('Solo admin puede reanudar turnos.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const turnoRef = doc(db, 'turnos_pos', turnoId);
+  const turnoSnap = await getDoc(turnoRef);
+  if (!turnoSnap.exists()) {
+    const err = new Error('Turno no encontrado.');
+    err.code = 'TURNO_NOT_FOUND';
+    throw err;
+  }
+
+  const turno = turnoSnap.data();
+  if (turno.estadoTurno !== 'pausado' || !turno.pausaActiva?.inicio) {
+    const err = new Error('El turno no está en pausa.');
+    err.code = 'TURNO_NO_PAUSADO';
+    throw err;
+  }
+
+  const now = new Date();
+  const pausaInicio = turno.pausaActiva.inicio?.toDate ? turno.pausaActiva.inicio.toDate() : new Date(turno.pausaActiva.inicio);
+  const pausaMin = Math.max(0, Math.round((now.getTime() - pausaInicio.getTime()) / 60000));
+  const totalPausaMinutos = Number(turno.totalPausaMinutos || 0) + pausaMin;
+
+  const evento = {
+    tipo: 'pausa_fin',
+    timestamp: now,
+    duracionMinutos: pausaMin,
+    motivoTipo: turno.pausaActiva.motivoTipo || '',
+    motivoTexto: turno.pausaActiva.motivoTexto || '',
+    actorUid: actorUid || '',
+  };
+
+  const eventos = [...(turno.eventosTurno || []), evento];
+  await updateDoc(turnoRef, {
+    estadoTurno: 'abierto',
+    pausaActiva: null,
+    totalPausaMinutos,
+    eventosTurno: eventos,
+    updatedAt: now,
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'pausa_turno_fin',
+    adminUid: actorUid || '',
+    targetId: turno.usuarioId,
+    targetName: turno.usuarioId,
+    detalles: {
+      turnoId,
+      duracionMinutos: pausaMin,
+      motivoTipo: evento.motivoTipo,
+      motivoTexto: evento.motivoTexto,
+      totalPausaMinutos,
+      terminalId: turno.terminalId || '',
+    },
+    timestamp: now,
+  });
+}
+
+/**
+ * Cierra un turno abierto del POS.
+ */
+export async function cerrarTurnoUsuario({
+  turnoId,
+  observacionCierre = '',
+  cierreForzado = false,
+  cerradoPorUid = null,
+  rolEjecutor = null,
+}) {
+  if (!turnoId) throw new Error('turnoId es obligatorio.');
+
+  const role = String(rolEjecutor || '').toLowerCase();
+  if (role !== 'admin') {
+    const err = new Error('Solo admin puede cerrar turnos.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const turnoRef = doc(db, 'turnos_pos', turnoId);
+  const turnoSnap = await getDoc(turnoRef);
+  if (!turnoSnap.exists()) {
+    const err = new Error('Turno no encontrado.');
+    err.code = 'TURNO_NOT_FOUND';
+    throw err;
+  }
+
+  const turno = turnoSnap.data();
+  if (turno.estadoTurno === 'pausado') {
+    const err = new Error('No se puede cerrar un turno en pausa. Reanude primero.');
+    err.code = 'TURNO_EN_PAUSA';
+    throw err;
+  }
+  if (turno.estadoTurno !== 'abierto') {
+    const err = new Error('El turno ya está cerrado o no es válido para cierre.');
+    err.code = 'TURNO_INVALIDO';
+    throw err;
+  }
+
+  const now = new Date();
+  const inicio = turno.horaInicio?.toDate ? turno.horaInicio.toDate() : new Date(turno.horaInicio);
+  const duracionBrutaMinutos = Math.max(0, Math.round((now.getTime() - inicio.getTime()) / 60000));
+  const totalPausaMinutos = Number(turno.totalPausaMinutos || 0);
+  const duracionNetaMinutos = Math.max(0, duracionBrutaMinutos - totalPausaMinutos);
+  const eventoCierre = {
+    tipo: 'cierre',
+    timestamp: now,
+    actorUid: cerradoPorUid || '',
+    cierreForzado: Boolean(cierreForzado),
+  };
+  const eventos = [...(turno.eventosTurno || []), eventoCierre];
+
+  await updateDoc(turnoRef, {
+    horaCierre: now,
+    estadoTurno: 'cerrado',
+    observacionCierre: String(observacionCierre || ''),
+    cierreForzado: Boolean(cierreForzado),
+    duracionMinutos: duracionNetaMinutos,
+    duracionBrutaMinutos,
+    duracionNetaMinutos,
+    totalPausaMinutos,
+    eventosTurno: eventos,
+    cerradoPorUid: cerradoPorUid || '',
+    updatedAt: now,
+  });
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'cierre_turno',
+    adminUid: cerradoPorUid || '',
+    targetId: turno.usuarioId,
+    targetName: turno.usuarioId,
+    detalles: {
+      turnoId,
+      rolUsuario: turno.rolUsuario || '',
+      terminalId: turno.terminalId || '',
+      duracionMinutos: duracionNetaMinutos,
+      duracionBrutaMinutos,
+      totalPausaMinutos,
+      cierreForzado: Boolean(cierreForzado),
+      observacionCierre: String(observacionCierre || ''),
+      estadoTurno: 'cerrado',
+    },
+    timestamp: now,
+  });
+}
+
+/**
+ * Lista turnos activos (abiertos) del POS.
+ */
+export async function getTurnosActivosPOS() {
+  const snapshot = await getDocs(collection(db, 'turnos_pos'));
+  const list = snapshot.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(t => t.estadoTurno === 'abierto' || t.estadoTurno === 'pausado');
+
+  list.sort((a, b) => {
+    const ta = a.horaInicio?.toDate?.() || a.horaInicio || 0;
+    const tb = b.horaInicio?.toDate?.() || b.horaInicio || 0;
+    return new Date(tb) - new Date(ta);
+  });
+  return list;
+}
+
+/**
+ * Lista historial de turnos con filtros opcionales.
+ */
+export async function getTurnosHistorialPOS({
+  usuarioId = '',
+  estadoTurno = '',
+  dateFrom = '',
+  dateTo = '',
+} = {}) {
+  const snapshot = await getDocs(collection(db, 'turnos_pos'));
+  let list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  if (usuarioId) list = list.filter(t => t.usuarioId === usuarioId);
+  if (estadoTurno) list = list.filter(t => t.estadoTurno === estadoTurno);
+
+  if (dateFrom || dateTo) {
+    list = list.filter(t => {
+      const d = t.horaInicio?.toDate?.() || (t.horaInicio ? new Date(t.horaInicio) : null);
+      if (!d) return false;
+      if (dateFrom) {
+        const [y, m, day] = dateFrom.split('-').map(Number);
+        const from = new Date(y, m - 1, day, 0, 0, 0, 0);
+        if (d < from) return false;
+      }
+      if (dateTo) {
+        const [y, m, day] = dateTo.split('-').map(Number);
+        const to = new Date(y, m - 1, day, 23, 59, 59, 999);
+        if (d > to) return false;
+      }
+      return true;
+    });
+  }
+
+  list.sort((a, b) => {
+    const ta = a.horaInicio?.toDate?.() || a.horaInicio || 0;
+    const tb = b.horaInicio?.toDate?.() || b.horaInicio || 0;
+    return new Date(tb) - new Date(ta);
+  });
+  return list;
+}
+
 // ==================== CUENTAS (MESA COMPARTIDA / HU1) ====================
 
 export async function getMesa(mesaId) {

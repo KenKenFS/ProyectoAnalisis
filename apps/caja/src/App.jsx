@@ -8,11 +8,13 @@ import MesaCompartidaPage from './pages/MesaCompartidaPage'
 import CuentasCerradasPage from './pages/CuentasCerradasPage'
 import CierresCajaPage from './pages/CierresCajaPage'
 import ReportesPage from './pages/ReportesPage'
+import TurnosPOSPage from './pages/TurnosPOSPage'
 
 const sidebarLinks = [
   { to: '/ventas', label: 'Ventas', icon: 'ShoppingCartIcon', roles: ['Cajero', 'Admin'] },
   { to: '/mesa-compartida', label: 'Mesa compartida', icon: 'TableCellsIcon', roles: ['Cajero', 'Admin'] },
   { to: '/cuentas-cerradas', label: 'Cuentas cerradas', icon: 'LockClosedIcon', roles: ['Admin'] },
+  { to: '/turnos', label: 'Turnos POS', icon: 'UsersIcon', roles: ['Admin'] },
   { to: '/cierres', label: 'Cierres de Caja', icon: 'DocumentTextIcon', roles: ['Cajero', 'Admin'] },
   { to: '/reportes', label: 'Reportes', icon: 'ChartBarIcon', roles: ['Cajero', 'Admin'] },
 ]
@@ -66,6 +68,14 @@ function App() {
             element={
               <ProtectedAuthRoute allowedRoles={['Admin']}>
                 <CuentasCerradasPage />
+              </ProtectedAuthRoute>
+            }
+          />
+          <Route
+            path="/turnos"
+            element={
+              <ProtectedAuthRoute allowedRoles={['Admin']}>
+                <TurnosPOSPage />
               </ProtectedAuthRoute>
             }
           />
