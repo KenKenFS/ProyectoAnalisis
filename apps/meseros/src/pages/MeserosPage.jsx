@@ -1,17 +1,33 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   TableCellsIcon,
+  ShoppingCartIcon,
+  MagnifyingGlassIcon,
+  PlusIcon,
+  MinusIcon,
+  TrashIcon,
+  PaperAirplaneIcon,
   CheckCircleIcon,
   UserGroupIcon,
+  UserPlusIcon,
   ClockIcon,
   FunnelIcon,
   ExclamationTriangleIcon,
   ArrowRightCircleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore'
 
 import { db } from '@shared/firebase/firebase'
 import { useAuth } from '@shared/firebase/AuthContext'
+import {
+  addCuentaItemConCantidad,
+  createCuentaComensal,
+  ensureCuentaActivaMesa,
+  getCuentaComensales,
+  getProductos,
+  registrarPedidoMesa,
+} from '@shared/firebase/firestore'
 
 function normalizeMesaStatus(rawStatus) {
   const value = String(rawStatus || '').trim().toLowerCase()
@@ -54,7 +70,7 @@ function MesaCard({ mesa, selected, onSelect }) {
   return (
     <button
       onClick={() => onSelect(mesa)}
-      className={`border-2 rounded-lg p-4 text-left transition ${
+      className={`border-2 rounded-xl p-4 text-left transition min-h-[138px] ${
         ui.cardClass
       } ${selected ? 'ring-4 ring-cyan-500 shadow-lg' : 'hover:shadow-md'}`}
     >
@@ -68,18 +84,37 @@ function MesaCard({ mesa, selected, onSelect }) {
         <StatusIcon className={`w-6 h-6 ${ui.textClass}`} />
       </div>
       <div className={`text-xs font-semibold mt-3 ${ui.textClass}`}>{ui.label}</div>
+      <div className="text-xs text-gray-600 mt-2">Tocar para ver detalle</div>
     </button>
   )
 }
 
+function createLocalComensal(defaultAlias = 'Comensal 1') {
+  return {
+    localId: `com_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    alias: defaultAlias,
+  }
+}
+
 export default function MeserosPage() {
-  const { isMesero, isAdmin, loading: authLoading } = useAuth()
+  const { user, isMesero, isAdmin, loading: authLoading } = useAuth()
   const [mesas, setMesas] = useState([])
   const [selectedMesaId, setSelectedMesaId] = useState(null)
+  const [orderingMesa, setOrderingMesa] = useState(null)
   const [filterEstado, setFilterEstado] = useState('todos')
   const [loadingMesas, setLoadingMesas] = useState(true)
+  const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
   const [updatingMesaId, setUpdatingMesaId] = useState(null)
+  const [productos, setProductos] = useState([])
+  const [loadingProductos, setLoadingProductos] = useState(true)
+  const [search, setSearch] = useState('')
+  const [selectedCategoria, setSelectedCategoria] = useState('Todos')
+  const [cart, setCart] = useState([])
+  const [comensalesPedido, setComensalesPedido] = useState([createLocalComensal('Comensal 1')])
+  const [selectedComensalLocalId, setSelectedComensalLocalId] = useState(null)
+  const [notasPedido, setNotasPedido] = useState('')
+  const [sendingPedido, setSendingPedido] = useState(false)
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -108,6 +143,24 @@ export default function MeserosPage() {
     return () => unsubscribe()
   }, [])
 
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        setLoadingProductos(true)
+        const data = await getProductos()
+        if (mounted) setProductos(data || [])
+      } catch (e) {
+        if (mounted) setError(e?.message || 'No se pudieron cargar los productos.')
+      } finally {
+        if (mounted) setLoadingProductos(false)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   const filteredMesas = useMemo(() => {
     if (filterEstado === 'todos') return mesas
     return mesas.filter((m) => m.estadoMesa === filterEstado)
@@ -118,8 +171,51 @@ export default function MeserosPage() {
     [mesas, selectedMesaId]
   )
 
+  const categorias = useMemo(() => {
+    const unique = new Set((productos || []).map((p) => p.categoria || 'General'))
+    return ['Todos', ...unique]
+  }, [productos])
+
+  const productosFiltrados = useMemo(() => {
+    const list = (productos || []).map((p) => ({
+      id: p.id,
+      productoId: p.id,
+      name: p.nombre ?? p.name ?? p.id,
+      categoria: p.categoria || 'General',
+      price: Number(p.precioUnit ?? p.precio ?? 0),
+      desc: p.descripcion || '',
+    }))
+    return list.filter((item) => {
+      const okCategoria = selectedCategoria === 'Todos' || item.categoria === selectedCategoria
+      const okSearch = item.name.toLowerCase().includes(search.toLowerCase())
+      return okCategoria && okSearch
+    })
+  }, [productos, selectedCategoria, search])
+
+  const subtotal = Math.round(
+    cart.reduce((acc, item) => acc + Number(item.price || 0) * Number(item.qty || 0), 0)
+  )
+  const tax = Math.round(subtotal * 0.13)
+  const total = subtotal + tax
+
+  useEffect(() => {
+    if (!selectedComensalLocalId && comensalesPedido.length > 0) {
+      setSelectedComensalLocalId(comensalesPedido[0].localId)
+    }
+  }, [comensalesPedido, selectedComensalLocalId])
+
   async function toggleSolicitarCuenta(mesa) {
     if (!mesa?.id || updatingMesaId) return
+    const estadoActual = mesa.estadoMesa
+    const tienePedidoActivo = Boolean(mesa.cuentaActivaId)
+    const puedeMarcarListaPagar = estadoActual === 'ocupada' && tienePedidoActivo
+    const puedeQuitarListaPagar = estadoActual === 'esperandoCuenta'
+
+    if (!puedeMarcarListaPagar && !puedeQuitarListaPagar) {
+      setError('Solo puedes marcar lista para pagar en mesas ocupadas con pedido activo.')
+      return
+    }
+
     setUpdatingMesaId(mesa.id)
     try {
       const nextEstado = mesa.estadoMesa === 'esperandoCuenta' ? 'ocupada' : 'esperandoCuenta'
@@ -132,6 +228,198 @@ export default function MeserosPage() {
       setError(e?.message || 'No se pudo actualizar el estado de la mesa.')
     } finally {
       setUpdatingMesaId(null)
+    }
+  }
+
+  function addToCart(item) {
+    setSuccess('')
+    setError('')
+    const targetComensalId = selectedComensalLocalId || comensalesPedido[0]?.localId || null
+    if (!targetComensalId) {
+      setError('Debes tener al menos un comensal para agregar productos.')
+      return
+    }
+    setCart((prev) => {
+      const existing = prev.find(
+        (p) => p.productoId === (item.productoId || item.id) && p.comensalLocalId === targetComensalId
+      )
+      if (existing) {
+        return prev.map((p) => (p.lineId === existing.lineId ? { ...p, qty: p.qty + 1 } : p))
+      }
+      return [
+        ...prev,
+        {
+          ...item,
+          lineId: `line_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          productoId: item.productoId || item.id,
+          qty: 1,
+          notaEspecial: '',
+          comensalLocalId: targetComensalId,
+        },
+      ]
+    })
+  }
+
+  function updateQty(lineId, delta) {
+    setCart((prev) =>
+      prev
+        .map((p) => (p.lineId === lineId ? { ...p, qty: Math.max(0, p.qty + delta) } : p))
+        .filter((p) => p.qty > 0)
+    )
+  }
+
+  function removeItem(lineId) {
+    setCart((prev) => prev.filter((p) => p.lineId !== lineId))
+  }
+
+  function updateNotaItem(lineId, notaEspecial) {
+    setCart((prev) => prev.map((p) => (p.lineId === lineId ? { ...p, notaEspecial } : p)))
+  }
+
+  function updateItemComensal(lineId, nextComensalLocalId) {
+    setCart((prev) =>
+      prev.map((p) => (p.lineId === lineId ? { ...p, comensalLocalId: nextComensalLocalId } : p))
+    )
+  }
+
+  function addComensalPedido() {
+    setError('')
+    setSuccess('')
+    setComensalesPedido((prev) => {
+      const next = [...prev, createLocalComensal(`Comensal ${prev.length + 1}`)]
+      return next
+    })
+  }
+
+  function updateComensalAlias(localId, alias) {
+    setComensalesPedido((prev) => prev.map((c) => (c.localId === localId ? { ...c, alias } : c)))
+  }
+
+  function removeComensalPedido(localId) {
+    if (comensalesPedido.length <= 1) return
+    const remaining = comensalesPedido.filter((c) => c.localId !== localId)
+    const fallbackLocalId = remaining[0]?.localId || null
+    setComensalesPedido(remaining)
+    setSelectedComensalLocalId((prev) => (prev === localId ? fallbackLocalId : prev))
+    setCart((prev) =>
+      prev.map((item) =>
+        item.comensalLocalId === localId ? { ...item, comensalLocalId: fallbackLocalId } : item
+      )
+    )
+  }
+
+  async function enviarPedidoCocina() {
+    if (!orderingMesa) {
+      setError('Selecciona una mesa para enviar pedido.')
+      return
+    }
+    if (cart.length === 0) {
+      setError('Agrega al menos un producto al pedido.')
+      return
+    }
+
+    const comensalesLimpios = comensalesPedido.map((c) => ({
+      ...c,
+      alias: String(c.alias || '').trim(),
+    }))
+    if (comensalesLimpios.length === 0) {
+      setError('Debes registrar al menos un comensal.')
+      return
+    }
+    if (comensalesLimpios.some((c) => !c.alias)) {
+      setError('Todos los comensales deben tener nombre.')
+      return
+    }
+    const aliasSet = new Set(comensalesLimpios.map((c) => c.alias.toLowerCase()))
+    if (aliasSet.size !== comensalesLimpios.length) {
+      setError('No repitas nombres de comensales en la misma mesa.')
+      return
+    }
+
+    let pasoActual = 'iniciando pedido'
+    try {
+      setSendingPedido(true)
+      setError('')
+      setSuccess('')
+
+      pasoActual = 'asegurar cuenta activa de la mesa'
+      const cuentaId = await ensureCuentaActivaMesa({
+        mesaId: orderingMesa.id,
+        openedByUid: user?.uid || null,
+      })
+
+      pasoActual = 'crear comensales de la cuenta'
+      const comensalesExistentes = await getCuentaComensales(cuentaId)
+      const comensalIdByLocalId = new Map()
+      for (const c of comensalesLimpios) {
+        const existente = comensalesExistentes.find(
+          (x) =>
+            String(x.alias || '').trim().toLowerCase() === c.alias.toLowerCase() &&
+            String(x.estadoCliente || 'activo').toLowerCase() !== 'liberado'
+        )
+        if (existente?.id) {
+          comensalIdByLocalId.set(c.localId, existente.id)
+          continue
+        }
+
+        const nuevoId = await createCuentaComensal({
+          cuentaId,
+          alias: c.alias,
+          createdByUid: user?.uid || null,
+        })
+        comensalIdByLocalId.set(c.localId, nuevoId)
+      }
+
+      pasoActual = 'agregar items a la cuenta'
+      const fallbackComensalId = comensalIdByLocalId.get(comensalesLimpios[0].localId) || null
+      for (const item of cart) {
+        const comensalId = comensalIdByLocalId.get(item.comensalLocalId) || fallbackComensalId
+        await addCuentaItemConCantidad({
+          cuentaId,
+          productoId: item.productoId || item.id,
+          cantidad: item.qty,
+          notaEspecial: item.notaEspecial || '',
+          comensalId,
+          createdByUid: user?.uid || null,
+        })
+      }
+
+      pasoActual = 'registrar pedido en cocina'
+      await registrarPedidoMesa({
+        mesaId: orderingMesa.id,
+        cuentaId,
+        meseroUid: user?.uid || null,
+        notasPedido,
+        items: cart.map((item) => ({
+          productoId: item.productoId || item.id,
+          nombreSnapshot: item.name,
+          precioUnitSnapshot: item.price,
+          cantidad: item.qty,
+          notaEspecial: item.notaEspecial || '',
+          comensalId:
+            comensalIdByLocalId.get(item.comensalLocalId) ||
+            comensalIdByLocalId.get(comensalesLimpios[0].localId) ||
+            null,
+        })),
+      })
+
+      setSuccess(`Pedido enviado a cocina para Mesa ${orderingMesa.numero ?? orderingMesa.id}.`)
+      setCart([])
+      setComensalesPedido([createLocalComensal('Comensal 1')])
+      setSelectedComensalLocalId(null)
+      setNotasPedido('')
+      setOrderingMesa(null)
+    } catch (e) {
+      const rawMessage = e?.message || 'No se pudo enviar el pedido a cocina.'
+      const permissionMsg = rawMessage.toLowerCase().includes('missing or insufficient permissions')
+      if (permissionMsg) {
+        setError(`Permisos insuficientes al ${pasoActual}.`)
+      } else {
+        setError(`Error al ${pasoActual}: ${rawMessage}`)
+      }
+      console.error('Error enviarPedidoCocina:', { pasoActual, error: e })
+    } finally {
+      setSendingPedido(false)
     }
   }
 
@@ -181,6 +469,11 @@ export default function MeserosPage() {
           {error}
         </div>
       )}
+      {success && (
+        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg p-3 text-sm">
+          {success}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
@@ -205,17 +498,17 @@ export default function MeserosPage() {
           )}
         </div>
 
-        <aside className="bg-white border border-gray-200 rounded-lg shadow-lg h-fit">
+        <aside className="bg-white border border-gray-200 rounded-lg shadow-lg h-fit sticky top-4">
           <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-cyan-50">
-            <h2 className="font-bold text-gray-900">Detalle de mesa</h2>
+            <h2 className="font-bold text-gray-900 text-lg">Detalle de mesa</h2>
           </div>
 
           {!selectedMesa ? (
-            <div className="p-5 text-sm text-gray-500">Selecciona una mesa para ver su detalle.</div>
+            <div className="p-5 text-sm text-gray-500">Selecciona una mesa para ver su detalle y ordenar.</div>
           ) : (
             <div className="p-5 space-y-4">
               <div>
-                <div className="text-xl font-bold text-gray-900">Mesa {selectedMesa.numero ?? selectedMesa.id}</div>
+                <div className="text-2xl font-bold text-gray-900">Mesa {selectedMesa.numero ?? selectedMesa.id}</div>
                 <div className="text-sm text-gray-600 mt-1">Zona: {selectedMesa.zona || 'General'}</div>
               </div>
 
@@ -234,26 +527,271 @@ export default function MeserosPage() {
                 </div>
               </div>
 
+              {(selectedMesa.estadoMesa === 'esperandoCuenta' ||
+                (selectedMesa.estadoMesa === 'ocupada' && selectedMesa.cuentaActivaId)) && (
+                <button
+                  onClick={() => toggleSolicitarCuenta(selectedMesa)}
+                  disabled={updatingMesaId === selectedMesa.id}
+                  className={`w-full btn btn-lg border-0 text-white ${
+                    selectedMesa.estadoMesa === 'esperandoCuenta'
+                      ? 'bg-slate-600 hover:bg-slate-700'
+                      : 'bg-amber-600 hover:bg-amber-700'
+                  }`}
+                >
+                  <ArrowRightCircleIcon className="w-5 h-5" />
+                  {updatingMesaId === selectedMesa.id
+                    ? 'Actualizando...'
+                    : selectedMesa.estadoMesa === 'esperandoCuenta'
+                      ? 'Volver a ocupada'
+                      : 'Pasar a lista para pagar'}
+                </button>
+              )}
+
+              {selectedMesa.estadoMesa === 'ocupada' && !selectedMesa.cuentaActivaId && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  Esta mesa no tiene pedido activo aun. La opcion "Lista para pagar" se habilita cuando exista una cuenta activa.
+                </div>
+              )}
+
               <button
-                onClick={() => toggleSolicitarCuenta(selectedMesa)}
-                disabled={updatingMesaId === selectedMesa.id}
-                className={`w-full btn btn-sm border-0 text-white ${
-                  selectedMesa.estadoMesa === 'esperandoCuenta'
-                    ? 'bg-slate-600 hover:bg-slate-700'
-                    : 'bg-amber-600 hover:bg-amber-700'
-                }`}
+                onClick={() => {
+                  const first = createLocalComensal('Comensal 1')
+                  setOrderingMesa(selectedMesa)
+                  setCart([])
+                  setNotasPedido('')
+                  setComensalesPedido([first])
+                  setSelectedComensalLocalId(first.localId)
+                  setError('')
+                  setSuccess('')
+                }}
+                className="w-full btn btn-lg bg-cyan-600 hover:bg-cyan-700 border-0 text-white"
               >
-                <ArrowRightCircleIcon className="w-4 h-4" />
-                {updatingMesaId === selectedMesa.id
-                  ? 'Actualizando...'
-                  : selectedMesa.estadoMesa === 'esperandoCuenta'
-                    ? 'Quitar lista para pagar'
-                    : 'Marcar lista para pagar'}
+                <ShoppingCartIcon className="w-5 h-5" />
+                Ordenar
               </button>
             </div>
           )}
         </aside>
       </div>
+
+      {orderingMesa && (
+        <div className="fixed inset-0 bg-black/50 z-50 p-4 md:p-6">
+          <div className="bg-white rounded-lg shadow-2xl w-full h-full overflow-hidden flex flex-col">
+            <div className="px-4 md:px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-blue-900 to-cyan-900 text-white">
+              <div>
+                <div className="text-xl font-bold">Ordenar - Mesa {orderingMesa.numero ?? orderingMesa.id}</div>
+                <div className="text-sm text-cyan-200">Zona: {orderingMesa.zona || 'General'}</div>
+              </div>
+              <button
+                onClick={() => setOrderingMesa(null)}
+                className="btn btn-sm btn-ghost text-white"
+              >
+                <XMarkIcon className="w-5 h-5" />
+                Cerrar
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-0">
+              <div className="lg:col-span-2 p-4 md:p-6 border-r border-gray-200 flex flex-col min-h-0">
+                <div className="relative mb-3">
+                  <MagnifyingGlassIcon className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Buscar producto..."
+                    className="input input-bordered w-full pl-10"
+                  />
+                </div>
+
+                <div className="flex gap-2 flex-wrap mb-3">
+                  {categorias.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategoria(cat)}
+                      className={`px-3 py-1.5 rounded text-sm font-semibold transition ${
+                        selectedCategoria === cat
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mb-3 text-sm text-cyan-800 bg-cyan-50 border border-cyan-200 rounded-lg p-2">
+                  Agregando platos para:{' '}
+                  <span className="font-semibold">
+                    {comensalesPedido.find((c) => c.localId === selectedComensalLocalId)?.alias || 'Comensal 1'}
+                  </span>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                  {loadingProductos ? (
+                    <div className="text-sm text-gray-500">Cargando productos...</div>
+                  ) : productosFiltrados.length === 0 ? (
+                    <div className="text-sm text-gray-500">No hay productos para el filtro actual.</div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {productosFiltrados.map((item) => (
+                        <div key={item.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                          <div className="font-semibold text-gray-800">{item.name}</div>
+                          <div className="text-xs text-gray-500 mt-1">{item.categoria}</div>
+                          <div className="text-lg font-bold text-cyan-700 mt-2">₡{item.price.toLocaleString()}</div>
+                          <button
+                            onClick={() => addToCart(item)}
+                            className="mt-3 w-full btn btn-sm bg-cyan-600 hover:bg-cyan-700 text-white border-0"
+                          >
+                            <PlusIcon className="w-4 h-4" />
+                            Agregar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <aside className="p-4 md:p-6 bg-gray-50 flex flex-col min-h-0">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-gray-700 uppercase">Comensales</div>
+                    <button
+                      onClick={addComensalPedido}
+                      className="btn btn-sm bg-blue-600 hover:bg-blue-700 border-0 text-white"
+                    >
+                      <UserPlusIcon className="w-4 h-4" />
+                      Agregar
+                    </button>
+                  </div>
+
+                  <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                    {comensalesPedido.map((c, idx) => (
+                      <div
+                        key={c.localId}
+                        className={`bg-white border rounded-lg p-2 ${
+                          selectedComensalLocalId === c.localId ? 'border-cyan-400' : 'border-gray-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setSelectedComensalLocalId(c.localId)}
+                            className={`btn btn-xs ${
+                              selectedComensalLocalId === c.localId
+                                ? 'bg-cyan-600 hover:bg-cyan-700 text-white border-0'
+                                : 'btn-ghost border border-gray-200'
+                            }`}
+                          >
+                            {idx + 1}
+                          </button>
+                          <input
+                            type="text"
+                            value={c.alias}
+                            onChange={(e) => updateComensalAlias(c.localId, e.target.value)}
+                            className="input input-bordered input-sm flex-1"
+                            placeholder={`Comensal ${idx + 1}`}
+                          />
+                          {comensalesPedido.length > 1 && (
+                            <button
+                              onClick={() => removeComensalPedido(c.localId)}
+                              className="btn btn-xs btn-ghost text-red-600"
+                              title="Quitar comensal"
+                            >
+                              <TrashIcon className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-sm font-semibold text-gray-700 uppercase mt-4">Carrito ({cart.length})</div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-2 mt-3 pr-1">
+                  {cart.length === 0 ? (
+                    <div className="text-sm text-gray-500">Sin items en el pedido.</div>
+                  ) : (
+                    cart.map((item) => (
+                      <div key={item.lineId} className="bg-white border border-gray-200 rounded p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-gray-800 truncate">{item.name}</div>
+                            <div className="text-xs text-gray-500">₡{Number(item.price || 0).toLocaleString()} c/u</div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => updateQty(item.lineId, -1)} className="btn btn-xs btn-ghost">
+                              <MinusIcon className="w-3 h-3" />
+                            </button>
+                            <span className="text-sm font-semibold w-6 text-center">{item.qty}</span>
+                            <button onClick={() => updateQty(item.lineId, 1)} className="btn btn-xs btn-ghost">
+                              <PlusIcon className="w-3 h-3" />
+                            </button>
+                            <button onClick={() => removeItem(item.lineId)} className="btn btn-xs btn-ghost text-red-600">
+                              <TrashIcon className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                        <select
+                          value={item.comensalLocalId || ''}
+                          onChange={(e) => updateItemComensal(item.lineId, e.target.value)}
+                          className="select select-bordered select-xs w-full mt-2"
+                        >
+                          {comensalesPedido.map((c, idx) => (
+                            <option key={c.localId} value={c.localId}>
+                              {c.alias || `Comensal ${idx + 1}`}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={item.notaEspecial || ''}
+                          onChange={(e) => updateNotaItem(item.lineId, e.target.value)}
+                          placeholder="Nota especial para cocina (opcional)"
+                          className="input input-bordered input-xs w-full mt-2"
+                        />
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="space-y-2 border-t border-gray-200 pt-3 mt-3">
+                  <div className="text-xs text-gray-700 flex justify-between">
+                    <span>Subtotal</span>
+                    <span className="font-semibold">₡{subtotal.toLocaleString()}</span>
+                  </div>
+                  <div className="text-xs text-gray-700 flex justify-between">
+                    <span>IVA (13%)</span>
+                    <span className="font-semibold">₡{tax.toLocaleString()}</span>
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 flex justify-between bg-white border border-gray-200 rounded p-2">
+                    <span>Total</span>
+                    <span className="text-cyan-700">₡{total.toLocaleString()}</span>
+                  </div>
+
+                  <textarea
+                    value={notasPedido}
+                    onChange={(e) => setNotasPedido(e.target.value)}
+                    className="textarea textarea-bordered textarea-sm w-full"
+                    placeholder="Notas generales del pedido (opcional)"
+                    rows={3}
+                  />
+
+                  <button
+                    onClick={enviarPedidoCocina}
+                    disabled={sendingPedido || cart.length === 0}
+                    className="w-full btn bg-cyan-600 hover:bg-cyan-700 border-0 text-white"
+                  >
+                    <PaperAirplaneIcon className="w-4 h-4" />
+                    {sendingPedido ? 'Enviando...' : 'Enviar a cocina'}
+                  </button>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

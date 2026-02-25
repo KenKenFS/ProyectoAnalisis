@@ -1312,6 +1312,33 @@ export async function getCuentaComensales(cuentaId) {
   return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+/**
+ * Crea un comensal dentro de una cuenta compartida.
+ * @returns {Promise<string>} comensalId
+ */
+export async function createCuentaComensal({
+  cuentaId,
+  alias,
+  createdByUid = null,
+}) {
+  const safeAlias = String(alias || '').trim();
+  if (!safeAlias) {
+    const err = new Error('El nombre del comensal es obligatorio.');
+    err.code = 'COMENSAL_ALIAS_REQUIRED';
+    throw err;
+  }
+
+  const now = new Date();
+  const ref = await addDoc(collection(db, 'cuentas', cuentaId, 'comensales'), {
+    alias: safeAlias,
+    estadoCliente: 'activo',
+    createdByUid: createdByUid || '',
+    createdAt: now,
+    updatedAt: now,
+  });
+  return ref.id;
+}
+
 export async function getCuentaItems(cuentaId) {
   const snapshot = await getDocs(collection(db, 'cuentas', cuentaId, 'items'));
   return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1378,6 +1405,144 @@ export async function addCuentaItem({ cuentaId, productoId, comensalId, createdB
     updatedAt: new Date(),
   });
   return docRef.id;
+}
+
+/**
+ * Asegura que exista una cuenta activa para una mesa.
+ * Si no existe, crea una y la enlaza en mesas/{mesaId}.cuentaActivaId.
+ */
+export async function ensureCuentaActivaMesa({ mesaId, openedByUid = null }) {
+  const mesaRef = doc(db, 'mesas', mesaId);
+  const mesaSnap = await getDoc(mesaRef);
+  if (!mesaSnap.exists()) {
+    const err = new Error('Mesa no encontrada.');
+    err.code = 'MESA_NOT_FOUND';
+    throw err;
+  }
+
+  const mesa = mesaSnap.data();
+  if (mesa.cuentaActivaId) {
+    const cuenta = await getCuenta(mesa.cuentaActivaId);
+    if (cuenta && cuenta.estadoCuenta === 'abierta') {
+      return mesa.cuentaActivaId;
+    }
+  }
+
+  const now = new Date();
+  const cuentaRef = await addDoc(collection(db, 'cuentas'), {
+    mesaId,
+    estadoCuenta: 'abierta',
+    permiteModificar: true,
+    openedByUid: openedByUid || '',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await updateDoc(mesaRef, {
+    cuentaActivaId: cuentaRef.id,
+    estadoMesa: 'ocupada',
+    estado: 'ocupada',
+    updatedAt: now,
+  });
+
+  return cuentaRef.id;
+}
+
+/**
+ * Agrega un ítem a una cuenta con cantidad y nota especial (flujo meseros).
+ */
+export async function addCuentaItemConCantidad({
+  cuentaId,
+  productoId,
+  cantidad = 1,
+  notaEspecial = '',
+  comensalId = null,
+  createdByUid = null,
+}) {
+  const qty = Number(cantidad || 0);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    const err = new Error('Cantidad invalida.');
+    err.code = 'INVALID_QTY';
+    throw err;
+  }
+
+  const productSnap = await getDoc(doc(db, 'productos', productoId));
+  if (!productSnap.exists()) {
+    const err = new Error('Producto no encontrado');
+    err.code = 'PRODUCT_NOT_FOUND';
+    throw err;
+  }
+  const p = productSnap.data();
+  const nombreSnapshot = p.nombre ?? p.name ?? productoId;
+  const precioUnitSnapshot = Number(p.precioUnit ?? p.precio ?? 0);
+
+  const docRef = await addDoc(collection(db, 'cuentas', cuentaId, 'items'), {
+    productoId,
+    nombreSnapshot,
+    precioUnitSnapshot,
+    cantidad: qty,
+    notaEspecial: String(notaEspecial || '').trim(),
+    comensalId,
+    estadoItem: 'pendiente',
+    estadoPreparacion: 'pendiente',
+    createdByUid,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  return docRef.id;
+}
+
+/**
+ * Registra un pedido enviado a cocina para seguimiento operativo.
+ */
+export async function registrarPedidoMesa({
+  mesaId,
+  cuentaId,
+  meseroUid = null,
+  items = [],
+  notasPedido = '',
+}) {
+  const now = new Date();
+  const pedidoRef = await addDoc(collection(db, 'pedidos'), {
+    mesaId,
+    cuentaId,
+    meseroUid: meseroUid || '',
+    estado: 'pendiente',
+    estadoPedido: 'pendiente',
+    notasPedido: String(notasPedido || '').trim(),
+    items: items.map((i) => ({
+      productoId: i.productoId,
+      nombreSnapshot: i.nombreSnapshot,
+      precioUnitSnapshot: Number(i.precioUnitSnapshot || 0),
+      cantidad: Number(i.cantidad || 1),
+      notaEspecial: String(i.notaEspecial || '').trim(),
+      estadoItem: 'pendiente',
+    })),
+    timestamp: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    // El log no debe romper el flujo de pedido si reglas bloquean auditoria.
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'pedido_enviado_cocina',
+      adminUid: meseroUid || '',
+      targetId: pedidoRef.id,
+      targetName: `Mesa ${mesaId}`,
+      detalles: {
+        pedidoId: pedidoRef.id,
+        mesaId,
+        cuentaId,
+        itemsCount: items.length,
+      },
+      timestamp: now,
+    });
+  } catch (auditError) {
+    console.warn('No se pudo registrar auditoria de pedido_enviado_cocina:', auditError);
+  }
+
+  return pedidoRef.id;
 }
 
 /**
