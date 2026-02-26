@@ -184,11 +184,24 @@ export default function SystemLogs() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [logsData, usersData] = await Promise.all([getAllAuditLogs(), getAllUsers()])
-      setLogs(logsData)
-      const map = {}
-      usersData.forEach(u => { map[u.uid || u.id] = u })
-      setUsersMap(map)
+      const [logsResult, usersResult] = await Promise.allSettled([getAllAuditLogs(), getAllUsers()])
+
+      if (logsResult.status === 'fulfilled') {
+        setLogs(logsResult.value || [])
+      } else {
+        console.error('Error cargando logs:', logsResult.reason?.message || logsResult.reason)
+        setLogs([])
+      }
+
+      if (usersResult.status === 'fulfilled') {
+        const map = {}
+        ;(usersResult.value || []).forEach(u => { map[u.uid || u.id] = u })
+        setUsersMap(map)
+      } else {
+        // Si users está restringido por reglas, mantenemos logs visibles con fallback por UID.
+        console.warn('No se pudieron cargar usuarios para enriquecer nombres:', usersResult.reason?.message || usersResult.reason)
+        setUsersMap({})
+      }
     } catch (err) {
       console.error('Error cargando logs:', err.message)
     } finally {

@@ -1503,8 +1503,20 @@ export async function registrarPedidoMesa({
   notasPedido = '',
 }) {
   const now = new Date();
+  let mesaNumero = null;
+  try {
+    const mesaSnap = await getDoc(doc(db, 'mesas', mesaId));
+    if (mesaSnap.exists()) {
+      const numero = Number(mesaSnap.data()?.numero || 0);
+      mesaNumero = Number.isFinite(numero) && numero > 0 ? numero : null;
+    }
+  } catch (_) {
+    // Si no puede leer mesas por reglas, continuamos sin bloquear pedido.
+  }
+
   const pedidoRef = await addDoc(collection(db, 'pedidos'), {
     mesaId,
+    mesaNumero,
     cuentaId,
     meseroUid: meseroUid || '',
     estado: 'pendiente',
@@ -1920,7 +1932,18 @@ export async function payPartialForComensal({
     throw err;
   }
 
-  const unassigned = await getCuentaUnassignedPendingItems(cuentaId);
+  const normalizedComensalId = String(comensalId || '').trim();
+  if (!normalizedComensalId) {
+    const err = new Error('Comensal inválido.');
+    err.code = 'INVALID_COMENSAL';
+    throw err;
+  }
+
+  const allItems = await getCuentaItems(cuentaId);
+  const isPendiente = (value) => String(value || '').trim().toLowerCase() === 'pendiente';
+  const isUnassigned = (value) => value === null || value === undefined || String(value).trim() === '';
+
+  const unassigned = allItems.filter(i => isUnassigned(i.comensalId) && isPendiente(i.estadoItem));
   if (unassigned.length > 0) {
     const err = new Error('Hay ítems sin asignar. Asigna primero para poder cerrar parcialmente.');
     err.code = 'UNASSIGNED_ITEMS';
@@ -1928,8 +1951,9 @@ export async function payPartialForComensal({
     throw err;
   }
 
-  // Leemos por comensal y filtramos en cliente para evitar índices compuestos
-  const items = (await getCuentaItemsByComensal(cuentaId, comensalId)).filter(i => i.estadoItem === 'pendiente');
+  const items = allItems.filter(
+    (i) => String(i.comensalId || '').trim() === normalizedComensalId && isPendiente(i.estadoItem)
+  );
 
   if (items.length === 0) {
     const err = new Error('El comensal no tiene ítems pendientes.');
@@ -1980,7 +2004,9 @@ export async function payPartialForComensal({
   let cuentaCerrada = false;
 
   // Liberar comensal si no quedan pendientes
-  const pendingAfter = (await getCuentaItemsByComensal(cuentaId, comensalId)).filter(i => i.estadoItem === 'pendiente');
+  const pendingAfter = (await getCuentaItems(cuentaId)).filter(
+    (i) => String(i.comensalId || '').trim() === normalizedComensalId && isPendiente(i.estadoItem)
+  );
   if (pendingAfter.length === 0) {
     await setDoc(
       doc(db, 'cuentas', cuentaId, 'comensales', comensalId),
