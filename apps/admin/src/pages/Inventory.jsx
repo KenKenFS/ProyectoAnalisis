@@ -92,7 +92,8 @@ export default function Inventory() {
   // Inventario (stock real)
   const [insumos, setInsumos] = useState([])
   const [loadingInsumos, setLoadingInsumos] = useState(true)
-  const [stockSubTab, setStockSubTab] = useState('stock') // 'stock' | 'entradas' | 'nueva'
+  const [stockSubTab, setStockSubTab] = useState('stock') // 'stock' | 'nueva' | 'salida' | 'alertas' | 'conteo' | 'historial'
+  const [historyType, setHistoryType] = useState('entradas') // 'entradas' | 'salidas' | 'conteos'
 
   // Entradas
   const [entradas, setEntradas] = useState([])
@@ -407,6 +408,13 @@ export default function Inventory() {
   }, [])
 
   useEffect(() => { loadAlertasCaducidad() }, [loadAlertasCaducidad])
+
+  useEffect(() => {
+    if (stockSubTab !== 'historial') return
+    if (historyType === 'entradas') loadEntradas()
+    if (historyType === 'salidas') loadSalidas()
+    if (historyType === 'conteos') loadConteosHistorial()
+  }, [stockSubTab, historyType, loadEntradas, loadSalidas, loadConteosHistorial])
 
   const alertasFiltradas = useMemo(() => {
     let list = alertasCaducidad
@@ -864,17 +872,38 @@ export default function Inventory() {
               { key: 'salida', label: 'Registrar salida' },
               { key: 'alertas', label: <>Caducidad {alertasActivas > 0 && <span className="ml-1 text-xs bg-rose-500 text-white px-1.5 py-0.5 rounded-full">{alertasActivas}</span>}</> },
               { key: 'conteo', label: 'Conteo fisico' },
-              { key: 'entradas', label: 'Historial entradas' },
-              { key: 'salidas', label: 'Historial salidas' },
-              { key: 'conteo_historial', label: 'Historial conteos' },
+              { key: 'historial', label: 'Historial' },
             ].map(t => (
               <button key={t.key}
-                onClick={() => { setStockSubTab(t.key); if (t.key === 'entradas') loadEntradas(); if (t.key === 'salidas') loadSalidas(); if (t.key === 'conteo_historial') loadConteosHistorial(); if (t.key === 'alertas') loadAlertasCaducidad() }}
+                onClick={() => {
+                  setStockSubTab(t.key)
+                  if (t.key === 'alertas') loadAlertasCaducidad()
+                  if (t.key === 'historial') {
+                    if (historyType === 'entradas') loadEntradas()
+                    if (historyType === 'salidas') loadSalidas()
+                    if (historyType === 'conteos') loadConteosHistorial()
+                  }
+                }}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${stockSubTab === t.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 {t.label}
               </button>
             ))}
           </div>
+
+          {stockSubTab === 'historial' && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Mostrar:</span>
+              <select
+                value={historyType}
+                onChange={(e) => setHistoryType(e.target.value)}
+                className="select select-bordered select-sm"
+              >
+                <option value="entradas">Historial de entradas</option>
+                <option value="salidas">Historial de salidas</option>
+                <option value="conteos">Historial de conteos</option>
+              </select>
+            </div>
+          )}
 
           {/* Sub-tab: Inventario (tabla de stock) */}
           {stockSubTab === 'stock' && (
@@ -921,10 +950,10 @@ export default function Inventory() {
                             </td>
                             <td className="text-center">
                               <div className="flex gap-1 justify-center">
-                                <button onClick={() => openEditInsumo(item)} className="btn btn-ghost btn-xs text-gray-400 tooltip" data-tip="Editar">
+                                <button onClick={() => openEditInsumo(item)} className="btn btn-ghost btn-xs text-sky-600 hover:bg-sky-50 tooltip" data-tip="Editar">
                                   <PencilSquareIcon className="w-4 h-4" />
                                 </button>
-                                <button onClick={() => { setAjusteTarget(item); setAjusteCantidad(String(item.cantidad || 0)); setAjusteError('') }} className="btn btn-ghost btn-xs text-gray-400 tooltip" data-tip="Ajustar stock">
+                                <button onClick={() => { setAjusteTarget(item); setAjusteCantidad(String(item.cantidad || 0)); setAjusteError('') }} className="btn btn-ghost btn-xs text-amber-600 hover:bg-amber-50 tooltip" data-tip="Ajustar stock">
                                   <ArrowPathIcon className="w-4 h-4" />
                                 </button>
                                 <button onClick={() => { setDeleteInsumoTarget(item); setDeleteInsumoError('') }} className="btn btn-ghost btn-xs text-rose-400 tooltip" data-tip="Eliminar">
@@ -1026,7 +1055,7 @@ export default function Inventory() {
           )}
 
           {/* Sub-tab: Historial de entradas */}
-          {stockSubTab === 'entradas' && (
+          {(stockSubTab === 'historial' && historyType === 'entradas') && (
             loadingEntradas ? (
               <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
             ) : entradas.length === 0 ? (
@@ -1311,7 +1340,7 @@ export default function Inventory() {
           )}
 
           {/* Sub-tab: Historial de salidas */}
-          {stockSubTab === 'salidas' && (
+          {(stockSubTab === 'historial' && historyType === 'salidas') && (
             loadingSalidas ? (
               <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
             ) : salidas.length === 0 ? (
@@ -1355,7 +1384,7 @@ export default function Inventory() {
           )}
 
           {/* Sub-tab: Historial de conteos fisicos */}
-          {stockSubTab === 'conteo_historial' && (
+          {(stockSubTab === 'historial' && historyType === 'conteos') && (
             conteosHistorialLoading ? (
               <div className="flex justify-center py-12"><span className="loading loading-spinner loading-lg text-primary" /></div>
             ) : conteosHistorial.length === 0 ? (

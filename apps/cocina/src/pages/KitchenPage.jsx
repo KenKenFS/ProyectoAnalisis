@@ -13,7 +13,7 @@ import OrderTimer from '../components/OrderTimer'
 
 export default function KitchenPage() {
   const navigate = useNavigate()
-  const { orders, updateStatus, updatingOrderIds } = useContext(OrdersContext)
+  const { orders, updateStatus, finalizeOrder, updatingOrderIds } = useContext(OrdersContext)
 
   return (
     <div className="space-y-4 pb-20 md:pb-6">
@@ -47,8 +47,9 @@ export default function KitchenPage() {
           <OrderCard
             key={order.id}
             order={order}
-            sequenceCode={`PED-${String(index + 1).padStart(3, '0')}`}
+            sequenceCode={order.displayId || `ORD-${String(index + 1).padStart(3, '0')}`}
             onUpdateStatus={updateStatus}
+            onFinalize={finalizeOrder}
             updating={Boolean(updatingOrderIds[order.id])}
           />
         ))}
@@ -66,7 +67,7 @@ export default function KitchenPage() {
   )
 }
 
-function OrderCard({ order, sequenceCode, onUpdateStatus, updating }) {
+function OrderCard({ order, sequenceCode, onUpdateStatus, onFinalize, updating }) {
   const statusConfig = {
     pendiente: { borderColor: 'border-gray-300', bgColor: 'bg-white', label: 'Pendiente', icon: ClockIcon },
     enPreparacion: { borderColor: 'border-amber-400', bgColor: 'bg-amber-50', label: 'En preparacion', icon: FireIcon },
@@ -118,22 +119,26 @@ function OrderCard({ order, sequenceCode, onUpdateStatus, updating }) {
           Items del pedido:
         </div>
         <div className="space-y-2">
-          {order.items.map((item, idx) => (
-            <div key={idx} className="text-sm border-b border-gray-100 pb-2 last:border-b-0 last:pb-0">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-800 font-medium">{item.name}</span>
-                <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-xs font-bold">
-                  x{item.qty}
-                </span>
-              </div>
-              {item.note && (
-                <div className="mt-1 text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 flex items-center gap-1">
-                  <ExclamationTriangleIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>{item.note}</span>
+          {order.items.length === 0 ? (
+            <div className="text-sm text-gray-500">Sin items en el pedido</div>
+          ) : (
+            order.items.map((item, idx) => (
+              <div key={idx} className="text-sm border-b border-gray-100 pb-2 last:border-b-0 last:pb-0">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-800 font-medium">{item.name}</span>
+                  <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-xs font-bold">
+                    x{item.qty}
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
+                {item.note && (
+                  <div className="mt-1 text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 flex items-center gap-1">
+                    <ExclamationTriangleIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{item.note}</span>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -175,10 +180,14 @@ function OrderCard({ order, sequenceCode, onUpdateStatus, updating }) {
         </button>
       )}
       {order.status === 'listo' && (
-        <div className="w-full bg-green-100 text-green-700 font-semibold py-2 px-3 rounded-lg text-center flex items-center justify-center gap-2 mb-3">
+        <button
+          onClick={() => onFinalize(order.id)}
+          disabled={updating}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-3 rounded-lg transition-colors duration-200 mb-3 flex items-center justify-center gap-2 disabled:opacity-60"
+        >
           <CheckCircleIcon className="w-5 h-5" />
-          Listo para entrega
-        </div>
+          {updating ? 'Finalizando...' : 'Finalizar'}
+        </button>
       )}
 
       {/* Warning for pending orders */}

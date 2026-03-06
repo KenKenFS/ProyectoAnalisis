@@ -11,6 +11,7 @@ export default function InternalLayout({
   appName = 'Sistema',
   showNotifications = true,
   hideFooter = false,
+  hideSidebar = false,
 }) {
   return (
     <div className="flex flex-col min-h-screen bg-base-100">
@@ -20,7 +21,9 @@ export default function InternalLayout({
         showNotifications={showNotifications}
       />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar links={sidebarLinks} appName={appName} extraContent={sidebarExtra} />
+        {!hideSidebar && (
+          <Sidebar links={sidebarLinks} appName={appName} extraContent={sidebarExtra} />
+        )}
         <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
           <Outlet />
         </main>

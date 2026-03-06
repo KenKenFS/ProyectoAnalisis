@@ -1,0 +1,23 @@
+{
+  "projects": {
+    "default": "cevichedelreydb"
+  },
+  "targets": {
+    "cevichedelreydb": {
+      "hosting": {
+        "admin": [
+          "cevichedelreydb"
+        ],
+        "caja": [
+          "cevichedelrey-caja"
+        ],
+        "meseros": [
+          "cevichedelrey-meseros"
+        ],
+        "cocina": [
+          "cevichedelrey-cocina"
+        ]
+      }
+    }
+  }
+}

@@ -10,6 +10,7 @@ import {
   ClockIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline'
+import ModalPortal from '@shared/layout/ModalPortal'
 import { collection, onSnapshot } from 'firebase/firestore'
 
 import {
@@ -173,7 +174,7 @@ export default function Orders() {
   return (
     <div className="space-y-6 pb-20 md:pb-6">
       <div>
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 font-poppins">Gestion de Mesas (PR-001)</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 font-poppins">Gestión de Mesas</h1>
         <p className="text-gray-600 text-sm">CRUD de mesas: numero, capacidad, zona y estado</p>
       </div>
 
@@ -290,7 +291,7 @@ export default function Orders() {
       </div>
 
       {openForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="card bg-white max-w-lg w-full">
             <div className="p-5 border-b border-gray-200 flex items-center justify-between">
               <h3 className="font-bold text-lg flex items-center gap-2">
@@ -367,7 +368,7 @@ export default function Orders() {
               </div>
             </form>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

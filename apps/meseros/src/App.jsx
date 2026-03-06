@@ -26,6 +26,7 @@ function App() {
               sidebarLinks={sidebarLinks}
               appName="Meseros"
               showNotifications={false}
+              hideSidebar
             />
           }
         >

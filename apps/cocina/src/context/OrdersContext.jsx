@@ -1,9 +1,10 @@
-import { createContext, useEffect, useMemo, useState } from 'react'
-import { onPedidosChange, updatePedido } from '@shared/firebase/firestore'
+import { createContext, useEffect, useMemo, useRef, useState } from 'react'
+import { getMesas, onPedidosChange, updatePedido } from '@shared/firebase/firestore'
 
 export const OrdersContext = createContext()
 
 const ACTIVE_STATUS = new Set(['pendiente', 'enPreparacion', 'listo'])
+const FINAL_STATUS = 'finalizado'
 
 function toMillis(rawDate) {
   if (!rawDate) return Date.now()
@@ -19,23 +20,125 @@ function normalizeStatus(rawStatus) {
     return 'enPreparacion'
   }
   if (value === 'listo' || value === 'ready') return 'listo'
+  if (value === 'finalizado' || value === 'finalized' || value === 'completed') return FINAL_STATUS
   return 'pendiente'
 }
 
-function mapPedidoToOrder(pedido) {
-  const createdAtMs = toMillis(pedido.createdAt || pedido.timestamp)
-  const rawItems = Array.isArray(pedido.items) ? pedido.items : []
-  const items = rawItems.map((item, idx) => ({
-    id: item.id || `${pedido.id}_item_${idx}`,
-    name: item.nombreSnapshot || item.name || item.productoId || 'Producto',
-    qty: Number(item.cantidad || item.qty || 1),
-    note: String(item.notaEspecial || '').trim(),
-  }))
+function parseQtyAndNameFromText(text) {
+  const raw = String(text || '').trim()
+  if (!raw) return { name: 'Platillo', qty: 1 }
 
-  const mesaNumero = Number(pedido.mesaNumero || 0)
+  const match = raw.match(/^(\d+)\s*x\s+(.+)$/i)
+  if (!match) return { name: raw, qty: 1 }
+
+  return {
+    qty: Number(match[1]) || 1,
+    name: match[2].trim() || 'Platillo',
+  }
+}
+
+function getItemName(item) {
+  return (
+    item?.name ||
+    item?.nombre ||
+    item?.nombreSnapshot ||
+    item?.productoNombre ||
+    item?.plato ||
+    item?.descripcion ||
+    item?.producto?.name ||
+    item?.producto?.nombre ||
+    item?.producto?.nombreSnapshot ||
+    item?.detalle?.name ||
+    item?.detalle?.nombre ||
+    null
+  )
+}
+
+function normalizeItem(item, index, pedidoId) {
+  if (typeof item === 'string') {
+    const parsed = parseQtyAndNameFromText(item)
+    return {
+      id: `${pedidoId}_item_${index}`,
+      name: parsed.name,
+      qty: parsed.qty,
+      note: '',
+    }
+  }
+
+  const qty = Number(
+    item?.qty ??
+      item?.cantidad ??
+      item?.cant ??
+      item?.quantity ??
+      item?.unidades ??
+      1
+  )
+  const resolvedName = getItemName(item)
+
+  return {
+    id: item?.id || `${pedidoId}_item_${index}`,
+    name: resolvedName ? String(resolvedName).trim() : 'Platillo',
+    qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+    note: String(item?.notaEspecial || item?.nota || '').trim(),
+  }
+}
+
+function getOrderItems(pedido) {
+  const candidates = [
+    pedido.items,
+    pedido.productos,
+    pedido.detalle,
+    pedido.detalles,
+    pedido.platillos,
+    pedido.lineas,
+  ]
+
+  const source = candidates.find(Array.isArray)
+  if (!source) return []
+
+  return source.map((item, index) => normalizeItem(item, index, pedido.id))
+}
+
+function getTableLabel(pedido, mesasById, mesasByCuentaId) {
+  const isVentaDirecta = String(pedido.origenPedido || '').trim().toLowerCase() === 'venta_directa'
+    || String(pedido.tipoPedido || '').trim().toLowerCase() === 'para_llevar'
+  if (isVentaDirecta) return 'LV'
+
+  if (pedido.mesaNumero != null && Number(pedido.mesaNumero) > 0) {
+    return String(Number(pedido.mesaNumero))
+  }
+  if (pedido.table != null) return String(pedido.table)
+  if (pedido.numeroMesa != null) return String(pedido.numeroMesa)
+  if (pedido.nombreMesa) return String(pedido.nombreMesa)
+  if (pedido.mesaNombre) return String(pedido.mesaNombre)
+
+  const mesaId = String(pedido.mesaId || pedido.tableId || pedido.mesaRefId || '').trim()
+  if (mesaId && mesasById[mesaId]) {
+    return String(mesasById[mesaId].numero || mesasById[mesaId].nombre || mesasById[mesaId].alias || 'S/N')
+  }
+
+  const cuentaId = String(pedido.cuentaId || pedido.accountId || '').trim()
+  if (cuentaId && mesasByCuentaId[cuentaId]) {
+    const mesa = mesasByCuentaId[cuentaId]
+    return String(mesa.numero || mesa.nombre || mesa.alias || 'S/N')
+  }
+
+  return 'S/N'
+}
+
+function mapPedidoToOrder(pedido, mesasById, mesasByCuentaId) {
+  const createdAtMs = toMillis(pedido.createdAt || pedido.timestamp)
+  const items = getOrderItems(pedido)
+
   const mesaId = String(pedido.mesaId || '').trim()
-  const mesaLabel = mesaNumero > 0 ? String(mesaNumero) : 'S/N'
-  const mesaMeta = mesaNumero > 0 ? `Mesa ${mesaNumero}` : 'Mesa'
+  const mesaLabel = getTableLabel(pedido, mesasById, mesasByCuentaId)
+  const isDirectSaleOrder = String(pedido.origenPedido || '').trim().toLowerCase() === 'venta_directa'
+    || String(pedido.tipoPedido || '').trim().toLowerCase() === 'para_llevar'
+  const mesaMeta = isDirectSaleOrder
+    ? 'Para llevar'
+    : (mesaLabel !== 'S/N' ? `Mesa ${mesaLabel}` : 'Mesa')
+  const listoAtMs = toMillis(pedido.listoAt || pedido.readyAt || pedido.updatedAt || pedido.timestamp)
+  const finalizedAtMs = pedido.finalizedAt ? toMillis(pedido.finalizedAt) : null
 
   return {
     id: pedido.id,
@@ -49,26 +152,111 @@ function mapPedidoToOrder(pedido) {
     items,
     notes: String(pedido.notasPedido || '').trim(),
     createdAtMs,
+    listoAtMs,
+    finalizedAtMs,
+    rawCode: pedido.codigoPedido || pedido.codigo || pedido.numeroOrden || pedido.orderCode || null,
+    isDirectSaleOrder,
   }
 }
 
 export function OrdersProvider({ children }) {
-  const [orders, setOrders] = useState([])
+  const [allOrders, setAllOrders] = useState([])
+  const [mesasById, setMesasById] = useState({})
+  const [mesasByCuentaId, setMesasByCuentaId] = useState({})
   const [updatingOrderIds, setUpdatingOrderIds] = useState({})
+  const autoFinalizingRef = useRef(new Set())
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadMesas() {
+      try {
+        const mesas = await getMesas()
+        if (!isMounted) return
+
+        const byId = {}
+        const byCuenta = {}
+
+        mesas.forEach((mesa) => {
+          byId[mesa.id] = mesa
+          if (mesa.cuentaActivaId) {
+            byCuenta[mesa.cuentaActivaId] = mesa
+          }
+        })
+
+        setMesasById(byId)
+        setMesasByCuentaId(byCuenta)
+      } catch {
+        if (!isMounted) return
+        setMesasById({})
+        setMesasByCuentaId({})
+      }
+    }
+
+    loadMesas()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(() => {
     const unsubscribe = onPedidosChange((pedidos) => {
       const mapped = (pedidos || [])
-        .map(mapPedidoToOrder)
-        .filter((order) => ACTIVE_STATUS.has(order.status))
-        // Evita mostrar pedidos legacy/mock que no pertenecen al flujo mesa->cuenta actual.
-        .filter((order) => Boolean(order.mesaId) && Boolean(order.cuentaId))
+        .map((pedido) => mapPedidoToOrder(pedido, mesasById, mesasByCuentaId))
+        .filter((order) => {
+          if (!order.cuentaId) return false
+          if (order.isDirectSaleOrder) return true
+          return Boolean(order.mesaId)
+        })
         .sort((a, b) => a.createdAtMs - b.createdAtMs)
-      setOrders(mapped)
+        .map((order, index) => ({
+          ...order,
+          displayId: order.rawCode || `ORD-${String(index + 1).padStart(3, '0')}`,
+        }))
+      setAllOrders(mapped)
     })
 
     return () => unsubscribe()
-  }, [])
+  }, [mesasById, mesasByCuentaId])
+
+  const orders = useMemo(
+    () => allOrders.filter((order) => ACTIVE_STATUS.has(order.status)),
+    [allOrders]
+  )
+
+  const historyOrders = useMemo(
+    () =>
+      allOrders
+        .filter((order) => order.status === FINAL_STATUS)
+        .sort((a, b) => (b.finalizedAtMs || 0) - (a.finalizedAtMs || 0)),
+    [allOrders]
+  )
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now()
+      const toFinalize = orders.filter(
+        (order) =>
+          order.status === 'listo' &&
+          now - order.listoAtMs >= 60000 &&
+          !autoFinalizingRef.current.has(order.id)
+      )
+
+      toFinalize.forEach((order) => {
+        autoFinalizingRef.current.add(order.id)
+        updatePedido(order.id, {
+          estado: FINAL_STATUS,
+          estadoPedido: FINAL_STATUS,
+          finalizedAt: new Date(),
+        }).finally(() => {
+          autoFinalizingRef.current.delete(order.id)
+        })
+      })
+    }, 5000)
+
+    return () => clearInterval(timer)
+  }, [orders])
 
   const updateStatus = async (id, newStatus) => {
     const normalized = normalizeStatus(newStatus)
@@ -77,7 +265,9 @@ export function OrdersProvider({ children }) {
       normalized === 'enPreparacion'
         ? { startedAt: now }
         : normalized === 'listo'
-          ? { listoAt: now }
+          ? { listoAt: now, readyAt: now, finalizedAt: null }
+        : normalized === FINAL_STATUS
+          ? { finalizedAt: now }
           : {}
 
     setUpdatingOrderIds((prev) => ({ ...prev, [id]: true }))
@@ -96,8 +286,25 @@ export function OrdersProvider({ children }) {
     }
   }
 
-  const removeOrder = (id) => {
-    setOrders(prev => prev.filter(o => o.id !== id))
+  const finalizeOrder = async (id) => {
+    setUpdatingOrderIds((prev) => ({ ...prev, [id]: true }))
+    try {
+      await updatePedido(id, {
+        estado: FINAL_STATUS,
+        estadoPedido: FINAL_STATUS,
+        finalizedAt: new Date(),
+      })
+    } finally {
+      setUpdatingOrderIds((prev) => {
+        const copy = { ...prev }
+        delete copy[id]
+        return copy
+      })
+    }
+  }
+
+  const removeOrder = () => {
+    // Conservado por compatibilidad con componentes existentes.
   }
 
   const pendingCount = useMemo(() => orders.filter(o => o.status === 'pendiente').length, [orders])
@@ -106,7 +313,9 @@ export function OrdersProvider({ children }) {
 
   const value = {
     orders,
+    historyOrders,
     updateStatus,
+    finalizeOrder,
     removeOrder,
     updatingOrderIds,
     pendingCount,

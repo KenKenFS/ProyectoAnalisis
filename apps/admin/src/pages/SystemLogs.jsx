@@ -3,6 +3,8 @@ import {
   DocumentTextIcon,
   MagnifyingGlassIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   XCircleIcon,
   ClockIcon,
   UserPlusIcon,
@@ -45,6 +47,8 @@ const TIPOS = {
   pausa_turno_fin: { label: 'Fin de pausa', icon: PlayIcon, color: 'text-cyan-700', bg: 'bg-cyan-50' },
   venta_directa_cobrada: { label: 'Venta directa cobrada', icon: CreditCardIcon, color: 'text-emerald-700', bg: 'bg-emerald-50' },
   venta_directa_entregada: { label: 'Venta directa entregada', icon: CheckCircleIcon, color: 'text-green-700', bg: 'bg-green-50' },
+  cuenta_cobrada_completa: { label: 'Cuenta cobrada completa', icon: CreditCardIcon, color: 'text-cyan-700', bg: 'bg-cyan-50' },
+  cuenta_cancelada: { label: 'Cuenta cancelada', icon: XCircleIcon, color: 'text-rose-700', bg: 'bg-rose-50' },
 }
 
 function formatTimestamp(ts) {
@@ -153,6 +157,28 @@ function buildDetails(log) {
     if (log.detalles.total !== undefined) parts.push(`Total: ₡${Number(log.detalles.total || 0).toLocaleString()}`)
   }
 
+  if (log.tipo === 'cuenta_cobrada_completa' && log.detalles) {
+    if (log.detalles.cuentaId) parts.push(`Cuenta: ${log.detalles.cuentaId}`)
+    if (log.detalles.mesaId) parts.push(`Mesa: ${log.detalles.mesaId}`)
+    if (log.detalles.metodoUltimoPago) parts.push(`Método último pago: ${log.detalles.metodoUltimoPago}`)
+    if (log.detalles.pagoId) parts.push(`Pago final: ${log.detalles.pagoId}`)
+    if (log.detalles.totalCuenta !== undefined) {
+      parts.push(`Total cuenta: ₡${Number(log.detalles.totalCuenta || 0).toLocaleString()}`)
+    }
+    if (log.detalles.totalItems !== undefined) parts.push(`Ítems en cuenta: ${log.detalles.totalItems}`)
+  }
+
+  if (log.tipo === 'cuenta_cancelada' && log.detalles) {
+    if (log.detalles.cuentaId) parts.push(`Cuenta: ${log.detalles.cuentaId}`)
+    if (log.detalles.mesaId) parts.push(`Mesa: ${log.detalles.mesaId}`)
+    if (log.detalles.itemsTotal !== undefined) parts.push(`Ítems: ${log.detalles.itemsTotal}`)
+    if (log.detalles.itemsAnulados !== undefined) parts.push(`Ítems anulados: ${log.detalles.itemsAnulados}`)
+    if (log.detalles.totalReferencial !== undefined) {
+      parts.push(`Total referencial: ₡${Number(log.detalles.totalReferencial || 0).toLocaleString()}`)
+    }
+    if (log.detalles.motivo) parts.push(`Motivo: ${log.detalles.motivo}`)
+  }
+
   if (log.motivoPrecio) {
     parts.push(`Motivo del cambio de precio: ${log.motivoPrecio}`)
   }
@@ -169,6 +195,7 @@ function buildDetails(log) {
 }
 
 export default function SystemLogs() {
+  const todayStr = new Date().toISOString().slice(0, 10)
   const [logs, setLogs] = useState([])
   const [usersMap, setUsersMap] = useState({})
   const [loading, setLoading] = useState(true)
@@ -177,9 +204,10 @@ export default function SystemLogs() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [filterTipos, setFilterTipos] = useState([])
-  const [filterDateFrom, setFilterDateFrom] = useState('')
-  const [filterDateTo, setFilterDateTo] = useState('')
+  const [filterDateFrom, setFilterDateFrom] = useState(todayStr)
+  const [filterDateTo, setFilterDateTo] = useState(todayStr)
   const [showTiposDropdown, setShowTiposDropdown] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(20)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -211,7 +239,8 @@ export default function SystemLogs() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const hasFilters = searchQuery || filterTipos.length > 0 || filterDateFrom || filterDateTo
+  const hasDateOverride = filterDateFrom !== todayStr || filterDateTo !== todayStr
+  const hasFilters = searchQuery || filterTipos.length > 0 || hasDateOverride
 
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
@@ -242,6 +271,15 @@ export default function SystemLogs() {
     })
   }, [logs, searchQuery, filterTipos, filterDateFrom, filterDateTo, usersMap])
 
+  const visibleLogs = useMemo(
+    () => filteredLogs.slice(0, visibleCount),
+    [filteredLogs, visibleCount]
+  )
+
+  useEffect(() => {
+    setVisibleCount(20)
+  }, [searchQuery, filterTipos, filterDateFrom, filterDateTo, logs.length])
+
   // Stats de actividad reciente (ultimas 24h)
   const stats = useMemo(() => {
     const now = new Date()
@@ -258,10 +296,34 @@ export default function SystemLogs() {
   const clearFilters = () => {
     setSearchQuery('')
     setFilterTipos([])
-    setFilterDateFrom('')
-    setFilterDateTo('')
+    setFilterDateFrom(todayStr)
+    setFilterDateTo(todayStr)
     setShowTiposDropdown(false)
   }
+
+  function shiftDay(offset) {
+    const current = filterDateFrom || todayStr
+    const d = new Date(`${current}T12:00:00`)
+    d.setDate(d.getDate() + offset)
+    const iso = d.toISOString().slice(0, 10)
+    const safeIso = iso > todayStr ? todayStr : iso
+    setFilterDateFrom(safeIso)
+    setFilterDateTo(safeIso)
+  }
+
+  function dayLabel() {
+    const from = filterDateFrom || todayStr
+    const d = new Date(`${from}T12:00:00`)
+    const today = new Date()
+    today.setHours(12, 0, 0, 0)
+    const diff = Math.round((d.getTime() - today.getTime()) / 86400000)
+    const name = d.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })
+    if (diff === 0) return `Hoy · ${name}`
+    if (diff === -1) return `Ayer · ${name}`
+    return name.charAt(0).toUpperCase() + name.slice(1)
+  }
+
+  const isToday = filterDateFrom === todayStr
 
   const getAdminName = (uid) => usersMap[uid]?.name || uid || '-'
   const toggleTipoFilter = (tipo) => {
@@ -401,12 +463,33 @@ export default function SystemLogs() {
             </div>
           )}
         </div>
-        <input type="date" className="input input-bordered input-sm"
-          value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-          title="Desde" />
-        <input type="date" className="input input-bordered input-sm"
-          value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
-          title="Hasta" />
+        <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 bg-white">
+          <button type="button" onClick={() => shiftDay(-1)} className="btn btn-ghost btn-sm px-2" title="Día anterior">
+            <ChevronLeftIcon className="w-5 h-5" />
+          </button>
+          <span className="text-sm font-medium text-gray-700 min-w-[180px] text-center">{dayLabel()}</span>
+          <button
+            type="button"
+            onClick={() => shiftDay(1)}
+            className="btn btn-ghost btn-sm px-2"
+            title="Día siguiente"
+            disabled={isToday}
+          >
+            <ChevronRightIcon className="w-5 h-5" />
+          </button>
+        </div>
+        <input
+          type="date"
+          className="input input-bordered input-sm"
+          value={filterDateFrom}
+          max={todayStr}
+          onChange={e => {
+            const safe = e.target.value > todayStr ? todayStr : e.target.value
+            setFilterDateFrom(safe)
+            setFilterDateTo(safe)
+          }}
+          title="Día"
+        />
         {hasFilters && (
           <button onClick={clearFilters} className="btn btn-ghost btn-sm gap-1 text-gray-500">
             <XCircleIcon className="w-4 h-4" />
@@ -434,7 +517,7 @@ export default function SystemLogs() {
               )}
             </div>
           ) : (
-            filteredLogs.map((log, index) => {
+            visibleLogs.map((log, index) => {
               const tipo = TIPOS[log.tipo] || { label: log.tipo, icon: DocumentTextIcon, color: 'text-gray-600', bg: 'bg-gray-50' }
               const Icon = tipo.icon
               const details = buildDetails(log)
@@ -497,6 +580,18 @@ export default function SystemLogs() {
               )
             })
           )}
+        </div>
+      )}
+
+      {!loading && filteredLogs.length > visibleCount && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={() => setVisibleCount((prev) => prev + 20)}
+            className="btn btn-outline btn-sm"
+          >
+            Cargar más
+          </button>
         </div>
       )}
     </div>

@@ -20,6 +20,7 @@ import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore'
 
 import { db } from '@shared/firebase/firebase'
 import { useAuth } from '@shared/firebase/AuthContext'
+import ModalPortal from '@shared/layout/ModalPortal'
 import {
   addCuentaItemConCantidad,
   createCuentaComensal,
@@ -447,7 +448,7 @@ export default function MeserosPage() {
 
       <div className="flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-lg p-3">
         <div className="text-sm text-gray-700">
-          Total mesas: <span className="font-bold">{mesas.length}</span> (esperadas: 20)
+          Total mesas: <span className="font-bold">{mesas.length}</span>
         </div>
         <div className="flex items-center gap-2">
           <FunnelIcon className="w-4 h-4 text-gray-500" />
@@ -575,7 +576,7 @@ export default function MeserosPage() {
       </div>
 
       {orderingMesa && (
-        <div className="fixed inset-0 bg-black/50 z-50 p-4 md:p-6">
+        <ModalPortal overlayClassName="p-4 md:p-6">
           <div className="bg-white rounded-lg shadow-2xl w-full h-full overflow-hidden flex flex-col">
             <div className="px-4 md:px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-blue-900 to-cyan-900 text-white">
               <div>
@@ -790,7 +791,7 @@ export default function MeserosPage() {
               </aside>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

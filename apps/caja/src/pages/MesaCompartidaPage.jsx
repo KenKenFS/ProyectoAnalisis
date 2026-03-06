@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline'
 
 import { useAuth } from '@shared/firebase/AuthContext'
+import ModalPortal from '@shared/layout/ModalPortal'
 import {
   getMesasConCuentaActivaOrThrow,
   getCuenta,
@@ -28,6 +29,7 @@ import {
   revertirAnulacionCuentaItem,
   payPartialForComensal,
   cerrarCuentaReabierta,
+  cancelarCuenta,
 } from '@shared/firebase/firestore'
 
 function moneyCRC(value) {
@@ -89,7 +91,7 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <ModalPortal overlayClassName="flex items-center justify-center">
       <div className="bg-white rounded-lg shadow-2xl max-w-lg w-full overflow-hidden">
         <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex items-center justify-between">
           <div className="font-bold text-lg">Cierre parcial</div>
@@ -164,7 +166,7 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
           </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
 
@@ -203,6 +205,9 @@ export default function MesaCompartidaPage() {
 
   const [confirmCerrarOpen, setConfirmCerrarOpen] = useState(false)
   const [cerrarLoading, setCerrarLoading] = useState(false)
+  const [confirmCancelarOpen, setConfirmCancelarOpen] = useState(false)
+  const [cancelarMotivo, setCancelarMotivo] = useState('')
+  const [cancelarLoading, setCancelarLoading] = useState(false)
 
   // Solo cuentas que fueron reabiertas desde "Cuentas cerradas" tienen reopenedAt; las nuevas no.
   const cuentaReabierta = useMemo(
@@ -520,6 +525,50 @@ export default function MesaCompartidaPage() {
     }
   }
 
+  async function confirmCancelarCuenta() {
+    if (!cuenta?.id || !user?.uid) return
+    const motivoTrim = cancelarMotivo.trim()
+    if (!motivoTrim) {
+      setError('Debe indicar un motivo para cancelar la cuenta.')
+      return
+    }
+
+    setCancelarLoading(true)
+    setError(null)
+    try {
+      const result = await cancelarCuenta({
+        cuentaId: cuenta.id,
+        mesaId: selectedMesaId,
+        usuarioId: user.uid,
+        motivo: motivoTrim,
+      })
+
+      if (result.ok) {
+        setConfirmCancelarOpen(false)
+        setCancelarMotivo('')
+        setSelectedMesaId(null)
+        setSelectedComensalId(null)
+        setCuenta(null)
+        setComensales([])
+        setItems([])
+        setUnassignedPending([])
+        await loadMesas()
+      }
+    } catch (e) {
+      if (e?.code === 'MOTIVO_REQUIRED') {
+        setError('Debe indicar un motivo para cancelar la cuenta.')
+      } else if (e?.code === 'HAS_PAID_ITEMS') {
+        setError('No se puede cancelar una cuenta con ítems ya pagados.')
+      } else if (e?.code === 'INVALID_ACCOUNT_STATE') {
+        setError('Solo se pueden cancelar cuentas abiertas.')
+      } else {
+        setError(e?.message || 'Error al cancelar la cuenta.')
+      }
+    } finally {
+      setCancelarLoading(false)
+    }
+  }
+
   useEffect(() => {
     let mounted = true
     ;(async () => {
@@ -545,28 +594,30 @@ export default function MesaCompartidaPage() {
             <TableCellsIcon className="w-8 h-8 text-cyan-600" />
             Mesa compartida
           </h1>
-          <p className="text-gray-600 text-sm">HU1: cierre parcial por comensal</p>
+          <p className="text-gray-600 text-sm">Gestion de cuentas compartidas por comensal</p>
         </div>
 
-        <button
-          onClick={async () => {
-            setRefreshing(true)
-            setError(null)
-            try {
-              await loadMesas()
-              await refresh()
-            } catch (e) {
-              setError(e?.message || 'Error al refrescar')
-            } finally {
-              setRefreshing(false)
-            }
-          }}
-          className="btn btn-ghost gap-2"
-          disabled={loading || refreshing}
-        >
-          <ArrowPathIcon className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
-          Refrescar
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              setRefreshing(true)
+              setError(null)
+              try {
+                await loadMesas()
+                await refresh()
+              } catch (e) {
+                setError(e?.message || 'Error al refrescar')
+              } finally {
+                setRefreshing(false)
+              }
+            }}
+            className="btn btn-ghost gap-2"
+            disabled={loading || refreshing}
+          >
+            <ArrowPathIcon className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refrescar
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -666,6 +717,23 @@ export default function MesaCompartidaPage() {
                           Cerrar cuenta (sin más cambios)
                         </button>
                       </div>
+                    </div>
+                  )}
+
+                  {cuenta?.estadoCuenta === 'abierta' && (
+                    <div className="p-4 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmCancelarOpen(true)
+                          setCancelarMotivo('')
+                          setError(null)
+                        }}
+                        className="btn btn-ghost border border-gray-300 text-gray-700 hover:bg-gray-50"
+                        disabled={cancelarLoading}
+                      >
+                        Cancelar cuenta
+                      </button>
                     </div>
                   )}
                 </div>
@@ -863,7 +931,7 @@ export default function MesaCompartidaPage() {
 
       {/* Modal Agregar producto */}
       {addProductOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col">
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="font-bold text-gray-900">Agregar producto al comensal</div>
@@ -901,12 +969,12 @@ export default function MesaCompartidaPage() {
               </div>
             )}
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal confirmar cerrar cuenta (reabierta) */}
       {confirmCerrarOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
             <div className="p-4 border-b border-gray-200 flex items-center gap-2">
               <LockClosedIcon className="w-6 h-6 text-amber-600" />
@@ -936,12 +1004,53 @@ export default function MesaCompartidaPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
+      )}
+
+      {/* Modal cancelar cuenta */}
+      {confirmCancelarOpen && (
+        <ModalPortal overlayClassName="flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex items-center gap-2">
+              <ExclamationTriangleIcon className="w-5 h-5 text-amber-500" />
+              <div className="font-bold text-gray-900">Cancelar cuenta</div>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-gray-700 text-sm">
+                Esta acción cancelará la cuenta, anulará ítems pendientes y liberará la mesa.
+              </p>
+              <textarea
+                value={cancelarMotivo}
+                onChange={(e) => setCancelarMotivo(e.target.value)}
+                placeholder="Motivo de cancelación (obligatorio)"
+                className="textarea textarea-bordered w-full min-h-[110px]"
+              />
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmCancelarOpen(false)}
+                  className="flex-1 py-2 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
+                  disabled={cancelarLoading}
+                >
+                  Volver
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmCancelarCuenta}
+                  className="flex-1 py-2 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg font-semibold disabled:opacity-50"
+                  disabled={cancelarLoading}
+                >
+                  {cancelarLoading ? 'Cancelando...' : 'Cancelar cuenta'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
       )}
 
       {/* Modal anular ítem */}
       {anularTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="font-bold text-gray-900">Anular ítem</div>
@@ -974,12 +1083,12 @@ export default function MesaCompartidaPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal revertir anulación */}
       {revertTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="font-bold text-gray-900">Revertir anulación</div>
@@ -1012,7 +1121,7 @@ export default function MesaCompartidaPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

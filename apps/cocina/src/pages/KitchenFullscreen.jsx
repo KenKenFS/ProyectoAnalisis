@@ -12,7 +12,7 @@ import OrderTimer from '../components/OrderTimer'
 
 export default function KitchenFullscreen() {
   const navigate = useNavigate()
-  const { orders, updateStatus, updatingOrderIds, pendingCount, preparingCount, readyCount } = useContext(OrdersContext)
+  const { orders, updateStatus, finalizeOrder, updatingOrderIds, pendingCount, preparingCount, readyCount } = useContext(OrdersContext)
 
   const statusConfig = {
     pendiente: { borderColor: 'border-gray-300', bgColor: 'bg-white', label: 'Pendiente', icon: ClockIcon },
@@ -63,7 +63,7 @@ export default function KitchenFullscreen() {
           const config = statusConfig[order.status] || statusConfig.pendiente
           const StatusIcon = config.icon
           const hasGeneralNotes = Boolean(order.notes)
-          const sequenceCode = `PED-${String(index + 1).padStart(3, '0')}`
+          const sequenceCode = order.displayId || `ORD-${String(index + 1).padStart(3, '0')}`
 
           return (
             <div
@@ -108,22 +108,26 @@ export default function KitchenFullscreen() {
                   Items del pedido:
                 </div>
                 <div className="space-y-1">
-                  {order.items.map((item, idx) => (
-                    <div key={idx} className="text-sm border-b border-gray-100 pb-1 last:border-b-0 last:pb-0">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-800 font-medium">{item.name}</span>
-                        <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-xs font-bold">
-                          x{item.qty}
-                        </span>
-                      </div>
-                      {item.note && (
-                        <div className="mt-1 text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 flex items-center gap-1">
-                          <ExclamationTriangleIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                          <span>{item.note}</span>
+                  {order.items.length === 0 ? (
+                    <div className="text-sm text-gray-500">Sin items en el pedido</div>
+                  ) : (
+                    order.items.map((item, idx) => (
+                      <div key={idx} className="text-sm border-b border-gray-100 pb-1 last:border-b-0 last:pb-0">
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-800 font-medium">{item.name}</span>
+                          <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-xs font-bold">
+                            x{item.qty}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        {item.note && (
+                          <div className="mt-1 text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 flex items-center gap-1">
+                            <ExclamationTriangleIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span>{item.note}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -155,10 +159,14 @@ export default function KitchenFullscreen() {
                 </button>
               )}
               {order.status === 'listo' && (
-                <div className="w-full bg-green-100 text-green-700 font-semibold py-2.5 px-3 rounded-lg text-center flex items-center justify-center gap-2">
+                <button
+                  onClick={() => finalizeOrder(order.id)}
+                  disabled={Boolean(updatingOrderIds[order.id])}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 px-3 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2 disabled:opacity-60"
+                >
                   <CheckCircleIcon className="w-5 h-5" />
-                  Listo para entrega
-                </div>
+                  {updatingOrderIds[order.id] ? 'Finalizando...' : 'Finalizar'}
+                </button>
               )}
             </div>
           )

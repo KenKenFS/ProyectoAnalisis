@@ -3,6 +3,7 @@ import AuthLayout from '@shared/layout/AuthLayout'
 import InternalLayout from '@shared/layout/InternalLayout'
 import { ProtectedAuthRoute } from '@shared/firebase/ProtectedAuthRoute'
 import Login from './pages/Login'
+import ResetPassword from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import Orders from './pages/Orders'
 import Inventory from './pages/Inventory'
@@ -37,6 +38,7 @@ function App() {
       <Routes>
         <Route element={<AuthLayout />}>
           <Route path="/login" element={<Login />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
         </Route>
 
         <Route

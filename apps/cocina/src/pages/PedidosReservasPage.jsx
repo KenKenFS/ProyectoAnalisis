@@ -11,6 +11,7 @@ import {
   XMarkIcon,
   FireIcon,
 } from '@heroicons/react/24/outline'
+import ModalPortal from '@shared/layout/ModalPortal'
 
 const statusConfig = {
   pending: { label: 'Pendiente', color: 'badge-ghost', bg: 'bg-gray-50' },
@@ -300,7 +301,7 @@ export default function PedidosReservasPage() {
 
       {/* Order Detail Modal */}
       {selectedOrder && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg max-w-md w-full shadow-2xl">
             <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex justify-between items-center">
               <h3 className="font-bold text-xl">Detalle del Pedido</h3>
@@ -360,7 +361,7 @@ export default function PedidosReservasPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

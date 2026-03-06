@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import KitchenPage from './pages/KitchenPage'
 import KitchenFullscreen from './pages/KitchenFullscreen'
 import PedidosReservasPage from './pages/PedidosReservasPage'
+import OrderHistoryPage from './pages/OrderHistoryPage'
 import { useContext } from 'react'
 import { OrdersContext } from './context/OrdersContext'
 import { ClockIcon, FireIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -46,6 +47,7 @@ function KitchenStatusCounter() {
 const sidebarLinks = [
   { to: '/pedidos', label: 'Pedidos y Reservas', icon: 'ClipboardDocumentListIcon', roles: ['Cocina', 'Admin'] },
   { to: '/cocina', label: 'Cocina', icon: 'FireIcon', roles: ['Cocina', 'Admin'] },
+  { to: '/historial-pedidos', label: 'Historial pedidos', icon: 'ClipboardDocumentListIcon', roles: ['Cocina', 'Admin'] },
   { to: '/configuracion', label: 'Configuracion', icon: 'Cog6ToothIcon', roles: ['Cocina', 'Admin'] },
 ]
 
@@ -91,6 +93,14 @@ function AppContent() {
           element={
             <ProtectedAuthRoute allowedRoles={['Cocina', 'Admin']}>
               <PedidosReservasPage />
+            </ProtectedAuthRoute>
+          }
+        />
+        <Route
+          path="/historial-pedidos"
+          element={
+            <ProtectedAuthRoute allowedRoles={['Cocina', 'Admin']}>
+              <OrderHistoryPage />
             </ProtectedAuthRoute>
           }
         />

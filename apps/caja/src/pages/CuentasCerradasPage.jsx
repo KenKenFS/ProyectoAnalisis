@@ -8,6 +8,7 @@ import {
   UsersIcon,
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@shared/firebase/AuthContext'
+import ModalPortal from '@shared/layout/ModalPortal'
 import {
   getCuentasCerradas,
   getMesa,
@@ -174,7 +175,7 @@ export default function CuentasCerradasPage() {
             Cuentas cerradas (reapertura)
           </h1>
           <p className="text-gray-600 text-sm">
-            HU2: Reabrir cuentas cerradas hace menos de {limiteMinutos} minutos. Solo supervisores.
+            Reabrir cuentas cerradas hace menos de {limiteMinutos} minutos. Solo supervisores.
           </p>
         </div>
         <button
@@ -336,7 +337,7 @@ export default function CuentasCerradasPage() {
 
       {/* Modal reapertura */}
       {modalCuenta && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-lg w-full overflow-hidden">
             <div className="bg-gradient-to-r from-amber-700 to-amber-900 text-white p-4 flex items-center justify-between">
               <div className="font-bold text-lg">Reabrir cuenta</div>
@@ -384,7 +385,7 @@ export default function CuentasCerradasPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

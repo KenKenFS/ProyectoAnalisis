@@ -14,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@shared/firebase/AuthContext'
 import { getAllUsers } from '@shared/firebase/auth'
+import ModalPortal from '@shared/layout/ModalPortal'
 import {
   abrirTurnoUsuario,
   cerrarTurnoUsuario,
@@ -425,7 +426,7 @@ export default function TurnosPOSPage() {
     const current = filters.dateFrom || todayStr
     const d = new Date(current + 'T12:00:00')
     d.setDate(d.getDate() + offset)
-    const iso = d.toISOString().slice(0, 10)
+    const iso = d.toISOString().slice(0, 10) > todayStr ? todayStr : d.toISOString().slice(0, 10)
     const next = { ...filters, dateFrom: iso, dateTo: iso }
     setFilters(next)
     loadAll(next)
@@ -447,7 +448,11 @@ export default function TurnosPOSPage() {
   const isToday = filters.dateFrom === todayStr
 
   async function applyFilters() {
-    await loadAll(filters)
+    const safeFrom = filters.dateFrom && filters.dateFrom > todayStr ? todayStr : filters.dateFrom
+    const safeTo = filters.dateTo && filters.dateTo > todayStr ? todayStr : filters.dateTo
+    const safeFilters = { ...filters, dateFrom: safeFrom, dateTo: safeTo }
+    setFilters(safeFilters)
+    await loadAll(safeFilters)
   }
 
   return (
@@ -671,8 +676,9 @@ export default function TurnosPOSPage() {
             type="date"
             className="input input-bordered"
             value={filters.dateFrom}
+            max={todayStr}
             onChange={(e) => {
-              const v = e.target.value
+              const v = e.target.value > todayStr ? todayStr : e.target.value
               setFilters(prev => ({ ...prev, dateFrom: v, dateTo: v }))
             }}
           />
@@ -756,7 +762,7 @@ export default function TurnosPOSPage() {
       </div>
 
       {pauseTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="font-bold text-gray-900">Iniciar pausa</div>
@@ -810,11 +816,11 @@ export default function TurnosPOSPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {closeTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="font-bold text-gray-900">Cerrar turno</div>
@@ -870,7 +876,7 @@ export default function TurnosPOSPage() {
               )}
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

@@ -7,6 +7,8 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, addDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
@@ -273,9 +275,27 @@ export async function updateUserData(targetUid, updates, adminUid) {
   return changes;
 }
 
-export async function sendUserPasswordReset(email) {
+export async function sendUserPasswordReset(email, continueUrl = null) {
   if (!email) throw new Error('Email requerido.');
+  if (continueUrl) {
+    await sendPasswordResetEmail(auth, email, {
+      url: continueUrl,
+      handleCodeInApp: true,
+    });
+    return;
+  }
   await sendPasswordResetEmail(auth, email);
+}
+
+export async function verifyUserPasswordResetCode(code) {
+  if (!code) throw new Error('Código de recuperación inválido.');
+  return verifyPasswordResetCode(auth, code);
+}
+
+export async function confirmUserPasswordReset(code, newPassword) {
+  if (!code) throw new Error('Código de recuperación inválido.');
+  if (!newPassword) throw new Error('La contraseña es obligatoria.');
+  await confirmPasswordReset(auth, code, newPassword);
 }
 
 export async function deactivateUser(targetUid, motivo, adminUid) {

@@ -525,10 +525,7 @@ export default function Users() {
                   return (
                     <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
                       <td>
-                        <div className="flex items-center gap-3">
-                          <div className={`w-9 h-9 rounded-lg ${rc.avatar} flex items-center justify-center text-sm font-semibold`}>
-                            {(user.name || '?').charAt(0).toUpperCase()}
-                          </div>
+                        <div className="flex items-center">
                           <div className="font-medium text-gray-800">{user.name || '-'}</div>
                         </div>
                       </td>

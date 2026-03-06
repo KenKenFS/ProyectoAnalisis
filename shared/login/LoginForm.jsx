@@ -120,7 +120,7 @@ export default function LoginForm({
     setResetLoading(true)
     setResetMsg('')
     try {
-      await sendUserPasswordReset(resetEmail)
+      await sendUserPasswordReset(resetEmail, `${window.location.origin}/reset-password`)
       setResetMsg('Si el correo esta registrado, recibiras un enlace para restablecer tu contraseña.')
     } catch (_) {
       setResetMsg('Si el correo esta registrado, recibiras un enlace para restablecer tu contraseña.')
@@ -288,36 +288,38 @@ export default function LoginForm({
             <p className="mt-1">Demo: Firebase Authentication</p>
           </div>
 
-          {/* Panel de recuperacion de contrasena */}
+          {/* Panel de recuperación de contraseña */}
           {showReset && (
-            <div className="absolute inset-0 bg-white rounded-xl p-8 flex flex-col justify-center">
-              <button onClick={() => { setShowReset(false); setResetMsg('') }}
-                className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-6">
-                <ArrowLeftIcon className="w-4 h-4" />
-                Volver al login
-              </button>
-              <h2 className="text-xl font-semibold text-gray-800 mb-2">Recuperar contraseña</h2>
-              <p className="text-sm text-gray-500 mb-6">
-                Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
-              </p>
-              {resetMsg && (
-                <div className="bg-blue-50 border-l-4 border-blue-400 rounded-lg p-3 mb-4">
-                  <p className="text-sm text-blue-700">{resetMsg}</p>
-                </div>
-              )}
-              <form onSubmit={handleResetPassword} className="space-y-4">
-                <div className="form-control">
-                  <input type="email" placeholder="correo@ceviche.cr"
-                    className="input input-bordered bg-gray-50 w-full"
-                    value={resetEmail} onChange={e => setResetEmail(e.target.value)}
-                    disabled={resetLoading} />
-                </div>
-                <button type="submit" className="btn btn-primary w-full" disabled={resetLoading}>
-                  {resetLoading
-                    ? <span className="loading loading-spinner loading-sm" />
-                    : 'Enviar enlace'}
+            <div className="absolute inset-0 bg-white rounded-xl p-8 overflow-y-auto">
+              <div className="max-w-md">
+                <button onClick={() => { setShowReset(false); setResetMsg('') }}
+                  className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-6">
+                  <ArrowLeftIcon className="w-4 h-4" />
+                  Volver al login
                 </button>
-              </form>
+                <h2 className="text-xl font-semibold text-gray-800 mb-2">Recuperar contraseña</h2>
+                <p className="text-sm text-gray-500 mb-6">
+                  Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
+                </p>
+                {resetMsg && (
+                  <div className="bg-blue-50 border-l-4 border-blue-400 rounded-lg p-3 mb-4">
+                    <p className="text-sm text-blue-700">{resetMsg}</p>
+                  </div>
+                )}
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  <div className="form-control">
+                    <input type="email" placeholder="correo@ceviche.cr"
+                      className="input input-bordered bg-gray-50 w-full"
+                      value={resetEmail} onChange={e => setResetEmail(e.target.value)}
+                      disabled={resetLoading} />
+                  </div>
+                  <button type="submit" className="btn btn-primary w-full" disabled={resetLoading}>
+                    {resetLoading
+                      ? <span className="loading loading-spinner loading-sm" />
+                      : 'Enviar enlace'}
+                  </button>
+                </form>
+              </div>
             </div>
           )}
         </div>

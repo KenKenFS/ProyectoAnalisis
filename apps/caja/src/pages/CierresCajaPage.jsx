@@ -8,6 +8,7 @@ import {
   DocumentArrowDownIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline'
+import ModalPortal from '@shared/layout/ModalPortal'
 
 const closures = [
   {
@@ -107,7 +108,7 @@ export default function CierresCajaPage() {
 
       {/* Detail Modal */}
       {selectedClosure && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-6 flex justify-between items-center">
               <h3 className="font-bold text-xl">Detalle del Cierre</h3>
@@ -184,7 +185,7 @@ export default function CierresCajaPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

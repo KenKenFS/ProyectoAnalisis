@@ -796,6 +796,33 @@ export async function updateMesaEstado(mesaId, estado) {
 }
 
 /**
+ * Libera la mesa asociada a una cuenta cerrada.
+ * Solo limpia cuentaActivaId si coincide con la cuenta que se está cerrando.
+ */
+async function liberarMesaSiCorresponde({ mesaId, cuentaId, now = new Date() }) {
+  const mesaIdSafe = String(mesaId || '').trim();
+  const cuentaIdSafe = String(cuentaId || '').trim();
+  if (!mesaIdSafe || !cuentaIdSafe) return;
+
+  const mesaRef = doc(db, 'mesas', mesaIdSafe);
+  const mesaSnap = await getDoc(mesaRef);
+  if (!mesaSnap.exists()) return;
+
+  const mesa = mesaSnap.data() || {};
+  const cuentaActivaId = String(mesa.cuentaActivaId || '').trim();
+  if (cuentaActivaId && cuentaActivaId !== cuentaIdSafe) {
+    return;
+  }
+
+  await updateDoc(mesaRef, {
+    cuentaActivaId: null,
+    estadoMesa: 'disponible',
+    estado: 'disponible',
+    updatedAt: now,
+  });
+}
+
+/**
  * Actualiza los datos editables de una mesa.
  * @param {string} mesaId
  * @param {object} data - { numero, capacidad, zona, estadoMesa }
@@ -1344,6 +1371,105 @@ export async function getCuentaItems(cuentaId) {
   return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+function toMillisSafe(value) {
+  if (!value) return 0;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isEstadoPendiente(value) {
+  return String(value || '').trim().toLowerCase() === 'pendiente';
+}
+
+/**
+ * Mantiene sincronizado el pedido de cocina cuando una cuenta reabierta
+ * recibe (o revierte) ítems nuevos. Si no quedan ítems nuevos pendientes,
+ * el pedido de reapertura se finaliza.
+ */
+async function syncPedidoCocinaReaperturaCuenta({ cuentaId, actorUid = null }) {
+  const cuenta = await getCuenta(cuentaId);
+  if (!cuenta) return;
+
+  const reopenedAtMs = toMillisSafe(cuenta.reopenedAt);
+  const closedAtMs = toMillisSafe(cuenta.closedAt || cuenta.timestampCierre);
+  if (!reopenedAtMs || !closedAtMs) return;
+
+  // Reabrir cuenta solo se permite <= 15 min, reforzamos por seguridad.
+  if (reopenedAtMs - closedAtMs > 15 * 60 * 1000) return;
+
+  const itemsCuenta = await getCuentaItems(cuentaId);
+  const nuevosPendientes = itemsCuenta.filter((item) => {
+    const createdMs = toMillisSafe(item.createdAt);
+    return createdMs >= reopenedAtMs && isEstadoPendiente(item.estadoItem);
+  });
+
+  const pedidosSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+  const pedidosCuenta = pedidosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const pedidoReaperturaActivo = pedidosCuenta.find((p) => {
+    const origen = String(p.origenPedido || '');
+    const estado = String(p.estado || p.estadoPedido || '').toLowerCase();
+    return origen === 'reapertura_cuenta' && estado !== 'finalizado';
+  });
+
+  if (nuevosPendientes.length === 0) {
+    if (pedidoReaperturaActivo) {
+      await updateDoc(doc(db, 'pedidos', pedidoReaperturaActivo.id), {
+        estado: 'finalizado',
+        estadoPedido: 'finalizado',
+        finalizedAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+    return;
+  }
+
+  let mesaNumero = null;
+  try {
+    if (cuenta.mesaId) {
+      const mesaSnap = await getDoc(doc(db, 'mesas', cuenta.mesaId));
+      if (mesaSnap.exists()) {
+        const num = Number(mesaSnap.data()?.numero || 0);
+        mesaNumero = Number.isFinite(num) && num > 0 ? num : null;
+      }
+    }
+  } catch (_) {
+    // Si no hay permisos para leer mesas no bloqueamos el flujo.
+  }
+
+  const payload = {
+    mesaId: cuenta.mesaId || null,
+    mesaNumero,
+    cuentaId,
+    meseroUid: actorUid || '',
+    origenPedido: 'reapertura_cuenta',
+    estado: 'pendiente',
+    estadoPedido: 'pendiente',
+    notasPedido: 'Pedido reabierto desde caja',
+    items: nuevosPendientes.map((item) => ({
+      productoId: item.productoId || '',
+      nombreSnapshot: item.nombreSnapshot || item.productoId || 'Item',
+      precioUnitSnapshot: Number(item.precioUnitSnapshot || 0),
+      cantidad: Number(item.cantidad || 1),
+      notaEspecial: String(item.notaEspecial || '').trim(),
+      estadoItem: 'pendiente',
+    })),
+    updatedAt: new Date(),
+  };
+
+  if (pedidoReaperturaActivo) {
+    await updateDoc(doc(db, 'pedidos', pedidoReaperturaActivo.id), payload);
+  } else {
+    await addDoc(collection(db, 'pedidos'), {
+      ...payload,
+      timestamp: new Date(),
+      createdAt: new Date(),
+    });
+  }
+}
+
 export async function getCuentaItemsByComensal(cuentaId, comensalId) {
   const q = query(
     collection(db, 'cuentas', cuentaId, 'items'),
@@ -1403,6 +1529,10 @@ export async function addCuentaItem({ cuentaId, productoId, comensalId, createdB
     createdByUid,
     createdAt: new Date(),
     updatedAt: new Date(),
+  });
+  await syncPedidoCocinaReaperturaCuenta({
+    cuentaId,
+    actorUid: createdByUid,
   });
   return docRef.id;
 }
@@ -1702,6 +1832,31 @@ export async function cerrarVentaDirectaCuenta({
     timestamp: now,
   });
 
+  // Envia pedido a cocina para preparacion de para llevar.
+  await addDoc(collection(db, 'pedidos'), {
+    mesaId: null,
+    mesaNumero: null,
+    cuentaId,
+    meseroUid: cajeroUid || '',
+    origenPedido: 'venta_directa',
+    tipoPedido: 'para_llevar',
+    terminalId: 'Caja',
+    estado: 'pendiente',
+    estadoPedido: 'pendiente',
+    notasPedido: 'Pedido de venta directa para llevar',
+    items: pendientes.map((i) => ({
+      productoId: i.productoId || '',
+      nombreSnapshot: i.nombreSnapshot || i.productoId || 'Item',
+      precioUnitSnapshot: Number(i.precioUnitSnapshot || 0),
+      cantidad: Number(i.cantidad || 1),
+      notaEspecial: String(i.notaEspecial || '').trim(),
+      estadoItem: 'pendiente',
+    })),
+    timestamp: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
   return { subtotal, impuesto, total, itemsCount: pendientes.length };
 }
 
@@ -1752,6 +1907,12 @@ export async function marcarVentaDirectaEntregada({
     closedAt: now,
     noReapertura: true,
     updatedAt: now,
+  });
+
+  await liberarMesaSiCorresponde({
+    mesaId: cuenta.mesaId,
+    cuentaId,
+    now,
   });
 
   await addDoc(collection(db, 'auditoria'), {
@@ -1834,6 +1995,11 @@ export async function anularCuentaItem({
     },
     timestamp: new Date(),
   });
+
+  await syncPedidoCocinaReaperturaCuenta({
+    cuentaId,
+    actorUid: usuarioId,
+  });
 }
 
 /**
@@ -1894,6 +2060,11 @@ export async function revertirAnulacionCuentaItem({
       monto: Number(item.precioUnitSnapshot || 0) * Number(item.cantidad || 1),
     },
     timestamp: new Date(),
+  });
+
+  await syncPedidoCocinaReaperturaCuenta({
+    cuentaId,
+    actorUid: usuarioId,
   });
 }
 
@@ -1966,6 +2137,11 @@ export async function payPartialForComensal({
   );
   const impuesto = Math.round(subtotal * Number(impuestoRate || 0));
   const total = subtotal + impuesto;
+  const montoCuentaCompleta = Math.round(
+    allItems
+      .filter((i) => String(i.estadoItem || '').trim().toLowerCase() !== 'anulado')
+      .reduce((s, i) => s + (Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1)), 0)
+  );
 
   const pagoRef = doc(collection(db, 'pagos'));
   const pagoId = pagoRef.id;
@@ -2025,11 +2201,150 @@ export async function payPartialForComensal({
         closedByUid: cajeroUid ?? null,
         updatedAt: new Date(),
       });
+      await liberarMesaSiCorresponde({
+        mesaId,
+        cuentaId,
+        now: new Date(),
+      });
+      await addDoc(collection(db, 'auditoria'), {
+        tipo: 'cuenta_cobrada_completa',
+        adminUid: cajeroUid || '',
+        targetId: cuentaId,
+        targetName: `Cuenta ${cuentaId}`,
+        detalles: {
+          cuentaId,
+          mesaId,
+          metodoUltimoPago: metodo,
+          pagoId,
+          totalCuenta: montoCuentaCompleta,
+          totalItems: allItems.length,
+        },
+        timestamp: new Date(),
+      });
       cuentaCerrada = true;
     }
   }
 
   return { pagoId, itemIds: items.map(i => i.id), subtotal, impuesto, total, cuentaCerrada };
+}
+
+/**
+ * Cancela una cuenta abierta (cliente se retira / cancelación operativa).
+ * - Requiere motivo.
+ * - Anula ítems pendientes.
+ * - Libera mesa asociada.
+ * - Cierra pedidos de cocina vinculados a la cuenta.
+ */
+export async function cancelarCuenta({
+  cuentaId,
+  mesaId = null,
+  usuarioId = null,
+  motivo,
+}) {
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) {
+    const err = new Error('Debe indicar un motivo para cancelar la cuenta.');
+    err.code = 'MOTIVO_REQUIRED';
+    throw err;
+  }
+
+  const cuentaRef = doc(db, 'cuentas', cuentaId);
+  const cuentaSnap = await getDoc(cuentaRef);
+  if (!cuentaSnap.exists()) {
+    const err = new Error('Cuenta no encontrada.');
+    err.code = 'CUENTA_NOT_FOUND';
+    throw err;
+  }
+
+  const cuenta = cuentaSnap.data();
+  const estadoCuenta = String(cuenta.estadoCuenta || '').trim().toLowerCase();
+  if (estadoCuenta !== 'abierta') {
+    const err = new Error('Solo se pueden cancelar cuentas abiertas.');
+    err.code = 'INVALID_ACCOUNT_STATE';
+    throw err;
+  }
+
+  const items = await getCuentaItems(cuentaId);
+  const itemsPagados = items.filter((i) => String(i.estadoItem || '').trim().toLowerCase() === 'pagado');
+  if (itemsPagados.length > 0) {
+    const err = new Error('No se puede cancelar una cuenta con ítems pagados.');
+    err.code = 'HAS_PAID_ITEMS';
+    throw err;
+  }
+
+  const now = new Date();
+  const batch = writeBatch(db);
+
+  batch.update(cuentaRef, {
+    estadoCuenta: 'cancelada',
+    motivoCancelacion: motivoTrim,
+    cancelledAt: now,
+    cancelledByUid: usuarioId || null,
+    updatedAt: now,
+  });
+
+  let itemsAnulados = 0;
+  for (const item of items) {
+    const estadoItem = String(item.estadoItem || '').trim().toLowerCase();
+    if (estadoItem === 'pendiente') {
+      itemsAnulados += 1;
+      batch.update(doc(db, 'cuentas', cuentaId, 'items', item.id), {
+        estadoItem: 'anulado',
+        motivoAnulacion: motivoTrim,
+        canceledAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+
+  await batch.commit();
+
+  const mesaIdResolved = mesaId || cuenta.mesaId || null;
+  await liberarMesaSiCorresponde({
+    mesaId: mesaIdResolved,
+    cuentaId,
+    now,
+  });
+
+  const pedidosSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+  for (const pedidoDoc of pedidosSnap.docs) {
+    const pedido = pedidoDoc.data() || {};
+    const estadoPedido = String(pedido.estado || pedido.estadoPedido || '').trim().toLowerCase();
+    if (estadoPedido === 'finalizado' || estadoPedido === 'cancelado') continue;
+
+    await updateDoc(doc(db, 'pedidos', pedidoDoc.id), {
+      estado: 'finalizado',
+      estadoPedido: 'finalizado',
+      motivoCancelacionCuenta: motivoTrim,
+      finalizedAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const totalReferencial = Math.round(
+    items
+      .filter((i) => String(i.estadoItem || '').trim().toLowerCase() !== 'anulado')
+      .reduce((s, i) => s + Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1), 0)
+  );
+
+  await addDoc(collection(db, 'auditoria'), {
+    tipo: 'cuenta_cancelada',
+    adminUid: usuarioId || '',
+    targetId: cuentaId,
+    targetName: `Cuenta ${cuentaId}`,
+    detalles: {
+      cuentaId,
+      mesaId: mesaIdResolved,
+      motivo: motivoTrim,
+      itemsTotal: items.length,
+      itemsAnulados,
+      itemsPagados: itemsPagados.length,
+      totalReferencial,
+    },
+    timestamp: now,
+  });
+
+  return { ok: true, itemsAnulados };
 }
 
 // ==================== HU2: REAPERTURA DE CUENTA CERRADA ====================
@@ -2126,6 +2441,19 @@ export async function reabrirCuenta({ cuentaId, usuarioIdSupervisor, motivoReape
     updatedAt: now,
   });
 
+  if (cuenta.mesaId) {
+    batch.set(
+      doc(db, 'mesas', cuenta.mesaId),
+      {
+        cuentaActivaId: cuentaId,
+        estadoMesa: 'ocupada',
+        estado: 'ocupada',
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  }
+
   // Registro en auditoría
   const auditoriaRef = doc(collection(db, 'auditoria'));
   batch.set(auditoriaRef, {
@@ -2185,6 +2513,11 @@ export async function cerrarCuentaReabierta({ cuentaId, cerradoPorUid }) {
     timestampCierre: now,
     closedByUid: cerradoPorUid ?? null,
     updatedAt: now,
+  });
+  await liberarMesaSiCorresponde({
+    mesaId: cuenta.mesaId,
+    cuentaId,
+    now,
   });
   return { ok: true };
 }

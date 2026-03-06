@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ShoppingCartIcon,
@@ -11,9 +11,11 @@ import {
   CheckCircleIcon,
   ClockIcon,
   ArchiveBoxIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 
 import { useAuth } from '@shared/firebase/AuthContext'
+import ModalPortal from '@shared/layout/ModalPortal'
 import {
   getMesasConCuentaActivaOrThrow,
   getCuentaItems,
@@ -151,7 +153,7 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
   const total = subtotal + tax
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <ModalPortal overlayClassName="flex items-center justify-center">
       <div className="bg-white rounded-lg shadow-2xl max-w-lg w-full overflow-hidden">
         <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white p-4 flex items-center justify-between">
           <div className="font-bold text-lg">Confirmar cobro — Para llevar</div>
@@ -227,7 +229,7 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
           </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
 
@@ -246,8 +248,9 @@ export default function VentasPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pedidosPendientes, setPedidosPendientes] = useState([])
   const [entregando, setEntregando] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
 
-  async function loadPedidosPendientes() {
+  const loadPedidosPendientes = useCallback(async () => {
     try {
       const pendientes = await getVentasDirectasPendientesEntrega()
       const enriched = await Promise.all(
@@ -262,61 +265,72 @@ export default function VentasPage() {
       )
       setPedidosPendientes(enriched)
     } catch { /* silenciar */ }
-  }
+  }, [])
 
   useEffect(() => {
     loadPedidosPendientes()
+  }, [loadPedidosPendientes])
+
+  const loadMainData = useCallback(async () => {
+    try {
+      setMesasLoading(true)
+      setMesasError('')
+      const [mesas, productosDB] = await Promise.all([
+        getMesasConCuentaActivaOrThrow(),
+        getProductos(),
+      ])
+
+      const enriched = await Promise.all(
+        mesas.map(async (m) => {
+          try {
+            const its = await getCuentaItems(m.cuentaActivaId)
+            const pendientes = its.filter(i => i.estadoItem === 'pendiente')
+            const subtotal = Math.round(
+              pendientes.reduce((s, i) => s + Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1), 0)
+            )
+            const impuesto = Math.round(subtotal * 0.13)
+            const total = subtotal + impuesto
+            return {
+              ...m,
+              resumen: {
+                itemsPendientes: pendientes.length,
+                total,
+              },
+            }
+          } catch {
+            return { ...m, resumen: { itemsPendientes: 0, total: 0 } }
+          }
+        })
+      )
+
+      setMesasConCuenta(enriched)
+      setProductos(productosDB || [])
+    } catch (e) {
+      setMesasError(e?.message || 'Error al cargar mesas')
+    } finally {
+      setMesasLoading(false)
+    }
   }, [])
 
   useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      try {
-        setMesasLoading(true)
-        setMesasError('')
-        const [mesas, productosDB] = await Promise.all([
-          getMesasConCuentaActivaOrThrow(),
-          getProductos(),
-        ])
+    loadMainData()
+  }, [loadMainData])
 
-        // Enriquecer con un resumen rápido de ítems pendientes (para el card)
-        const enriched = await Promise.all(
-          mesas.map(async (m) => {
-            try {
-              const its = await getCuentaItems(m.cuentaActivaId)
-              const pendientes = its.filter(i => i.estadoItem === 'pendiente')
-              const subtotal = Math.round(
-                pendientes.reduce((s, i) => s + Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1), 0)
-              )
-              const impuesto = Math.round(subtotal * 0.13)
-              const total = subtotal + impuesto
-              return {
-                ...m,
-                resumen: {
-                  itemsPendientes: pendientes.length,
-                  total,
-                },
-              }
-            } catch {
-              return { ...m, resumen: { itemsPendientes: 0, total: 0 } }
-            }
-          })
-        )
-
-        if (mounted) {
-          setMesasConCuenta(enriched)
-          setProductos(productosDB || [])
-        }
-      } catch (e) {
-        if (mounted) setMesasError(e?.message || 'Error al cargar mesas')
-      } finally {
-        if (mounted) setMesasLoading(false)
-      }
-    })()
-    return () => {
-      mounted = false
+  const refreshAll = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([loadMainData(), loadPedidosPendientes()])
+    } finally {
+      setRefreshing(false)
     }
-  }, [])
+  }, [loadMainData, loadPedidosPendientes])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refreshAll()
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [refreshAll])
 
   const categories = [...new Set((productos || []).map(m => m.categoria || 'General'))]
   const categoryCountMap = categories.reduce((acc, cat) => {
@@ -437,10 +451,21 @@ export default function VentasPage() {
     <div className="space-y-6 pb-4">
       {/* SECTION 1: PEDIDOS POR MESA */}
       <div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <ClockIcon className="w-6 h-6 text-cyan-600" />
-          Pedidos Por Mesa
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <ClockIcon className="w-6 h-6 text-cyan-600" />
+            Pedidos Por Mesa
+          </h2>
+          <button
+            type="button"
+            onClick={refreshAll}
+            className="btn btn-ghost gap-2"
+            disabled={refreshing}
+          >
+            <ArrowPathIcon className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refrescar
+          </button>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {mesasConCuenta.map(mesa => (
