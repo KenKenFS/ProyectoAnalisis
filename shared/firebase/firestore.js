@@ -55,6 +55,33 @@ export async function getPedidos() {
 }
 
 /**
+ * Obtiene el pedido activo mas reciente para una cuenta/mesa.
+ * Se usa como respaldo cuando el detalle de cuenta no trae items visibles.
+ */
+export async function getPedidoActivoMesa({ cuentaId, mesaId }) {
+  if (!cuentaId) return null;
+  try {
+    const snap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+    const pedidos = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const misaMesa = pedidos
+      .filter((p) => !mesaId || String(p.mesaId || '') === String(mesaId || ''))
+      .sort((a, b) => toMillisSafe(b.updatedAt || b.createdAt || b.timestamp) - toMillisSafe(a.updatedAt || a.createdAt || a.timestamp));
+    const activo = misaMesa.find((p) => {
+      const estado = String(p.estado || p.estadoPedido || '').trim().toLowerCase();
+      return estado === 'pendiente' || estado === 'enpreparacion' || estado === 'en_preparacion' || estado === 'listo';
+    });
+    if (activo) return activo;
+    const finalizado = misaMesa.find((p) => {
+      const estado = String(p.estado || p.estadoPedido || '').trim().toLowerCase();
+      return estado === 'finalizado';
+    });
+    return finalizado || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * Obtiene pedidos de un cliente específico
  * @param {string} clienteId - UID del cliente
  * @returns {Promise<array>}
@@ -1633,6 +1660,49 @@ export async function registrarPedidoMesa({
   notasPedido = '',
 }) {
   const now = new Date();
+  const statusNorm = (value) => String(value || '').trim().toLowerCase();
+  const isPedidoActivoEditable = (pedido) => {
+    const estado = statusNorm(pedido.estado || pedido.estadoPedido);
+    return estado === 'pendiente' || estado === 'enpreparacion' || estado === 'en_preparacion' || estado === 'listo';
+  };
+  const buildKey = (item) => {
+    const pid = String(item.productoId || '').trim();
+    const nota = String(item.notaEspecial || '').trim().toLowerCase();
+    const comensal = String(item.comensalId || '').trim();
+    return `${pid}__${nota}__${comensal}`;
+  };
+  const normalizePedidoItems = (rawItems = [], options = {}) => {
+    const markAsNew = Boolean(options.markAsNew);
+    return rawItems.map((i) => ({
+      productoId: i.productoId || '',
+      nombreSnapshot: i.nombreSnapshot || i.nombre || i.productoId || 'Item',
+      precioUnitSnapshot: Number(i.precioUnitSnapshot || 0),
+      cantidad: Number(i.cantidad || 1),
+      notaEspecial: String(i.notaEspecial || '').trim(),
+      comensalId: i.comensalId || null,
+      estadoItem: i.estadoItem || 'pendiente',
+      esNuevoCocina: markAsNew ? true : Boolean(i.esNuevoCocina),
+    }));
+  };
+  const mergeItems = (baseItems = [], newItems = []) => {
+    const byKey = new Map();
+    normalizePedidoItems(baseItems).forEach((item) => {
+      byKey.set(buildKey(item), { ...item });
+    });
+    normalizePedidoItems(newItems, { markAsNew: true }).forEach((item) => {
+      const key = buildKey(item);
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.cantidad = Number(existing.cantidad || 0) + Number(item.cantidad || 0);
+        existing.esNuevoCocina = true;
+        byKey.set(key, existing);
+      } else {
+        byKey.set(key, { ...item });
+      }
+    });
+    return Array.from(byKey.values());
+  };
+
   let mesaNumero = null;
   try {
     const mesaSnap = await getDoc(doc(db, 'mesas', mesaId));
@@ -1644,39 +1714,92 @@ export async function registrarPedidoMesa({
     // Si no puede leer mesas por reglas, continuamos sin bloquear pedido.
   }
 
-  const pedidoRef = await addDoc(collection(db, 'pedidos'), {
-    mesaId,
-    mesaNumero,
-    cuentaId,
-    meseroUid: meseroUid || '',
-    estado: 'pendiente',
-    estadoPedido: 'pendiente',
-    notasPedido: String(notasPedido || '').trim(),
-    items: items.map((i) => ({
-      productoId: i.productoId,
-      nombreSnapshot: i.nombreSnapshot,
-      precioUnitSnapshot: Number(i.precioUnitSnapshot || 0),
-      cantidad: Number(i.cantidad || 1),
-      notaEspecial: String(i.notaEspecial || '').trim(),
-      estadoItem: 'pendiente',
-    })),
-    timestamp: now,
-    createdAt: now,
-    updatedAt: now,
-  });
+  const incomingItems = Array.isArray(items) ? items : [];
+  const pedidosCuentaSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+  const pedidosCuenta = pedidosCuentaSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const pedidosMesaMisma = pedidosCuenta
+    .filter((p) => String(p.mesaId || '') === String(mesaId || ''))
+    .filter((p) => String(p.origenPedido || '').trim().toLowerCase() !== 'venta_directa')
+    .filter((p) => String(p.origenPedido || '').trim().toLowerCase() !== 'reapertura_cuenta')
+    .sort((a, b) => toMillisSafe(b.updatedAt || b.createdAt || b.timestamp) - toMillisSafe(a.updatedAt || a.createdAt || a.timestamp));
+
+  const pedidoActivo = pedidosMesaMisma.find((p) => isPedidoActivoEditable(p)) || null;
+  const pedidoFinalizado = !pedidoActivo
+    ? pedidosMesaMisma.find((p) => statusNorm(p.estado || p.estadoPedido) === 'finalizado') || null
+    : null;
+
+  const pedidoTarget = pedidoActivo || pedidoFinalizado;
+  let pedidoId = null;
+  let wasUpdate = false;
+
+  if (pedidoTarget) {
+    const estadoActualNorm = statusNorm(pedidoTarget.estado || pedidoTarget.estadoPedido);
+    const reopenFromFinished = estadoActualNorm === 'listo' || estadoActualNorm === 'finalizado';
+    const mergedItems = reopenFromFinished
+      ? normalizePedidoItems(incomingItems, { markAsNew: true })
+      : mergeItems(pedidoTarget.items || [], incomingItems);
+    const nextCount = Number(pedidoTarget.actualizacionesCount || 0) + 1;
+    const prevNotes = String(pedidoTarget.notasPedido || '').trim();
+    const incomingNotes = String(notasPedido || '').trim();
+    const notes = incomingNotes
+      ? (prevNotes ? `${prevNotes}\n---\n${incomingNotes}` : incomingNotes)
+      : prevNotes;
+
+    const updateFields = {
+      items: mergedItems,
+      notasPedido: notes,
+      pedidoActualizado: true,
+      actualizacionesCount: nextCount,
+      ultimaActualizacionPedidoAt: now,
+      estado: reopenFromFinished ? 'pendiente' : (estadoActualNorm || 'pendiente'),
+      estadoPedido: reopenFromFinished ? 'pendiente' : (estadoActualNorm || 'pendiente'),
+      updatedAt: now,
+    };
+
+    if (reopenFromFinished) {
+      const accumulated = [
+        ...normalizePedidoItems(pedidoTarget.itemsPrevios || []),
+        ...normalizePedidoItems(pedidoTarget.items || []),
+      ];
+      updateFields.itemsPrevios = accumulated;
+    }
+
+    await updateDoc(doc(db, 'pedidos', pedidoTarget.id), updateFields);
+    pedidoId = pedidoTarget.id;
+    wasUpdate = true;
+  } else {
+    const pedidoRef = await addDoc(collection(db, 'pedidos'), {
+      mesaId,
+      mesaNumero,
+      cuentaId,
+      meseroUid: meseroUid || '',
+      estado: 'pendiente',
+      estadoPedido: 'pendiente',
+      notasPedido: String(notasPedido || '').trim(),
+      items: normalizePedidoItems(incomingItems),
+      pedidoActualizado: false,
+      actualizacionesCount: 0,
+      ultimaActualizacionPedidoAt: null,
+      timestamp: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    pedidoId = pedidoRef.id;
+  }
 
   try {
     // El log no debe romper el flujo de pedido si reglas bloquean auditoria.
     await addDoc(collection(db, 'auditoria'), {
-      tipo: 'pedido_enviado_cocina',
+      tipo: wasUpdate ? 'pedido_actualizado_cocina' : 'pedido_enviado_cocina',
       adminUid: meseroUid || '',
-      targetId: pedidoRef.id,
+      targetId: pedidoId,
       targetName: `Mesa ${mesaId}`,
       detalles: {
-        pedidoId: pedidoRef.id,
+        pedidoId,
         mesaId,
         cuentaId,
         itemsCount: items.length,
+        actualizacion: wasUpdate,
       },
       timestamp: now,
     });
@@ -1684,7 +1807,7 @@ export async function registrarPedidoMesa({
     console.warn('No se pudo registrar auditoria de pedido_enviado_cocina:', auditError);
   }
 
-  return pedidoRef.id;
+  return pedidoId;
 }
 
 /**
@@ -1943,7 +2066,7 @@ export async function anularCuentaItem({
   }
 
   const role = String(rolUsuario || '').toLowerCase();
-  if (role !== 'cajero' && role !== 'admin') {
+  if (role !== 'cajero' && role !== 'admin' && role !== 'mesero') {
     const err = new Error('No tienes permiso para anular ítems.');
     err.code = 'PERMISSION_DENIED';
     throw err;

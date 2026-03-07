@@ -42,6 +42,13 @@ function cuentaLabel(index) {
   return `CTA-${String(index + 1).padStart(3, '0')}`
 }
 
+function normalizeComensalOrder(alias) {
+  const text = String(alias || '').trim().toLowerCase()
+  const match = text.match(/(\d+)\s*$/)
+  if (!match) return Number.MAX_SAFE_INTEGER
+  return Number(match[1]) || Number.MAX_SAFE_INTEGER
+}
+
 function tiempoRelativo(timestamp) {
   if (!timestamp) return null
   const date = timestamp?.toDate ? timestamp.toDate() : new Date(timestamp)
@@ -265,8 +272,15 @@ export default function MesaCompartidaPage() {
       getCuentaUnassignedPendingItems(cuentaId),
     ])
 
+    const comensalesOrdenados = [...(cs || [])].sort((a, b) => {
+      const nA = normalizeComensalOrder(a.alias)
+      const nB = normalizeComensalOrder(b.alias)
+      if (nA !== nB) return nA - nB
+      return String(a.alias || '').localeCompare(String(b.alias || ''), 'es', { sensitivity: 'base' })
+    })
+
     setCuenta(c)
-    setComensales(cs)
+    setComensales(comensalesOrdenados)
     setItems(its)
     setUnassignedPending(unassigned)
   }

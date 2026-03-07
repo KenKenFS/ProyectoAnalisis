@@ -19,6 +19,7 @@ import ReactCrop from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
 import { getProductos, getCategorias, createProducto, updateProducto, deleteProducto, uploadProductImage, getInventarioItems, registrarEntradaInsumo, getEntradasInsumos, registrarSalidaInsumo, getSalidasInsumos, updateInsumo, deleteInsumo, ajustarStockInsumo, createConteoFisico, getConteoFisico, addItemToConteo, removeItemFromConteo, aplicarConteoFisico, cancelarConteoFisico, getConteosFisicos, getAlertasCaducidad } from '@shared/firebase/firestore'
 import { useAuth } from '@shared/firebase/AuthContext'
+import ModalPortal from '@shared/layout/ModalPortal'
 
 // Aspect ratio 16:10 para coincidir con el h-40 de las cards
 const CROP_ASPECT = 16 / 10
@@ -1493,7 +1494,7 @@ export default function Inventory() {
 
       {/* Modal de creacion */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="text-lg font-semibold text-gray-800">
@@ -1615,12 +1616,12 @@ export default function Inventory() {
               )}
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal de edicion */}
       {editProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="text-lg font-semibold text-gray-800">Editar producto</h3>
@@ -1731,12 +1732,12 @@ export default function Inventory() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal de confirmacion de eliminacion */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
             <div className="p-5 space-y-4">
               <div className="flex items-center gap-3">
@@ -1764,12 +1765,12 @@ export default function Inventory() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal de recorte de imagen */}
       {cropSrc && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+        <ModalPortal overlayClassName="flex items-center justify-center bg-black/60">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <div className="flex items-center gap-2">
@@ -1808,12 +1809,12 @@ export default function Inventory() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal de edicion de insumo */}
       {editInsumo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="text-lg font-semibold text-gray-800">Editar insumo</h3>
@@ -1854,12 +1855,12 @@ export default function Inventory() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal de eliminacion de insumo */}
       {deleteInsumoTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
             <div className="p-5 text-center">
               <ExclamationTriangleIcon className="w-12 h-12 text-rose-400 mx-auto mb-3" />
@@ -1878,12 +1879,12 @@ export default function Inventory() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Modal de ajuste manual de stock */}
       {ajusteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <ModalPortal overlayClassName="flex items-center justify-center">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h3 className="text-lg font-semibold text-gray-800">Ajustar stock</h3>
@@ -1913,7 +1914,7 @@ export default function Inventory() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

@@ -49,6 +49,7 @@ const TIPOS = {
   venta_directa_entregada: { label: 'Venta directa entregada', icon: CheckCircleIcon, color: 'text-green-700', bg: 'bg-green-50' },
   cuenta_cobrada_completa: { label: 'Cuenta cobrada completa', icon: CreditCardIcon, color: 'text-cyan-700', bg: 'bg-cyan-50' },
   cuenta_cancelada: { label: 'Cuenta cancelada', icon: XCircleIcon, color: 'text-rose-700', bg: 'bg-rose-50' },
+  pedido_actualizado_cocina: { label: 'Pedido actualizado en cocina', icon: ArrowPathIcon, color: 'text-cyan-700', bg: 'bg-cyan-50' },
 }
 
 function formatTimestamp(ts) {
@@ -239,7 +240,8 @@ export default function SystemLogs() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const hasDateOverride = filterDateFrom !== todayStr || filterDateTo !== todayStr
+  const isAllLogs = !filterDateFrom && !filterDateTo
+  const hasDateOverride = isAllLogs || filterDateFrom !== todayStr || filterDateTo !== todayStr
   const hasFilters = searchQuery || filterTipos.length > 0 || hasDateOverride
 
   const filteredLogs = useMemo(() => {
@@ -312,6 +314,7 @@ export default function SystemLogs() {
   }
 
   function dayLabel() {
+    if (isAllLogs) return 'Todos los días'
     const from = filterDateFrom || todayStr
     const d = new Date(`${from}T12:00:00`)
     const today = new Date()
@@ -323,7 +326,7 @@ export default function SystemLogs() {
     return name.charAt(0).toUpperCase() + name.slice(1)
   }
 
-  const isToday = filterDateFrom === todayStr
+  const isToday = !isAllLogs && filterDateFrom === todayStr && filterDateTo === todayStr
 
   const getAdminName = (uid) => usersMap[uid]?.name || uid || '-'
   const toggleTipoFilter = (tipo) => {
@@ -464,7 +467,12 @@ export default function SystemLogs() {
           )}
         </div>
         <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 bg-white">
-          <button type="button" onClick={() => shiftDay(-1)} className="btn btn-ghost btn-sm px-2" title="Día anterior">
+          <button
+            type="button"
+            onClick={() => shiftDay(-1)}
+            className="btn btn-ghost btn-sm px-2"
+            title="Día anterior"
+          >
             <ChevronLeftIcon className="w-5 h-5" />
           </button>
           <span className="text-sm font-medium text-gray-700 min-w-[180px] text-center">{dayLabel()}</span>
@@ -490,6 +498,21 @@ export default function SystemLogs() {
           }}
           title="Día"
         />
+        <button
+          type="button"
+          className="btn btn-outline btn-sm"
+          onClick={() => {
+            if (!isAllLogs) {
+              setFilterDateFrom('')
+              setFilterDateTo('')
+              return
+            }
+            setFilterDateFrom(todayStr)
+            setFilterDateTo(todayStr)
+          }}
+        >
+          {isAllLogs ? 'Volver a hoy' : 'Ver todos los logs'}
+        </button>
         {hasFilters && (
           <button onClick={clearFilters} className="btn btn-ghost btn-sm gap-1 text-gray-500">
             <XCircleIcon className="w-4 h-4" />

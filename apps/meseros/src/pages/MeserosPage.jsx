@@ -23,9 +23,12 @@ import { useAuth } from '@shared/firebase/AuthContext'
 import ModalPortal from '@shared/layout/ModalPortal'
 import {
   addCuentaItemConCantidad,
+  anularCuentaItem,
   createCuentaComensal,
   ensureCuentaActivaMesa,
   getCuentaComensales,
+  getCuentaItems,
+  getPedidoActivoMesa,
   getProductos,
   registrarPedidoMesa,
 } from '@shared/firebase/firestore'
@@ -90,11 +93,51 @@ function MesaCard({ mesa, selected, onSelect }) {
   )
 }
 
-function createLocalComensal(defaultAlias = 'Comensal 1') {
+function createLocalComensal(defaultAlias = 'Comensal 1', persistedId = null) {
   return {
     localId: `com_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     alias: defaultAlias,
+    persistedId,
   }
+}
+
+function normalizeAliasOrder(alias) {
+  const text = String(alias || '').trim().toLowerCase()
+  const match = text.match(/(\d+)\s*$/)
+  if (!match) return Number.MAX_SAFE_INTEGER
+  return Number(match[1]) || Number.MAX_SAFE_INTEGER
+}
+
+function parseQtyAndName(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return { name: 'Item', qty: 1 }
+  const match = text.match(/^(\d+)\s*x\s+(.+)$/i)
+  if (!match) return { name: text, qty: 1 }
+  return {
+    qty: Number(match[1]) || 1,
+    name: String(match[2] || 'Item').trim(),
+  }
+}
+
+function getPedidoItemsFallback(pedido) {
+  if (!pedido) return []
+  const candidates = [
+    pedido.items,
+    pedido.productos,
+    pedido.detalle,
+    pedido.detalles,
+    pedido.platillos,
+    pedido.lineas,
+  ]
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length > 0) return candidate
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      const values = Object.values(candidate)
+      if (values.length > 0) return values
+    }
+  }
+  return []
 }
 
 export default function MeserosPage() {
@@ -116,6 +159,10 @@ export default function MeserosPage() {
   const [selectedComensalLocalId, setSelectedComensalLocalId] = useState(null)
   const [notasPedido, setNotasPedido] = useState('')
   const [sendingPedido, setSendingPedido] = useState(false)
+  const [loadingCuentaData, setLoadingCuentaData] = useState(false)
+  const [existingItems, setExistingItems] = useState([])
+  const [existingOrderNotes, setExistingOrderNotes] = useState('')
+  const [removingItemId, setRemovingItemId] = useState('')
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -198,6 +245,16 @@ export default function MeserosPage() {
   )
   const tax = Math.round(subtotal * 0.13)
   const total = subtotal + tax
+
+  const existingItemsByComensal = useMemo(() => {
+    const map = {}
+    existingItems.forEach((item) => {
+      const key = item.comensalLocalId || '__sin_comensal__'
+      if (!map[key]) map[key] = []
+      map[key].push(item)
+    })
+    return map
+  }, [existingItems])
 
   useEffect(() => {
     if (!selectedComensalLocalId && comensalesPedido.length > 0) {
@@ -309,6 +366,138 @@ export default function MeserosPage() {
     )
   }
 
+  async function openOrderingModal(mesa) {
+    const first = createLocalComensal('Comensal 1')
+    setOrderingMesa(mesa)
+    setCart([])
+    setNotasPedido('')
+    setComensalesPedido([first])
+    setSelectedComensalLocalId(first.localId)
+    setExistingItems([])
+    setExistingOrderNotes('')
+    setError('')
+    setSuccess('')
+
+    if (!mesa?.cuentaActivaId) return
+
+    try {
+      setLoadingCuentaData(true)
+      const [comensalesExistentes, itemsCuenta] = await Promise.all([
+        getCuentaComensales(mesa.cuentaActivaId),
+        getCuentaItems(mesa.cuentaActivaId),
+      ])
+      const pedidoActivo = await getPedidoActivoMesa({
+        cuentaId: mesa.cuentaActivaId,
+        mesaId: mesa.id,
+      })
+
+      const activos = (comensalesExistentes || []).filter(
+        (c) => String(c.estadoCliente || 'activo').toLowerCase() !== 'liberado'
+      )
+      const activosOrdenados = [...activos].sort((a, b) => {
+        const nA = normalizeAliasOrder(a.alias)
+        const nB = normalizeAliasOrder(b.alias)
+        if (nA !== nB) return nA - nB
+        return String(a.alias || '').localeCompare(String(b.alias || ''), 'es', { sensitivity: 'base' })
+      })
+
+      let mappedComensales = activosOrdenados.map((c, idx) => ({
+        localId: c.id,
+        alias: String(c.alias || `Comensal ${idx + 1}`),
+        persistedId: c.id,
+      }))
+
+      if (mappedComensales.length === 0) {
+        mappedComensales = [first]
+      }
+
+      setComensalesPedido(mappedComensales)
+      setSelectedComensalLocalId(mappedComensales[0].localId)
+
+      const mapItemFromCuenta = (i, idx) => {
+        const comensalLocalId = mappedComensales.find((c) => c.persistedId === i.comensalId)?.localId || null
+        return {
+          id: i.id || `cuenta_${idx}`,
+          cuentaItemId: i.id || null,
+          productoId: i.productoId || '',
+          name: i.nombreSnapshot || i.productoId || 'Item',
+          qty: Number(i.cantidad || 1),
+          note: String(i.notaEspecial || i.nota || '').trim(),
+          price: Number(i.precioUnitSnapshot || 0),
+          comensalId: i.comensalId || null,
+          comensalLocalId,
+        }
+      }
+
+      const mapItemFromPedido = (raw, idx, pedidoId) => {
+        const item = typeof raw === 'string'
+          ? { nombreSnapshot: parseQtyAndName(raw).name, cantidad: parseQtyAndName(raw).qty }
+          : (raw || {})
+        const comensalLocalId = mappedComensales.find((c) => c.persistedId === item.comensalId)?.localId || null
+        return {
+          id: `pedido_${pedidoId || 'x'}_${idx}`,
+          cuentaItemId: null,
+          productoId: item.productoId || '',
+          name: item.nombreSnapshot || item.nombre || item.name || item.productoId || 'Item',
+          qty: Number(item.cantidad || item.qty || 1),
+          note: String(item.notaEspecial || item.nota || '').trim(),
+          price: Number(item.precioUnitSnapshot || item.precio || 0),
+          comensalId: item.comensalId || null,
+          comensalLocalId,
+        }
+      }
+
+      const cuentaPending = (itemsCuenta || [])
+        .filter((i) => {
+          const estado = String(i.estadoItem || 'pendiente').trim().toLowerCase()
+          return estado !== 'pagado' && estado !== 'anulado'
+        })
+        .map(mapItemFromCuenta)
+
+      const pedidoItemsRaw = getPedidoItemsFallback(pedidoActivo)
+      const pedidoPending = pedidoItemsRaw.map((raw, idx) => mapItemFromPedido(raw, idx, pedidoActivo?.id))
+
+      const finalItems = cuentaPending.length > 0 ? cuentaPending : pedidoPending
+      setExistingItems(finalItems)
+      setExistingOrderNotes(String(pedidoActivo?.notasPedido || '').trim())
+
+      if (finalItems.length === 0 && (itemsCuenta?.length > 0 || pedidoItemsRaw.length > 0)) {
+        console.warn('Items encontrados pero filtrados:', {
+          cuentaItemsTotal: itemsCuenta?.length,
+          cuentaItemsEstados: (itemsCuenta || []).map((i) => i.estadoItem),
+          pedidoItemsTotal: pedidoItemsRaw.length,
+        })
+      }
+    } catch (e) {
+      setError(e?.message || 'No se pudo cargar el detalle del pedido actual.')
+    } finally {
+      setLoadingCuentaData(false)
+    }
+  }
+
+  async function removeExistingItem(item) {
+    if (!orderingMesa?.cuentaActivaId || !item?.cuentaItemId) {
+      setError('Este ítem no se puede anular desde cuenta. Agrega uno nuevo para reemplazarlo.')
+      return
+    }
+    try {
+      setRemovingItemId(item.cuentaItemId)
+      await anularCuentaItem({
+        cuentaId: orderingMesa.cuentaActivaId,
+        itemId: item.cuentaItemId,
+        motivo: 'Ajuste solicitado desde meseros',
+        usuarioId: user?.uid || null,
+        rolUsuario: isAdmin ? 'Admin' : 'Mesero',
+      })
+      setExistingItems((prev) => prev.filter((x) => x.cuentaItemId !== item.cuentaItemId))
+      setSuccess('Ítem removido del pedido actual.')
+    } catch (e) {
+      setError(e?.message || 'No se pudo remover el ítem.')
+    } finally {
+      setRemovingItemId('')
+    }
+  }
+
   async function enviarPedidoCocina() {
     if (!orderingMesa) {
       setError('Selecciona una mesa para enviar pedido.')
@@ -353,6 +542,10 @@ export default function MeserosPage() {
       const comensalesExistentes = await getCuentaComensales(cuentaId)
       const comensalIdByLocalId = new Map()
       for (const c of comensalesLimpios) {
+        if (c.persistedId) {
+          comensalIdByLocalId.set(c.localId, c.persistedId)
+          continue
+        }
         const existente = comensalesExistentes.find(
           (x) =>
             String(x.alias || '').trim().toLowerCase() === c.alias.toLowerCase() &&
@@ -555,20 +748,11 @@ export default function MeserosPage() {
               )}
 
               <button
-                onClick={() => {
-                  const first = createLocalComensal('Comensal 1')
-                  setOrderingMesa(selectedMesa)
-                  setCart([])
-                  setNotasPedido('')
-                  setComensalesPedido([first])
-                  setSelectedComensalLocalId(first.localId)
-                  setError('')
-                  setSuccess('')
-                }}
+                onClick={() => openOrderingModal(selectedMesa)}
                 className="w-full btn btn-lg bg-cyan-600 hover:bg-cyan-700 border-0 text-white"
               >
                 <ShoppingCartIcon className="w-5 h-5" />
-                Ordenar
+                {selectedMesa.cuentaActivaId ? 'Agregar al pedido' : 'Ordenar'}
               </button>
             </div>
           )}
@@ -654,137 +838,244 @@ export default function MeserosPage() {
                 </div>
               </div>
 
-              <aside className="p-4 md:p-6 bg-gray-50 flex flex-col min-h-0">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-gray-700 uppercase">Comensales</div>
-                    <button
-                      onClick={addComensalPedido}
-                      className="btn btn-sm bg-blue-600 hover:bg-blue-700 border-0 text-white"
-                    >
-                      <UserPlusIcon className="w-4 h-4" />
-                      Agregar
-                    </button>
-                  </div>
-
-                  <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
-                    {comensalesPedido.map((c, idx) => (
-                      <div
-                        key={c.localId}
-                        className={`bg-white border rounded-lg p-2 ${
-                          selectedComensalLocalId === c.localId ? 'border-cyan-400' : 'border-gray-200'
-                        }`}
+              <aside className="bg-gray-50 flex flex-col min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-5 space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm font-semibold text-gray-700 uppercase">Comensales</div>
+                      <button
+                        onClick={addComensalPedido}
+                        className="btn btn-md bg-blue-600 hover:bg-blue-700 border-0 text-white"
                       >
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setSelectedComensalLocalId(c.localId)}
-                            className={`btn btn-xs ${
-                              selectedComensalLocalId === c.localId
-                                ? 'bg-cyan-600 hover:bg-cyan-700 text-white border-0'
-                                : 'btn-ghost border border-gray-200'
-                            }`}
-                          >
-                            {idx + 1}
-                          </button>
-                          <input
-                            type="text"
-                            value={c.alias}
-                            onChange={(e) => updateComensalAlias(c.localId, e.target.value)}
-                            className="input input-bordered input-sm flex-1"
-                            placeholder={`Comensal ${idx + 1}`}
-                          />
-                          {comensalesPedido.length > 1 && (
-                            <button
-                              onClick={() => removeComensalPedido(c.localId)}
-                              className="btn btn-xs btn-ghost text-red-600"
-                              title="Quitar comensal"
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="text-sm font-semibold text-gray-700 uppercase mt-4">Carrito ({cart.length})</div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto space-y-2 mt-3 pr-1">
-                  {cart.length === 0 ? (
-                    <div className="text-sm text-gray-500">Sin items en el pedido.</div>
-                  ) : (
-                    cart.map((item) => (
-                      <div key={item.lineId} className="bg-white border border-gray-200 rounded p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-gray-800 truncate">{item.name}</div>
-                            <div className="text-xs text-gray-500">₡{Number(item.price || 0).toLocaleString()} c/u</div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => updateQty(item.lineId, -1)} className="btn btn-xs btn-ghost">
-                              <MinusIcon className="w-3 h-3" />
-                            </button>
-                            <span className="text-sm font-semibold w-6 text-center">{item.qty}</span>
-                            <button onClick={() => updateQty(item.lineId, 1)} className="btn btn-xs btn-ghost">
-                              <PlusIcon className="w-3 h-3" />
-                            </button>
-                            <button onClick={() => removeItem(item.lineId)} className="btn btn-xs btn-ghost text-red-600">
-                              <TrashIcon className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                        <select
-                          value={item.comensalLocalId || ''}
-                          onChange={(e) => updateItemComensal(item.lineId, e.target.value)}
-                          className="select select-bordered select-xs w-full mt-2"
+                        <UserPlusIcon className="w-4 h-4" />
+                        Agregar
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {comensalesPedido.map((c, idx) => (
+                        <div
+                          key={c.localId}
+                          className={`bg-white border-2 rounded-lg p-2.5 ${
+                            selectedComensalLocalId === c.localId ? 'border-cyan-400 bg-cyan-50' : 'border-gray-200'
+                          }`}
                         >
-                          {comensalesPedido.map((c, idx) => (
-                            <option key={c.localId} value={c.localId}>
-                              {c.alias || `Comensal ${idx + 1}`}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          value={item.notaEspecial || ''}
-                          onChange={(e) => updateNotaItem(item.lineId, e.target.value)}
-                          placeholder="Nota especial para cocina (opcional)"
-                          className="input input-bordered input-xs w-full mt-2"
-                        />
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setSelectedComensalLocalId(c.localId)}
+                              className={`btn btn-sm min-h-9 h-9 w-9 px-0 ${
+                                selectedComensalLocalId === c.localId
+                                  ? 'bg-cyan-600 hover:bg-cyan-700 text-white border-0'
+                                  : 'btn-ghost border border-gray-200'
+                              }`}
+                            >
+                              {idx + 1}
+                            </button>
+                            <input
+                              type="text"
+                              value={c.alias}
+                              onChange={(e) => updateComensalAlias(c.localId, e.target.value)}
+                              className="input input-bordered input-sm flex-1 min-h-9 h-9"
+                              placeholder={`Comensal ${idx + 1}`}
+                            />
+                            {comensalesPedido.length > 1 && (
+                              <button
+                                onClick={() => removeComensalPedido(c.localId)}
+                                className="btn btn-sm btn-ghost text-red-600 min-h-9 h-9 w-9 px-0"
+                                title="Quitar comensal"
+                              >
+                                <TrashIcon className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-100 border-2 border-gray-300 rounded-lg overflow-hidden">
+                    <div className="px-3 py-2.5 bg-gray-200 border-b border-gray-300">
+                      <div className="text-sm font-bold text-gray-900 uppercase tracking-wide">
+                        Pedido actual ({existingItems.length})
                       </div>
-                    ))
-                  )}
+                    </div>
+                    <div className="p-3 space-y-3">
+                      {loadingCuentaData ? (
+                        <div className="text-sm text-gray-500 py-3 flex items-center gap-2">
+                          <span className="loading loading-spinner loading-sm" />
+                          Cargando pedido...
+                        </div>
+                      ) : existingItems.length === 0 ? (
+                        <div className="text-sm text-gray-500 py-2">Sin items pendientes en la cuenta.</div>
+                      ) : (
+                        <>
+                          {comensalesPedido.map((c, cidx) => {
+                            const items = existingItemsByComensal[c.localId] || []
+                            if (items.length === 0) return null
+                            return (
+                              <div key={`existing_${c.localId}`}>
+                                <div className="text-xs font-bold text-gray-700 uppercase mb-2 pb-1 border-b border-gray-200">
+                                  {c.alias || `Comensal ${cidx + 1}`}
+                                </div>
+                                <div className="space-y-2">
+                                  {items.map((item) => (
+                                    <div key={item.id} className="bg-white border border-gray-200 rounded-lg p-3 flex items-start gap-3">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-base font-semibold text-gray-900">{item.name}</div>
+                                        <div className="text-sm text-gray-600 mt-0.5">
+                                          x{item.qty} · ₡{Number(item.price || 0).toLocaleString()} c/u
+                                        </div>
+                                        {item.note && (
+                                          <div className="text-sm text-amber-700 mt-1 bg-amber-50 rounded px-2 py-1">
+                                            {item.note}
+                                          </div>
+                                        )}
+                                      </div>
+                                      {item.cuentaItemId && (
+                                        <button
+                                          onClick={() => removeExistingItem(item)}
+                                          disabled={removingItemId === item.cuentaItemId}
+                                          className="btn btn-sm bg-red-100 hover:bg-red-200 text-red-700 border-red-200 min-h-10 h-10 w-10 px-0 shrink-0"
+                                          title="Quitar del pedido"
+                                        >
+                                          {removingItemId === item.cuentaItemId
+                                            ? <span className="loading loading-spinner loading-xs" />
+                                            : <TrashIcon className="w-5 h-5" />}
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {(existingItemsByComensal.__sin_comensal__ || []).length > 0 && (
+                            <div>
+                              <div className="text-xs font-bold text-gray-600 uppercase mb-2 pb-1 border-b border-gray-200">
+                                Sin asignar
+                              </div>
+                              <div className="space-y-2">
+                                {(existingItemsByComensal.__sin_comensal__ || []).map((item) => (
+                                  <div key={item.id} className="bg-white border border-gray-200 rounded-lg p-3 flex items-start gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-base font-semibold text-gray-900">{item.name}</div>
+                                      <div className="text-sm text-gray-600 mt-0.5">
+                                        x{item.qty} · ₡{Number(item.price || 0).toLocaleString()} c/u
+                                      </div>
+                                      {item.note && (
+                                        <div className="text-sm text-amber-700 mt-1 bg-amber-50 rounded px-2 py-1">
+                                          {item.note}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {item.cuentaItemId && (
+                                      <button
+                                        onClick={() => removeExistingItem(item)}
+                                        disabled={removingItemId === item.cuentaItemId}
+                                        className="btn btn-sm bg-red-100 hover:bg-red-200 text-red-700 border-red-200 min-h-10 h-10 w-10 px-0 shrink-0"
+                                        title="Quitar del pedido"
+                                      >
+                                        {removingItemId === item.cuentaItemId
+                                          ? <span className="loading loading-spinner loading-xs" />
+                                          : <TrashIcon className="w-5 h-5" />}
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {existingOrderNotes && (
+                      <div className="px-3 py-2 bg-amber-50 border-t border-amber-200">
+                        <div className="text-sm text-amber-800">
+                          <span className="font-semibold">Nota general:</span> {existingOrderNotes}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-semibold text-gray-700 uppercase mb-2">Nuevos items ({cart.length})</div>
+                    <div className="space-y-2">
+                      {cart.length === 0 ? (
+                        <div className="text-sm text-gray-500">Sin items nuevos.</div>
+                      ) : (
+                        cart.map((item) => (
+                          <div key={item.lineId} className="bg-white border border-gray-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-base font-medium text-gray-800">{item.name}</div>
+                                <div className="text-sm text-gray-500">₡{Number(item.price || 0).toLocaleString()} c/u</div>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => updateQty(item.lineId, -1)} className="btn btn-sm btn-ghost min-h-10 h-10 w-10 px-0">
+                                  <MinusIcon className="w-4 h-4" />
+                                </button>
+                                <span className="text-base font-semibold w-8 text-center">{item.qty}</span>
+                                <button onClick={() => updateQty(item.lineId, 1)} className="btn btn-sm btn-ghost min-h-10 h-10 w-10 px-0">
+                                  <PlusIcon className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => removeItem(item.lineId)} className="btn btn-sm btn-ghost text-red-600 min-h-10 h-10 w-10 px-0">
+                                  <TrashIcon className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <select
+                              value={item.comensalLocalId || ''}
+                              onChange={(e) => updateItemComensal(item.lineId, e.target.value)}
+                              className="select select-bordered select-sm w-full mt-2 min-h-9 h-9"
+                            >
+                              {comensalesPedido.map((c, idx) => (
+                                <option key={c.localId} value={c.localId}>
+                                  {c.alias || `Comensal ${idx + 1}`}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={item.notaEspecial || ''}
+                              onChange={(e) => updateNotaItem(item.lineId, e.target.value)}
+                              placeholder="Nota especial para cocina (opcional)"
+                              className="input input-bordered input-sm w-full mt-2 min-h-9 h-9"
+                            />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 border-t border-gray-200 pt-3">
+                    <div className="text-sm text-gray-700 flex justify-between">
+                      <span>Subtotal</span>
+                      <span className="font-semibold">₡{subtotal.toLocaleString()}</span>
+                    </div>
+                    <div className="text-sm text-gray-700 flex justify-between">
+                      <span>IVA (13%)</span>
+                      <span className="font-semibold">₡{tax.toLocaleString()}</span>
+                    </div>
+                    <div className="text-base font-bold text-gray-900 flex justify-between bg-white border border-gray-200 rounded p-2.5">
+                      <span>Total</span>
+                      <span className="text-cyan-700">₡{total.toLocaleString()}</span>
+                    </div>
+                    <textarea
+                      value={notasPedido}
+                      onChange={(e) => setNotasPedido(e.target.value)}
+                      className="textarea textarea-bordered w-full min-h-[48px]"
+                      placeholder="Notas generales del pedido (opcional)"
+                      rows={2}
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-2 border-t border-gray-200 pt-3 mt-3">
-                  <div className="text-xs text-gray-700 flex justify-between">
-                    <span>Subtotal</span>
-                    <span className="font-semibold">₡{subtotal.toLocaleString()}</span>
-                  </div>
-                  <div className="text-xs text-gray-700 flex justify-between">
-                    <span>IVA (13%)</span>
-                    <span className="font-semibold">₡{tax.toLocaleString()}</span>
-                  </div>
-                  <div className="text-sm font-bold text-gray-900 flex justify-between bg-white border border-gray-200 rounded p-2">
-                    <span>Total</span>
-                    <span className="text-cyan-700">₡{total.toLocaleString()}</span>
-                  </div>
-
-                  <textarea
-                    value={notasPedido}
-                    onChange={(e) => setNotasPedido(e.target.value)}
-                    className="textarea textarea-bordered textarea-sm w-full"
-                    placeholder="Notas generales del pedido (opcional)"
-                    rows={3}
-                  />
-
+                <div className="shrink-0 px-4 md:px-5 py-3 border-t border-gray-200 bg-gray-50">
                   <button
                     onClick={enviarPedidoCocina}
                     disabled={sendingPedido || cart.length === 0}
-                    className="w-full btn bg-cyan-600 hover:bg-cyan-700 border-0 text-white"
+                    className="w-full btn btn-lg bg-cyan-600 hover:bg-cyan-700 border-0 text-white text-base"
                   >
-                    <PaperAirplaneIcon className="w-4 h-4" />
+                    <PaperAirplaneIcon className="w-5 h-5" />
                     {sendingPedido ? 'Enviando...' : 'Enviar a cocina'}
                   </button>
                 </div>

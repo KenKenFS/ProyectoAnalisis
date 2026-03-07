@@ -62,6 +62,7 @@ function normalizeItem(item, index, pedidoId) {
       name: parsed.name,
       qty: parsed.qty,
       note: '',
+      isNew: false,
     }
   }
 
@@ -80,6 +81,7 @@ function normalizeItem(item, index, pedidoId) {
     name: resolvedName ? String(resolvedName).trim() : 'Platillo',
     qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
     note: String(item?.notaEspecial || item?.nota || '').trim(),
+    isNew: Boolean(item?.esNuevoCocina || item?.isNew || item?.nuevo),
   }
 }
 
@@ -129,6 +131,9 @@ function getTableLabel(pedido, mesasById, mesasByCuentaId) {
 function mapPedidoToOrder(pedido, mesasById, mesasByCuentaId) {
   const createdAtMs = toMillis(pedido.createdAt || pedido.timestamp)
   const items = getOrderItems(pedido)
+  const previousItems = (pedido.itemsPrevios || []).map((item, index) =>
+    normalizeItem(item, index, pedido.id + '_prev')
+  )
 
   const mesaId = String(pedido.mesaId || '').trim()
   const mesaLabel = getTableLabel(pedido, mesasById, mesasByCuentaId)
@@ -139,6 +144,9 @@ function mapPedidoToOrder(pedido, mesasById, mesasByCuentaId) {
     : (mesaLabel !== 'S/N' ? `Mesa ${mesaLabel}` : 'Mesa')
   const listoAtMs = toMillis(pedido.listoAt || pedido.readyAt || pedido.updatedAt || pedido.timestamp)
   const finalizedAtMs = pedido.finalizedAt ? toMillis(pedido.finalizedAt) : null
+  const lastUpdateMs = toMillis(pedido.ultimaActualizacionPedidoAt || pedido.updatedAt || pedido.timestamp)
+  const updatesCount = Number(pedido.actualizacionesCount || 0)
+  const wasUpdated = Boolean(pedido.pedidoActualizado) || updatesCount > 0
 
   return {
     id: pedido.id,
@@ -150,10 +158,15 @@ function mapPedidoToOrder(pedido, mesasById, mesasByCuentaId) {
     mesaMeta,
     status: normalizeStatus(pedido.estadoPedido || pedido.estado),
     items,
+    previousItems,
+    allItems: [...previousItems, ...items],
     notes: String(pedido.notasPedido || '').trim(),
     createdAtMs,
     listoAtMs,
     finalizedAtMs,
+    lastUpdateMs,
+    wasUpdated,
+    updatesCount,
     rawCode: pedido.codigoPedido || pedido.codigo || pedido.numeroOrden || pedido.orderCode || null,
     isDirectSaleOrder,
   }

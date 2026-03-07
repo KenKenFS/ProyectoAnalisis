@@ -6,6 +6,7 @@ import {
   CheckCircleIcon,
   ArrowsPointingInIcon,
   ExclamationTriangleIcon,
+  BellAlertIcon,
 } from '@heroicons/react/24/outline'
 import { OrdersContext } from '../context/OrdersContext'
 import OrderTimer from '../components/OrderTimer'
@@ -95,6 +96,14 @@ export default function KitchenFullscreen() {
                     <StatusIcon className="w-4 h-4" />
                     {config.label}
                   </span>
+                  {order.wasUpdated && (
+                    <div className="mt-1">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold bg-cyan-100 text-cyan-800">
+                        <BellAlertIcon className="w-3.5 h-3.5" />
+                        Actualizado{order.updatesCount > 0 ? ` (${order.updatesCount})` : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="text-xs text-gray-500 mt-1 flex items-center justify-end gap-1">
                     <ClockIcon className="w-3 h-3" />
                     <OrderTimer createdAt={order.createdAtMs} status={order.status} />
@@ -113,8 +122,15 @@ export default function KitchenFullscreen() {
                   ) : (
                     order.items.map((item, idx) => (
                       <div key={idx} className="text-sm border-b border-gray-100 pb-1 last:border-b-0 last:pb-0">
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-800 font-medium">{item.name}</span>
+                        <div className="flex justify-between items-center gap-2">
+                          <div className="min-w-0 flex items-center gap-2">
+                            <span className="text-gray-800 font-medium truncate">{item.name}</span>
+                            {item.isNew && order.wasUpdated && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                Nuevo
+                              </span>
+                            )}
+                          </div>
                           <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-xs font-bold">
                             x{item.qty}
                           </span>

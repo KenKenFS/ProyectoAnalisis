@@ -1,4 +1,4 @@
-import { Fragment, useContext, useState } from 'react'
+import { Fragment, useContext, useEffect, useMemo, useState } from 'react'
 import {
   CheckBadgeIcon,
   ChevronDownIcon,
@@ -16,6 +16,17 @@ function formatDateTime(value) {
 export default function OrderHistoryPage() {
   const { historyOrders } = useContext(OrdersContext)
   const [expandedOrderId, setExpandedOrderId] = useState(null)
+  const [visibleCount, setVisibleCount] = useState(20)
+
+  const shownOrders = useMemo(
+    () => historyOrders.slice(0, visibleCount),
+    [historyOrders, visibleCount]
+  )
+
+  useEffect(() => {
+    setVisibleCount(20)
+    setExpandedOrderId(null)
+  }, [historyOrders.length])
 
   const toggleExpanded = (id) => {
     setExpandedOrderId((prev) => (prev === id ? null : id))
@@ -51,7 +62,7 @@ export default function OrderHistoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {historyOrders.map((order) => {
+                {shownOrders.map((order) => {
                   const isExpanded = expandedOrderId === order.id
 
                   return (
@@ -92,11 +103,11 @@ export default function OrderHistoryPage() {
                             <div className="text-xs font-semibold text-gray-600 uppercase tracking-widest mb-2">
                               Items del pedido
                             </div>
-                            {order.items.length === 0 ? (
+                            {(order.allItems || order.items).length === 0 ? (
                               <div className="text-sm text-gray-500">Sin items registrados</div>
                             ) : (
                               <div className="space-y-2">
-                                {order.items.map((item) => (
+                                {(order.allItems || order.items).map((item) => (
                                   <div key={item.id} className="flex justify-between items-center text-sm bg-white border border-gray-200 rounded p-2">
                                     <span className="text-gray-800">{item.name}</span>
                                     <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-xs font-bold">
@@ -119,6 +130,16 @@ export default function OrderHistoryPage() {
               </tbody>
             </table>
           </div>
+          {historyOrders.length > visibleCount && (
+            <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setVisibleCount((prev) => prev + 20)}
+                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-white border border-gray-300 hover:bg-gray-100 text-sm font-semibold text-gray-700 transition"
+              >
+                Cargar más
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
