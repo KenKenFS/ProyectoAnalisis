@@ -1753,6 +1753,8 @@ export async function registrarPedidoMesa({
       ultimaActualizacionPedidoAt: now,
       estado: reopenFromFinished ? 'pendiente' : (estadoActualNorm || 'pendiente'),
       estadoPedido: reopenFromFinished ? 'pendiente' : (estadoActualNorm || 'pendiente'),
+      estadoEntrega: 'pendiente',
+      entregadoAt: null,
       updatedAt: now,
     };
 
@@ -1775,6 +1777,8 @@ export async function registrarPedidoMesa({
       meseroUid: meseroUid || '',
       estado: 'pendiente',
       estadoPedido: 'pendiente',
+      estadoEntrega: 'pendiente',
+      itemsPendientesEntrega: [],
       notasPedido: String(notasPedido || '').trim(),
       items: normalizePedidoItems(incomingItems),
       pedidoActualizado: false,

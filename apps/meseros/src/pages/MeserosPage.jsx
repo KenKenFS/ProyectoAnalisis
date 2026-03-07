@@ -30,7 +30,9 @@ import {
   getCuentaItems,
   getPedidoActivoMesa,
   getProductos,
+  onPedidosChange,
   registrarPedidoMesa,
+  updatePedido,
 } from '@shared/firebase/firestore'
 
 function normalizeMesaStatus(rawStatus) {
@@ -119,6 +121,50 @@ function parseQtyAndName(raw) {
   }
 }
 
+function normalizePedidoStatus(rawStatus) {
+  const status = String(rawStatus || '').trim().toLowerCase()
+  if (status === 'enpreparacion' || status === 'en_preparacion') return 'enPreparacion'
+  return status
+}
+
+function toMillis(rawDate) {
+  if (!rawDate) return 0
+  if (typeof rawDate?.toDate === 'function') return rawDate.toDate().getTime()
+  if (typeof rawDate?.toMillis === 'function') return rawDate.toMillis()
+  const value = new Date(rawDate).getTime()
+  return Number.isFinite(value) ? value : 0
+}
+
+function getPedidoMesaLabel(pedido, mesas) {
+  if (pedido.mesaNumero != null && Number(pedido.mesaNumero) > 0) return String(Number(pedido.mesaNumero))
+  const mesaId = String(pedido.mesaId || '').trim()
+  if (!mesaId) return 'S/N'
+  const mesa = (mesas || []).find((m) => String(m.id) === mesaId)
+  if (!mesa) return mesaId
+  if (mesa.numero != null && Number(mesa.numero) > 0) return String(Number(mesa.numero))
+  return String(mesa.alias || mesa.id || 'S/N')
+}
+
+function normalizePedidoListItem(item, idx) {
+  if (typeof item === 'string') {
+    const parsed = parseQtyAndName(item)
+    return {
+      id: `line_${idx}`,
+      name: parsed.name,
+      qty: parsed.qty,
+      note: '',
+    }
+  }
+
+  const raw = item || {}
+  return {
+    id: raw.id || `line_${idx}`,
+    name: raw.nombreSnapshot || raw.nombre || raw.name || raw.productoId || 'Item',
+    qty: Number(raw.cantidad || raw.qty || 1),
+    note: String(raw.notaEspecial || raw.nota || '').trim(),
+  }
+}
+
 function getPedidoItemsFallback(pedido) {
   if (!pedido) return []
   const candidates = [
@@ -163,6 +209,12 @@ export default function MeserosPage() {
   const [existingItems, setExistingItems] = useState([])
   const [existingOrderNotes, setExistingOrderNotes] = useState('')
   const [removingItemId, setRemovingItemId] = useState('')
+  const [readyOrders, setReadyOrders] = useState([])
+  const [loadingReadyOrders, setLoadingReadyOrders] = useState(true)
+  const [deliveryModalOrder, setDeliveryModalOrder] = useState(null)
+  const [deliveryLines, setDeliveryLines] = useState([])
+  const [selectedDeliveryLineIds, setSelectedDeliveryLineIds] = useState([])
+  const [deliveringOrderId, setDeliveringOrderId] = useState('')
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -208,6 +260,60 @@ export default function MeserosPage() {
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    const unsubscribe = onPedidosChange((pedidos) => {
+      const orderedPedidos = [...(pedidos || [])]
+        .sort((a, b) => toMillis(a.createdAt || a.timestamp) - toMillis(b.createdAt || b.timestamp))
+      const displayIdByPedidoId = new Map(
+        orderedPedidos.map((p, idx) => {
+          const code = p.codigoPedido || p.codigo || p.numeroOrden
+          const displayId = code || `ORD-${String(idx + 1).padStart(3, '0')}`
+          return [p.id, displayId]
+        })
+      )
+
+      const ready = (pedidos || [])
+        .map((p) => {
+          const status = normalizePedidoStatus(p.estadoPedido || p.estado)
+          const allItems = getPedidoItemsFallback(p).map((it, idx) => normalizePedidoListItem(it, idx))
+          const previousItems = (Array.isArray(p.itemsPrevios) ? p.itemsPrevios : [])
+            .map((it, idx) => normalizePedidoListItem(it, idx + 10000))
+          const pendingDeliverySource =
+            Array.isArray(p.itemsPendientesEntrega) && p.itemsPendientesEntrega.length > 0
+              ? p.itemsPendientesEntrega
+              : (status === 'listo' || status === 'finalizado' ? [...previousItems, ...allItems] : previousItems)
+          const pendingDeliveryItems = pendingDeliverySource.map((it, idx) => normalizePedidoListItem(it, idx))
+          return {
+            id: p.id,
+            displayId: displayIdByPedidoId.get(p.id) || `ORD-${String((p.id || '').slice(0, 3)).padStart(3, '0')}`,
+            mesaLabel: getPedidoMesaLabel(p, mesas),
+            mesaId: p.mesaId || null,
+            notes: String(p.notasPedido || '').trim(),
+            items: pendingDeliveryItems,
+            entregasParciales: Array.isArray(p.entregasParciales) ? p.entregasParciales : [],
+            estadoEntrega: p.estadoEntrega || 'pendiente',
+            status,
+            updatedAtMs: p.updatedAt?.toDate ? p.updatedAt.toDate().getTime() : Date.now(),
+          }
+        })
+        .filter((order) => {
+          const estadoEntrega = String(order.estadoEntrega || '').trim().toLowerCase()
+          return estadoEntrega !== 'entregado' && (order.items || []).length > 0
+        })
+        .map((p) => {
+          return {
+            ...p,
+          }
+        })
+        .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+
+      setReadyOrders(ready)
+      setLoadingReadyOrders(false)
+    })
+
+    return () => unsubscribe()
+  }, [mesas])
 
   const filteredMesas = useMemo(() => {
     if (filterEstado === 'todos') return mesas
@@ -498,6 +604,92 @@ export default function MeserosPage() {
     }
   }
 
+  function openDeliveryModal(order) {
+    if (!order) return
+    setError('')
+    setSuccess('')
+    setDeliveryModalOrder(order)
+    setDeliveryLines(
+      (order.items || []).map((item, idx) => ({
+        id: item.id || `line_${idx}`,
+        name: item.name,
+        note: item.note || '',
+        qty: Number(item.qty || 1),
+      }))
+    )
+    setSelectedDeliveryLineIds([])
+  }
+
+  function closeDeliveryModal() {
+    setDeliveryModalOrder(null)
+    setDeliveryLines([])
+    setSelectedDeliveryLineIds([])
+  }
+
+  function toggleDeliveryLine(lineId) {
+    setSelectedDeliveryLineIds((prev) => (
+      prev.includes(lineId) ? prev.filter((id) => id !== lineId) : [...prev, lineId]
+    ))
+  }
+
+  function selectAllDeliveryLines() {
+    setSelectedDeliveryLineIds(deliveryLines.map((line) => line.id))
+  }
+
+  function clearDeliverySelection() {
+    setSelectedDeliveryLineIds([])
+  }
+
+  async function confirmDelivery() {
+    if (!deliveryModalOrder) return
+
+    const selectedSet = new Set(selectedDeliveryLineIds)
+    const linesToDeliver = deliveryLines.filter((line) => selectedSet.has(line.id))
+    if (linesToDeliver.length === 0) {
+      setError('Selecciona al menos un item para entregar.')
+      return
+    }
+
+    const remainingLines = deliveryLines.filter((line) => !selectedSet.has(line.id))
+
+    const entregados = linesToDeliver.map((line) => ({
+      nombreSnapshot: line.name,
+      cantidad: Number(line.qty || 1),
+      notaEspecial: line.note || '',
+      deliveredAt: new Date(),
+      deliveredByUid: user?.uid || null,
+    }))
+
+    try {
+      setDeliveringOrderId(deliveryModalOrder.id)
+      const isFullDelivery = remainingLines.length === 0
+      const currentStatus = normalizePedidoStatus(deliveryModalOrder.status)
+      const updates = {
+        itemsPendientesEntrega: remainingLines,
+        entregasParciales: [...(deliveryModalOrder.entregasParciales || []), ...entregados],
+        estadoEntrega: isFullDelivery ? 'entregado' : 'pendiente',
+        entregadoAt: isFullDelivery ? new Date() : null,
+      }
+
+      if (isFullDelivery && (currentStatus === 'listo' || currentStatus === 'finalizado')) {
+        updates.estado = 'entregado'
+        updates.estadoPedido = 'entregado'
+      }
+
+      await updatePedido(deliveryModalOrder.id, updates)
+      setSuccess(
+        isFullDelivery
+          ? `Pedido ${deliveryModalOrder.displayId} entregado completo.`
+          : `Entrega parcial registrada para pedido ${deliveryModalOrder.displayId}.`
+      )
+      closeDeliveryModal()
+    } catch (e) {
+      setError(e?.message || 'No se pudo confirmar la entrega del pedido.')
+    } finally {
+      setDeliveringOrderId('')
+    }
+  }
+
   async function enviarPedidoCocina() {
     if (!orderingMesa) {
       setError('Selecciona una mesa para enviar pedido.')
@@ -658,6 +850,40 @@ export default function MeserosPage() {
         </div>
       </div>
 
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-bold text-gray-900">Pedidos listos para entregar</h2>
+          <span className="badge badge-info badge-sm">{readyOrders.length}</span>
+        </div>
+
+        {loadingReadyOrders ? (
+          <div className="text-sm text-gray-500">Cargando pedidos listos...</div>
+        ) : readyOrders.length === 0 ? (
+          <div className="text-sm text-gray-500">No hay pedidos listos por entregar.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {readyOrders.map((order) => (
+              <div key={order.id} className="border border-green-200 bg-green-50 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-semibold text-gray-900 truncate">Pedido {order.displayId}</div>
+                  <span className="px-2 py-1 rounded text-xs font-semibold bg-green-50 text-green-700 border border-green-200">
+                    Listo
+                  </span>
+                </div>
+                <div className="text-sm text-gray-700">Mesa {order.mesaLabel}</div>
+                <div className="text-xs text-gray-600">{order.items.length} item(s) pendientes de entrega</div>
+                <button
+                  onClick={() => openDeliveryModal(order)}
+                  className="w-full btn btn-sm bg-emerald-600 hover:bg-emerald-700 text-white border-0"
+                >
+                  Entregar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
           {error}
@@ -758,6 +984,103 @@ export default function MeserosPage() {
           )}
         </aside>
       </div>
+
+      {deliveryModalOrder && (
+        <ModalPortal overlayClassName="p-4 md:p-6">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
+            <div className="px-4 py-3 border-b border-gray-200 bg-emerald-700 text-white flex items-center justify-between">
+              <div>
+                <div className="font-bold text-lg">Entregar pedido {deliveryModalOrder.displayId}</div>
+                <div className="text-sm text-emerald-100">Mesa {deliveryModalOrder.mesaLabel}</div>
+              </div>
+              <button
+                onClick={closeDeliveryModal}
+                disabled={deliveringOrderId === deliveryModalOrder.id}
+                className="btn btn-sm btn-ghost text-white"
+              >
+                <XMarkIcon className="w-5 h-5" />
+                Cerrar
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-3">
+              {deliveryLines.length === 0 ? (
+                <div className="text-sm text-gray-500">Sin items listos para entregar.</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">
+                      Seleccionados: <span className="font-semibold">{selectedDeliveryLineIds.length}</span> de{' '}
+                      <span className="font-semibold">{deliveryLines.length}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={selectAllDeliveryLines}
+                        className="btn btn-xs btn-outline"
+                        type="button"
+                      >
+                        Seleccionar todo
+                      </button>
+                      <button
+                        onClick={clearDeliverySelection}
+                        className="btn btn-xs btn-ghost"
+                        type="button"
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                  </div>
+
+                  {deliveryLines.map((line) => {
+                    const isSelected = selectedDeliveryLineIds.includes(line.id)
+                    return (
+                      <button
+                        key={line.id}
+                        type="button"
+                        onClick={() => toggleDeliveryLine(line.id)}
+                        className={`w-full text-left border rounded-lg p-3 transition ${
+                          isSelected
+                            ? 'border-emerald-300 bg-emerald-50'
+                            : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-gray-900">{line.name}</div>
+                            <div className="text-sm text-gray-600">Cantidad: x{line.qty}</div>
+                            {line.note && (
+                              <div className="mt-1 text-xs text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-1">
+                                {line.note}
+                              </div>
+                            )}
+                          </div>
+                          <input
+                            type="checkbox"
+                            readOnly
+                            checked={isSelected}
+                            className="checkbox checkbox-success mt-1 pointer-events-none"
+                          />
+                        </div>
+                      </button>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+
+            <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={confirmDelivery}
+                disabled={deliveringOrderId === deliveryModalOrder.id}
+                className="w-full btn btn-lg bg-emerald-600 hover:bg-emerald-700 text-white border-0"
+              >
+                <CheckCircleIcon className="w-5 h-5" />
+                {deliveringOrderId === deliveryModalOrder.id ? 'Guardando...' : 'Confirmar entrega'}
+              </button>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
 
       {orderingMesa && (
         <ModalPortal overlayClassName="p-4 md:p-6">

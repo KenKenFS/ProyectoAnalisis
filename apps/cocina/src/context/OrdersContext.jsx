@@ -20,6 +20,7 @@ function normalizeStatus(rawStatus) {
     return 'enPreparacion'
   }
   if (value === 'listo' || value === 'ready') return 'listo'
+  if (value === 'entregado' || value === 'delivered') return 'entregado'
   if (value === 'finalizado' || value === 'finalized' || value === 'completed') return FINAL_STATUS
   return 'pendiente'
 }
@@ -169,6 +170,7 @@ function mapPedidoToOrder(pedido, mesasById, mesasByCuentaId) {
     updatesCount,
     rawCode: pedido.codigoPedido || pedido.codigo || pedido.numeroOrden || pedido.orderCode || null,
     isDirectSaleOrder,
+    raw: pedido,
   }
 }
 
@@ -261,6 +263,7 @@ export function OrdersProvider({ children }) {
         updatePedido(order.id, {
           estado: FINAL_STATUS,
           estadoPedido: FINAL_STATUS,
+          estadoEntrega: 'pendiente',
           finalizedAt: new Date(),
         }).finally(() => {
           autoFinalizingRef.current.delete(order.id)
@@ -274,13 +277,33 @@ export function OrdersProvider({ children }) {
   const updateStatus = async (id, newStatus) => {
     const normalized = normalizeStatus(newStatus)
     const now = new Date()
+    const currentOrder = allOrders.find((o) => o.id === id)
+    const existingPendingDelivery = Array.isArray(currentOrder?.raw?.itemsPendientesEntrega)
+      ? currentOrder.raw.itemsPendientesEntrega
+      : []
+    const currentBatchForDelivery = (currentOrder?.items || []).map((item) => ({
+      nombreSnapshot: item.name,
+      cantidad: Number(item.qty || 1),
+      notaEspecial: String(item.note || '').trim(),
+    }))
+    const nextPendingDelivery =
+      normalized === 'listo'
+        ? [...existingPendingDelivery, ...currentBatchForDelivery]
+        : existingPendingDelivery
     const extraFields =
       normalized === 'enPreparacion'
         ? { startedAt: now }
         : normalized === 'listo'
-          ? { listoAt: now, readyAt: now, finalizedAt: null }
+          ? {
+            listoAt: now,
+            readyAt: now,
+            finalizedAt: null,
+            estadoEntrega: 'pendiente',
+            entregadoAt: null,
+            itemsPendientesEntrega: nextPendingDelivery,
+          }
         : normalized === FINAL_STATUS
-          ? { finalizedAt: now }
+          ? { finalizedAt: now, estadoEntrega: 'pendiente' }
           : {}
 
     setUpdatingOrderIds((prev) => ({ ...prev, [id]: true }))
@@ -305,6 +328,7 @@ export function OrdersProvider({ children }) {
       await updatePedido(id, {
         estado: FINAL_STATUS,
         estadoPedido: FINAL_STATUS,
+        estadoEntrega: 'pendiente',
         finalizedAt: new Date(),
       })
     } finally {
