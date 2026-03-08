@@ -1497,6 +1497,190 @@ async function syncPedidoCocinaReaperturaCuenta({ cuentaId, actorUid = null }) {
   }
 }
 
+async function syncPedidoCocinaByCuentaItemAnulacion({ cuentaId, item }) {
+  if (!cuentaId || !item) return;
+
+  const normalizeStatus = (value) => String(value || '').trim().toLowerCase();
+  const buildKey = (input) => {
+    const pid = String(input?.productoId || '').trim();
+    const nota = String(input?.notaEspecial || '').trim().toLowerCase();
+    const comensal = String(input?.comensalId || '').trim();
+    return `${pid}__${nota}__${comensal}`;
+  };
+
+  const pedidosSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+  const pedidosCuenta = pedidosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  const pedidoObjetivo = pedidosCuenta
+    .filter((p) => {
+      const origen = String(p.origenPedido || '').trim().toLowerCase();
+      if (origen === 'venta_directa' || origen === 'reapertura_cuenta') return false;
+      const estado = normalizeStatus(p.estado || p.estadoPedido);
+      return estado === 'pendiente' || estado === 'enpreparacion' || estado === 'en_preparacion' || estado === 'listo';
+    })
+    .sort((a, b) => toMillisSafe(b.updatedAt || b.createdAt || b.timestamp) - toMillisSafe(a.updatedAt || a.createdAt || a.timestamp))[0];
+
+  if (!pedidoObjetivo || !Array.isArray(pedidoObjetivo.items) || pedidoObjetivo.items.length === 0) return;
+
+  const targetKey = buildKey(item);
+  const targetPid = String(item?.productoId || '').trim();
+  const targetComensal = String(item?.comensalId || '').trim();
+  const qtyToRemove = Number(item.cantidad || 1);
+  let changed = false;
+  let updatedItems = pedidoObjetivo.items.map((raw) => ({ ...raw }));
+
+  const applyRemovalAtIndex = (idx) => {
+    const line = {
+      ...updatedItems[idx],
+      productoId: updatedItems[idx]?.productoId || '',
+      notaEspecial: String(updatedItems[idx]?.notaEspecial || '').trim(),
+      comensalId: updatedItems[idx]?.comensalId || null,
+      cantidad: Number(updatedItems[idx]?.cantidad || 1),
+    };
+    const nextQty = Number(line.cantidad || 0) - qtyToRemove;
+    changed = true;
+    if (nextQty > 0) {
+      updatedItems[idx] = {
+        ...updatedItems[idx],
+        cantidad: nextQty,
+      };
+    } else {
+      updatedItems.splice(idx, 1);
+    }
+  };
+
+  const exactMatchIndex = updatedItems.findIndex((raw) => {
+    const line = {
+      ...raw,
+      productoId: raw?.productoId || '',
+      notaEspecial: String(raw?.notaEspecial || '').trim(),
+      comensalId: raw?.comensalId || null,
+    };
+    return buildKey(line) === targetKey;
+  });
+
+  if (exactMatchIndex >= 0) {
+    applyRemovalAtIndex(exactMatchIndex);
+  } else {
+    // Fallback defensivo: si nota/comensal difieren entre cuenta y pedido,
+    // intentamos por producto + comensal para no dejar cocina desactualizada.
+    const relaxedIndex = updatedItems.findIndex((raw) => (
+      String(raw?.productoId || '').trim() === targetPid &&
+      String(raw?.comensalId || '').trim() === targetComensal
+    ));
+    if (relaxedIndex >= 0) {
+      applyRemovalAtIndex(relaxedIndex);
+    }
+  }
+
+  if (!changed) return;
+
+  const nextCount = Number(pedidoObjetivo.actualizacionesCount || 0) + 1;
+  await updateDoc(doc(db, 'pedidos', pedidoObjetivo.id), {
+    items: updatedItems,
+    pedidoActualizado: true,
+    actualizacionesCount: nextCount,
+    ultimaActualizacionPedidoAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+async function syncPedidoCocinaByCuentaItemNota({
+  cuentaId,
+  itemBefore,
+  notaNueva = '',
+}) {
+  if (!cuentaId || !itemBefore) return;
+
+  const normalizeStatus = (value) => String(value || '').trim().toLowerCase();
+  const notaAnterior = String(itemBefore.notaEspecial || '').trim();
+  const nextNota = String(notaNueva || '').trim();
+  const targetPid = String(itemBefore.productoId || '').trim();
+  const targetComensal = String(itemBefore.comensalId || '').trim();
+
+  const pedidosSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+  const pedidosCuenta = pedidosSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const pedidoObjetivo = pedidosCuenta
+    .filter((p) => {
+      const origen = String(p.origenPedido || '').trim().toLowerCase();
+      if (origen === 'venta_directa' || origen === 'reapertura_cuenta') return false;
+      const estado = normalizeStatus(p.estado || p.estadoPedido);
+      return estado === 'pendiente' || estado === 'enpreparacion' || estado === 'en_preparacion' || estado === 'listo';
+    })
+    .sort((a, b) => toMillisSafe(b.updatedAt || b.createdAt || b.timestamp) - toMillisSafe(a.updatedAt || a.createdAt || a.timestamp))[0];
+
+  if (!pedidoObjetivo || !Array.isArray(pedidoObjetivo.items) || pedidoObjetivo.items.length === 0) return;
+
+  let changed = false;
+  let updatedItems = pedidoObjetivo.items.map((raw) => ({ ...raw }));
+  let matchedIndex = updatedItems.findIndex((line) => (
+    String(line?.productoId || '').trim() === targetPid &&
+    String(line?.comensalId || '').trim() === targetComensal &&
+    String(line?.notaEspecial || '').trim() === notaAnterior
+  ));
+
+  if (matchedIndex < 0) {
+    const candidates = updatedItems
+      .map((line, idx) => ({ idx, line }))
+      .filter(({ line }) => (
+        String(line?.productoId || '').trim() === targetPid &&
+        String(line?.comensalId || '').trim() === targetComensal
+      ));
+    if (candidates.length === 1) matchedIndex = candidates[0].idx;
+  }
+
+  if (matchedIndex >= 0) {
+    updatedItems[matchedIndex] = {
+      ...updatedItems[matchedIndex],
+      notaEspecial: nextNota,
+    };
+    changed = true;
+  }
+
+  let updatedPendientesEntrega = Array.isArray(pedidoObjetivo.itemsPendientesEntrega)
+    ? pedidoObjetivo.itemsPendientesEntrega.map((raw) => ({ ...raw }))
+    : null;
+
+  if (Array.isArray(updatedPendientesEntrega) && updatedPendientesEntrega.length > 0) {
+    let matchedEntregaIndex = updatedPendientesEntrega.findIndex((line) => (
+      String(line?.productoId || '').trim() === targetPid &&
+      String(line?.comensalId || '').trim() === targetComensal &&
+      String(line?.notaEspecial || '').trim() === notaAnterior
+    ));
+    if (matchedEntregaIndex < 0) {
+      const candidatesEntrega = updatedPendientesEntrega
+        .map((line, idx) => ({ idx, line }))
+        .filter(({ line }) => (
+          String(line?.productoId || '').trim() === targetPid &&
+          String(line?.comensalId || '').trim() === targetComensal
+        ));
+      if (candidatesEntrega.length === 1) matchedEntregaIndex = candidatesEntrega[0].idx;
+    }
+    if (matchedEntregaIndex >= 0) {
+      updatedPendientesEntrega[matchedEntregaIndex] = {
+        ...updatedPendientesEntrega[matchedEntregaIndex],
+        notaEspecial: nextNota,
+      };
+      changed = true;
+    }
+  }
+
+  if (!changed) return;
+
+  const nextCount = Number(pedidoObjetivo.actualizacionesCount || 0) + 1;
+  const updates = {
+    items: updatedItems,
+    pedidoActualizado: true,
+    actualizacionesCount: nextCount,
+    ultimaActualizacionPedidoAt: new Date(),
+    updatedAt: new Date(),
+  };
+  if (Array.isArray(updatedPendientesEntrega)) {
+    updates.itemsPendientesEntrega = updatedPendientesEntrega;
+  }
+  await updateDoc(doc(db, 'pedidos', pedidoObjetivo.id), updates);
+}
+
 export async function getCuentaItemsByComensal(cuentaId, comensalId) {
   const q = query(
     collection(db, 'cuentas', cuentaId, 'items'),
@@ -2059,16 +2243,10 @@ export async function marcarVentaDirectaEntregada({
 export async function anularCuentaItem({
   cuentaId,
   itemId,
-  motivo,
+  motivo = '',
   usuarioId = null,
   rolUsuario = null,
 }) {
-  if (!motivo || !String(motivo).trim()) {
-    const err = new Error('Debe indicar un motivo de anulación.');
-    err.code = 'MOTIVO_REQUIRED';
-    throw err;
-  }
-
   const role = String(rolUsuario || '').toLowerCase();
   if (role !== 'cajero' && role !== 'admin' && role !== 'mesero') {
     const err = new Error('No tienes permiso para anular ítems.');
@@ -2085,25 +2263,92 @@ export async function anularCuentaItem({
   }
 
   const item = itemSnap.data();
-  if (item.estadoItem === 'pagado') {
+  const estadoItem = String(item.estadoItem || 'pendiente').trim().toLowerCase();
+  const estadoPrep = String(item.estadoPreparacion || 'pendiente').trim().toLowerCase();
+
+  if (estadoItem === 'pagado') {
     const err = new Error('No se puede anular un ítem ya pagado.');
     err.code = 'ITEM_ALREADY_PAID';
     throw err;
   }
-  if (item.estadoItem === 'anulado') {
+  if (estadoItem === 'anulado') {
     const err = new Error('El ítem ya está anulado.');
     err.code = 'ITEM_ALREADY_ANNULLED';
     throw err;
   }
-  if (item.estadoItem !== 'pendiente') {
-    const err = new Error('Solo se pueden anular ítems pendientes.');
+  if (estadoItem === 'entregado' || estadoItem === 'listo' || estadoPrep === 'entregado' || estadoPrep === 'listo') {
+    const err = new Error('No se puede anular un ítem ya listo o entregado.');
+    err.code = 'ITEM_ALREADY_PROCESSED';
+    throw err;
+  }
+  if (estadoItem !== 'pendiente' && estadoItem !== 'enpreparacion' && estadoItem !== 'en_preparacion') {
+    const err = new Error('Solo se pueden anular ítems pendientes o en preparación.');
     err.code = 'INVALID_ITEM_STATE';
     throw err;
   }
 
+  const enPreparacion = estadoItem === 'enpreparacion' || estadoItem === 'en_preparacion' || estadoPrep === 'enpreparacion' || estadoPrep === 'en_preparacion';
+  const motivoLimpio = String(motivo || '').trim();
+  let requiereMotivo = enPreparacion;
+
+  // Bloqueo adicional: si el ítem ya está cocinado/listo para entregar en pedidos,
+  // no debe permitirse anulación aunque en cuentas/items aún se vea como pendiente.
+  const keyFrom = (input) => {
+    const pid = String(input?.productoId || '').trim();
+    const nota = String(input?.notaEspecial || '').trim().toLowerCase();
+    const comensal = String(input?.comensalId || '').trim();
+    return `${pid}__${nota}__${comensal}`;
+  };
+  const targetKey = keyFrom(item);
+  const pedidosSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
+  const pedidoMasReciente = pedidosSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((p) => {
+      const origen = String(p.origenPedido || '').trim().toLowerCase();
+      return origen !== 'venta_directa' && origen !== 'reapertura_cuenta';
+    })
+    .sort((a, b) => toMillisSafe(b.updatedAt || b.createdAt || b.timestamp) - toMillisSafe(a.updatedAt || a.createdAt || a.timestamp))[0];
+
+  if (pedidoMasReciente) {
+    const pendientesEntrega = Array.isArray(pedidoMasReciente.itemsPendientesEntrega) ? pedidoMasReciente.itemsPendientesEntrega : [];
+    const itemsActuales = Array.isArray(pedidoMasReciente.items) ? pedidoMasReciente.items : [];
+    const statusPedido = String(pedidoMasReciente.estado || pedidoMasReciente.estadoPedido || '').trim().toLowerCase();
+    const matchExacto = (line) => keyFrom(line) === targetKey;
+    const matchRelajado = (line) => (
+      String(line?.productoId || '').trim() === String(item?.productoId || '').trim() &&
+      String(line?.comensalId || '').trim() === String(item?.comensalId || '').trim()
+    );
+    const enPedidoActivo = itemsActuales.some((line) => matchExacto(line) || matchRelajado(line));
+    if (statusPedido === 'enpreparacion' || statusPedido === 'en_preparacion') {
+      requiereMotivo = requiereMotivo || enPedidoActivo;
+    }
+
+    const enPendientesEntrega = pendientesEntrega.some((line) => keyFrom(line) === targetKey);
+    const enItemsListos = (statusPedido === 'listo' || statusPedido === 'finalizado')
+      && itemsActuales.some((line) => keyFrom(line) === targetKey);
+
+    if (enPendientesEntrega || enItemsListos) {
+      const err = new Error('No se puede anular un ítem ya listo para entregar o ya cocinado.');
+      err.code = 'ITEM_ALREADY_PROCESSED';
+      throw err;
+    }
+  }
+
+  if (requiereMotivo && !motivoLimpio) {
+    const err = new Error('Debes indicar un motivo para anular un ítem en preparación.');
+    err.code = 'MOTIVO_REQUIRED';
+    throw err;
+  }
+  const motivoFinal = motivoLimpio || 'Anulación de ítem pendiente';
+
   await updateDoc(itemRef, {
     estadoItem: 'anulado',
     updatedAt: new Date(),
+  });
+
+  await syncPedidoCocinaByCuentaItemAnulacion({
+    cuentaId,
+    item,
   });
 
   await addDoc(collection(db, 'auditoria'), {
@@ -2115,8 +2360,8 @@ export async function anularCuentaItem({
       cuentaId,
       itemId,
       comensalId: item.comensalId || null,
-      motivo: String(motivo).trim(),
-      estadoAnterior: 'pendiente',
+      motivo: motivoFinal,
+      estadoAnterior: estadoItem || 'pendiente',
       estadoNuevo: 'anulado',
       monto: Number(item.precioUnitSnapshot || 0) * Number(item.cantidad || 1),
     },
@@ -2127,6 +2372,75 @@ export async function anularCuentaItem({
     cuentaId,
     actorUid: usuarioId,
   });
+}
+
+export async function updateCuentaItemNotaEspecial({
+  cuentaId,
+  itemId,
+  notaEspecial = '',
+  usuarioId = null,
+  rolUsuario = null,
+}) {
+  const role = String(rolUsuario || '').toLowerCase();
+  if (role !== 'cajero' && role !== 'admin' && role !== 'mesero') {
+    const err = new Error('No tienes permiso para editar notas de ítems.');
+    err.code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  const itemRef = doc(db, 'cuentas', cuentaId, 'items', itemId);
+  const itemSnap = await getDoc(itemRef);
+  if (!itemSnap.exists()) {
+    const err = new Error('Ítem no encontrado');
+    err.code = 'ITEM_NOT_FOUND';
+    throw err;
+  }
+
+  const item = itemSnap.data();
+  const estadoItem = String(item.estadoItem || 'pendiente').trim().toLowerCase();
+  const estadoPrep = String(item.estadoPreparacion || 'pendiente').trim().toLowerCase();
+
+  if (estadoItem === 'pagado' || estadoItem === 'anulado' || estadoItem === 'listo' || estadoItem === 'entregado') {
+    const err = new Error('No se puede editar la nota de un ítem ya procesado.');
+    err.code = 'INVALID_ITEM_STATE';
+    throw err;
+  }
+  if (estadoPrep === 'enpreparacion' || estadoPrep === 'en_preparacion' || estadoPrep === 'listo' || estadoPrep === 'entregado') {
+    const err = new Error('Solo se puede editar la nota antes de iniciar preparación.');
+    err.code = 'INVALID_PREPARATION_STATE';
+    throw err;
+  }
+
+  const nextNota = String(notaEspecial || '').trim();
+  await updateDoc(itemRef, {
+    notaEspecial: nextNota,
+    updatedAt: new Date(),
+  });
+
+  await syncPedidoCocinaByCuentaItemNota({
+    cuentaId,
+    itemBefore: item,
+    notaNueva: nextNota,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'actualizacion_nota_item_cuenta',
+      adminUid: usuarioId || '',
+      targetId: itemId,
+      targetName: item.nombreSnapshot || item.productoId || 'Item',
+      detalles: {
+        cuentaId,
+        itemId,
+        comensalId: item.comensalId || null,
+        notaAnterior: String(item.notaEspecial || '').trim(),
+        notaNueva: nextNota,
+      },
+      timestamp: new Date(),
+    });
+  } catch (auditError) {
+    console.warn('No se pudo registrar auditoria de actualizacion_nota_item_cuenta:', auditError);
+  }
 }
 
 /**

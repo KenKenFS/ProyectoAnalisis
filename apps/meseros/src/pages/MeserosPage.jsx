@@ -14,6 +14,7 @@ import {
   FunnelIcon,
   ExclamationTriangleIcon,
   ArrowRightCircleIcon,
+  PencilSquareIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore'
@@ -32,6 +33,7 @@ import {
   getProductos,
   onPedidosChange,
   registrarPedidoMesa,
+  updateCuentaItemNotaEspecial,
   updatePedido,
 } from '@shared/firebase/firestore'
 
@@ -127,6 +129,12 @@ function normalizePedidoStatus(rawStatus) {
   return status
 }
 
+function normalizeItemStatus(rawStatus) {
+  const status = String(rawStatus || '').trim().toLowerCase()
+  if (status === 'en_preparacion') return 'enpreparacion'
+  return status
+}
+
 function toMillis(rawDate) {
   if (!rawDate) return 0
   if (typeof rawDate?.toDate === 'function') return rawDate.toDate().getTime()
@@ -208,6 +216,7 @@ export default function MeserosPage() {
   const [loadingCuentaData, setLoadingCuentaData] = useState(false)
   const [existingItems, setExistingItems] = useState([])
   const [existingOrderNotes, setExistingOrderNotes] = useState('')
+  const [activeKitchenOrderStatus, setActiveKitchenOrderStatus] = useState('')
   const [removingItemId, setRemovingItemId] = useState('')
   const [readyOrders, setReadyOrders] = useState([])
   const [loadingReadyOrders, setLoadingReadyOrders] = useState(true)
@@ -215,6 +224,11 @@ export default function MeserosPage() {
   const [deliveryLines, setDeliveryLines] = useState([])
   const [selectedDeliveryLineIds, setSelectedDeliveryLineIds] = useState([])
   const [deliveringOrderId, setDeliveringOrderId] = useState('')
+  const [editingExistingNoteId, setEditingExistingNoteId] = useState('')
+  const [editingExistingNoteValue, setEditingExistingNoteValue] = useState('')
+  const [savingExistingNoteId, setSavingExistingNoteId] = useState('')
+  const [pendingRemovalItem, setPendingRemovalItem] = useState(null)
+  const [removalReason, setRemovalReason] = useState('')
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -481,6 +495,7 @@ export default function MeserosPage() {
     setSelectedComensalLocalId(first.localId)
     setExistingItems([])
     setExistingOrderNotes('')
+    setActiveKitchenOrderStatus('')
     setError('')
     setSuccess('')
 
@@ -522,6 +537,17 @@ export default function MeserosPage() {
 
       const mapItemFromCuenta = (i, idx) => {
         const comensalLocalId = mappedComensales.find((c) => c.persistedId === i.comensalId)?.localId || null
+        const itemStatus = normalizeItemStatus(i.estadoItem || 'pendiente')
+        const prepStatus = normalizeItemStatus(i.estadoPreparacion || 'pendiente')
+        const isBlockedProcessed =
+          itemStatus === 'pagado' ||
+          itemStatus === 'anulado' ||
+          itemStatus === 'entregado' ||
+          itemStatus === 'listo' ||
+          prepStatus === 'entregado' ||
+          prepStatus === 'listo'
+        const canRemove = !isBlockedProcessed && (itemStatus === 'pendiente' || itemStatus === 'enpreparacion')
+        const canEditNote = !isBlockedProcessed && itemStatus === 'pendiente' && prepStatus !== 'enpreparacion'
         return {
           id: i.id || `cuenta_${idx}`,
           cuentaItemId: i.id || null,
@@ -532,6 +558,10 @@ export default function MeserosPage() {
           price: Number(i.precioUnitSnapshot || 0),
           comensalId: i.comensalId || null,
           comensalLocalId,
+          itemStatus,
+          prepStatus,
+          canRemove,
+          canEditNote,
         }
       }
 
@@ -550,6 +580,10 @@ export default function MeserosPage() {
           price: Number(item.precioUnitSnapshot || item.precio || 0),
           comensalId: item.comensalId || null,
           comensalLocalId,
+          itemStatus: normalizeItemStatus(item.estadoItem || 'pendiente'),
+          prepStatus: normalizeItemStatus(item.estadoPreparacion || 'pendiente'),
+          canRemove: false,
+          canEditNote: false,
         }
       }
 
@@ -566,6 +600,7 @@ export default function MeserosPage() {
       const finalItems = cuentaPending.length > 0 ? cuentaPending : pedidoPending
       setExistingItems(finalItems)
       setExistingOrderNotes(String(pedidoActivo?.notasPedido || '').trim())
+      setActiveKitchenOrderStatus(normalizePedidoStatus(pedidoActivo?.estadoPedido || pedidoActivo?.estado || ''))
 
       if (finalItems.length === 0 && (itemsCuenta?.length > 0 || pedidoItemsRaw.length > 0)) {
         console.warn('Items encontrados pero filtrados:', {
@@ -581,26 +616,99 @@ export default function MeserosPage() {
     }
   }
 
-  async function removeExistingItem(item) {
+  async function removeExistingItem(item, explicitReason = '') {
     if (!orderingMesa?.cuentaActivaId || !item?.cuentaItemId) {
       setError('Este ítem no se puede anular desde cuenta. Agrega uno nuevo para reemplazarlo.')
       return
     }
+    if (!item.canRemove) {
+      if (item.itemStatus === 'listo' || item.itemStatus === 'entregado' || item.prepStatus === 'listo' || item.prepStatus === 'entregado') {
+        setError('Este ítem ya fue procesado y no se puede modificar.')
+        return
+      }
+    }
     try {
+      const runAnulacion = async (motivoFinal = '') => {
+        await anularCuentaItem({
+          cuentaId: orderingMesa.cuentaActivaId,
+          itemId: item.cuentaItemId,
+          motivo: motivoFinal,
+          usuarioId: user?.uid || null,
+          rolUsuario: isAdmin ? 'Admin' : 'Mesero',
+        })
+      }
+
       setRemovingItemId(item.cuentaItemId)
-      await anularCuentaItem({
-        cuentaId: orderingMesa.cuentaActivaId,
-        itemId: item.cuentaItemId,
-        motivo: 'Ajuste solicitado desde meseros',
-        usuarioId: user?.uid || null,
-        rolUsuario: isAdmin ? 'Admin' : 'Mesero',
-      })
+      try {
+        await runAnulacion(String(explicitReason || '').trim())
+      } catch (innerError) {
+        const errorText = String(innerError?.message || '').toLowerCase()
+        const requiresReason = innerError?.code === 'MOTIVO_REQUIRED' || errorText.includes('motivo')
+        if (requiresReason) {
+          setPendingRemovalItem(item)
+          setRemovalReason('')
+          setError('')
+          return
+        } else {
+          throw innerError
+        }
+      }
       setExistingItems((prev) => prev.filter((x) => x.cuentaItemId !== item.cuentaItemId))
       setSuccess('Ítem removido del pedido actual.')
     } catch (e) {
       setError(e?.message || 'No se pudo remover el ítem.')
     } finally {
       setRemovingItemId('')
+    }
+  }
+
+  async function confirmRemovalWithReason() {
+    if (!pendingRemovalItem) return
+    const reason = String(removalReason || '').trim()
+    if (!reason) {
+      setError('Debes indicar un motivo para anular un ítem en preparación.')
+      return
+    }
+    await removeExistingItem(pendingRemovalItem, reason)
+    setPendingRemovalItem(null)
+    setRemovalReason('')
+  }
+
+  function startEditExistingItemNote(item) {
+    if (!item?.cuentaItemId || !item.canEditNote) {
+      setError('Solo puedes editar la nota antes de iniciar preparación.')
+      return
+    }
+    setError('')
+    setEditingExistingNoteId(item.cuentaItemId)
+    setEditingExistingNoteValue(item.note || '')
+  }
+
+  function cancelEditExistingItemNote() {
+    setEditingExistingNoteId('')
+    setEditingExistingNoteValue('')
+  }
+
+  async function saveExistingItemNote(item) {
+    if (!orderingMesa?.cuentaActivaId || !item?.cuentaItemId) return
+    try {
+      setSavingExistingNoteId(item.cuentaItemId)
+      await updateCuentaItemNotaEspecial({
+        cuentaId: orderingMesa.cuentaActivaId,
+        itemId: item.cuentaItemId,
+        notaEspecial: editingExistingNoteValue,
+        usuarioId: user?.uid || null,
+        rolUsuario: isAdmin ? 'Admin' : 'Mesero',
+      })
+      setExistingItems((prev) =>
+        prev.map((x) => (x.cuentaItemId === item.cuentaItemId ? { ...x, note: String(editingExistingNoteValue || '').trim() } : x))
+      )
+      setSuccess('Nota del ítem actualizada.')
+      cancelEditExistingItemNote()
+    } catch (e) {
+      setError(e?.message || 'No se pudo actualizar la nota del ítem.')
+    } finally {
+      setSavingExistingNoteId('')
     }
   }
 
@@ -884,7 +992,7 @@ export default function MeserosPage() {
         )}
       </div>
 
-      {error && (
+      {error && !deliveryModalOrder && !orderingMesa && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
           {error}
         </div>
@@ -1003,6 +1111,12 @@ export default function MeserosPage() {
               </button>
             </div>
 
+            {error && (
+              <div className="mx-4 mt-3 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+                {error}
+              </div>
+            )}
+
             <div className="p-4 overflow-y-auto space-y-3">
               {deliveryLines.length === 0 ? (
                 <div className="text-sm text-gray-500">Sin items listos para entregar.</div>
@@ -1082,6 +1196,51 @@ export default function MeserosPage() {
         </ModalPortal>
       )}
 
+      {pendingRemovalItem && (
+        <ModalPortal overlayClassName="p-4 md:p-6">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 bg-rose-700 text-white">
+              <div className="font-bold text-lg">Motivo de anulación</div>
+              <div className="text-sm text-rose-100">Este ítem está en preparación</div>
+            </div>
+            <div className="p-4 space-y-3">
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+                  {error}
+                </div>
+              )}
+              <div className="text-sm text-gray-700">
+                Ingresa el motivo para anular: <span className="font-semibold">{pendingRemovalItem.name}</span>
+              </div>
+              <textarea
+                value={removalReason}
+                onChange={(e) => setRemovalReason(e.target.value)}
+                className="textarea textarea-bordered w-full"
+                rows={3}
+                placeholder="Motivo de anulación"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setPendingRemovalItem(null)
+                    setRemovalReason('')
+                  }}
+                  className="btn btn-sm btn-ghost"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmRemovalWithReason}
+                  className="btn btn-sm bg-rose-600 hover:bg-rose-700 text-white border-0"
+                >
+                  Confirmar anulación
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
       {orderingMesa && (
         <ModalPortal overlayClassName="p-4 md:p-6">
           <div className="bg-white rounded-lg shadow-2xl w-full h-full overflow-hidden flex flex-col">
@@ -1098,6 +1257,12 @@ export default function MeserosPage() {
                 Cerrar
               </button>
             </div>
+
+            {error && (
+              <div className="mx-4 md:mx-6 mt-3 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+                {error}
+              </div>
+            )}
 
             <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-0">
               <div className="lg:col-span-2 p-4 md:p-6 border-r border-gray-200 flex flex-col min-h-0">
@@ -1247,17 +1412,66 @@ export default function MeserosPage() {
                                         <div className="text-sm text-gray-600 mt-0.5">
                                           x{item.qty} · ₡{Number(item.price || 0).toLocaleString()} c/u
                                         </div>
-                                        {item.note && (
-                                          <div className="text-sm text-amber-700 mt-1 bg-amber-50 rounded px-2 py-1">
-                                            {item.note}
+                                        {editingExistingNoteId === item.cuentaItemId ? (
+                                          <div className="mt-2 space-y-2">
+                                            <input
+                                              type="text"
+                                              value={editingExistingNoteValue}
+                                              onChange={(e) => setEditingExistingNoteValue(e.target.value)}
+                                              className="input input-bordered input-sm w-full"
+                                              placeholder="Nota especial para cocina"
+                                            />
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                onClick={() => saveExistingItemNote(item)}
+                                                disabled={savingExistingNoteId === item.cuentaItemId}
+                                                className="btn btn-xs bg-blue-600 hover:bg-blue-700 text-white border-0"
+                                              >
+                                                {savingExistingNoteId === item.cuentaItemId ? 'Guardando...' : 'Guardar nota'}
+                                              </button>
+                                              <button
+                                                onClick={cancelEditExistingItemNote}
+                                                className="btn btn-xs btn-ghost"
+                                              >
+                                                Cancelar
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            {item.note && (
+                                              <div className="text-sm text-amber-700 mt-1 bg-amber-50 rounded px-2 py-1">
+                                                {item.note}
+                                              </div>
+                                            )}
+                                            {item.canEditNote && (
+                                              <button
+                                                onClick={() => startEditExistingItemNote(item)}
+                                                className="mt-2 inline-flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800"
+                                              >
+                                                <PencilSquareIcon className="w-4 h-4" />
+                                                Editar nota
+                                              </button>
+                                            )}
+                                          </>
+                                        )}
+                                        {!item.canRemove && (
+                                          <div className="mt-2 text-xs text-gray-500">
+                                            {item.itemStatus === 'listo' || item.itemStatus === 'entregado' || item.prepStatus === 'listo' || item.prepStatus === 'entregado'
+                                              ? 'Ítem ya procesado: no editable.'
+                                              : 'Ítem no anulable en este estado.'}
                                           </div>
                                         )}
                                       </div>
                                       {item.cuentaItemId && (
                                         <button
                                           onClick={() => removeExistingItem(item)}
-                                          disabled={removingItemId === item.cuentaItemId}
-                                          className="btn btn-sm bg-red-100 hover:bg-red-200 text-red-700 border-red-200 min-h-10 h-10 w-10 px-0 shrink-0"
+                                          disabled={removingItemId === item.cuentaItemId || !item.canRemove}
+                                          className={`btn btn-sm min-h-10 h-10 w-10 px-0 shrink-0 ${
+                                            item.canRemove
+                                              ? 'bg-red-100 hover:bg-red-200 text-red-700 border-red-200'
+                                              : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                          }`}
                                           title="Quitar del pedido"
                                         >
                                           {removingItemId === item.cuentaItemId
@@ -1284,17 +1498,66 @@ export default function MeserosPage() {
                                       <div className="text-sm text-gray-600 mt-0.5">
                                         x{item.qty} · ₡{Number(item.price || 0).toLocaleString()} c/u
                                       </div>
-                                      {item.note && (
-                                        <div className="text-sm text-amber-700 mt-1 bg-amber-50 rounded px-2 py-1">
-                                          {item.note}
+                                      {editingExistingNoteId === item.cuentaItemId ? (
+                                        <div className="mt-2 space-y-2">
+                                          <input
+                                            type="text"
+                                            value={editingExistingNoteValue}
+                                            onChange={(e) => setEditingExistingNoteValue(e.target.value)}
+                                            className="input input-bordered input-sm w-full"
+                                            placeholder="Nota especial para cocina"
+                                          />
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              onClick={() => saveExistingItemNote(item)}
+                                              disabled={savingExistingNoteId === item.cuentaItemId}
+                                              className="btn btn-xs bg-blue-600 hover:bg-blue-700 text-white border-0"
+                                            >
+                                              {savingExistingNoteId === item.cuentaItemId ? 'Guardando...' : 'Guardar nota'}
+                                            </button>
+                                            <button
+                                              onClick={cancelEditExistingItemNote}
+                                              className="btn btn-xs btn-ghost"
+                                            >
+                                              Cancelar
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          {item.note && (
+                                            <div className="text-sm text-amber-700 mt-1 bg-amber-50 rounded px-2 py-1">
+                                              {item.note}
+                                            </div>
+                                          )}
+                                          {item.canEditNote && (
+                                            <button
+                                              onClick={() => startEditExistingItemNote(item)}
+                                              className="mt-2 inline-flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800"
+                                            >
+                                              <PencilSquareIcon className="w-4 h-4" />
+                                              Editar nota
+                                            </button>
+                                          )}
+                                        </>
+                                      )}
+                                      {!item.canRemove && (
+                                        <div className="mt-2 text-xs text-gray-500">
+                                          {item.itemStatus === 'listo' || item.itemStatus === 'entregado' || item.prepStatus === 'listo' || item.prepStatus === 'entregado'
+                                            ? 'Ítem ya procesado: no editable.'
+                                            : 'Ítem no anulable en este estado.'}
                                         </div>
                                       )}
                                     </div>
                                     {item.cuentaItemId && (
                                       <button
                                         onClick={() => removeExistingItem(item)}
-                                        disabled={removingItemId === item.cuentaItemId}
-                                        className="btn btn-sm bg-red-100 hover:bg-red-200 text-red-700 border-red-200 min-h-10 h-10 w-10 px-0 shrink-0"
+                                        disabled={removingItemId === item.cuentaItemId || !item.canRemove}
+                                        className={`btn btn-sm min-h-10 h-10 w-10 px-0 shrink-0 ${
+                                          item.canRemove
+                                            ? 'bg-red-100 hover:bg-red-200 text-red-700 border-red-200'
+                                            : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                        }`}
                                         title="Quitar del pedido"
                                       >
                                         {removingItemId === item.cuentaItemId
