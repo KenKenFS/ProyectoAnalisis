@@ -1155,6 +1155,218 @@ export async function getVentasPOSByRange(fechaInicio, fechaFin) {
   return list;
 }
 
+function normalizeMetodoPago(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (!v) return 'no_indicado';
+  if (v === 'efectivo') return 'efectivo';
+  if (v === 'tarjeta') return 'tarjeta';
+  if (v === 'mixto') return 'mixto';
+  return v;
+}
+
+/**
+ * CF-002: Vista previa para cierre diario de caja.
+ */
+export async function getResumenCierreCajaPreview(fecha) {
+  const fechaStr = String(fecha || '').trim();
+  if (!fechaStr) throw new Error('La fecha es obligatoria.');
+  const hoy = toDateStrCR(new Date());
+  if (fechaStr > hoy) throw new Error('La fecha no puede ser futura.');
+
+  const [manual, pagosPos] = await Promise.all([
+    getMovimientosFinancierosByDate(fechaStr),
+    getVentasPOSByDate(fechaStr),
+  ]);
+
+  const ventasPosTotal = pagosPos.reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
+  const ventasManualTotal = manual
+    .filter(m => String(m.tipo || '').toLowerCase() === 'venta')
+    .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
+  const gastosTotal = manual
+    .filter(m => String(m.tipo || '').toLowerCase() === 'gasto')
+    .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
+
+  const qPagosDia = query(
+    collection(db, 'pagos'),
+    where('createdAt', '>=', new Date(`${fechaStr}T00:00:00`)),
+    where('createdAt', '<=', new Date(`${fechaStr}T23:59:59.999`))
+  );
+  const pagosSnap = await getDocs(qPagosDia);
+  const metodosPago = {};
+  pagosSnap.docs.forEach(d => {
+    const data = d.data() || {};
+    const metodo = normalizeMetodoPago(data.metodo);
+    const monto = Math.abs(Number(data.montoTotal || 0));
+    metodosPago[metodo] = (metodosPago[metodo] || 0) + monto;
+  });
+
+  const ventasTotales = ventasPosTotal + ventasManualTotal;
+  const balanceEsperado = ventasTotales - gastosTotal;
+
+  return {
+    fecha: fechaStr,
+    ventasPosTotal,
+    ventasManualTotal,
+    ventasTotales,
+    gastosTotal,
+    balanceEsperado,
+    metodosPago,
+  };
+}
+
+/**
+ * CF-002: Registra cierre diario de caja.
+ */
+export async function createCierreCajaDiario({
+  fecha,
+  totalEfectivo,
+  totalDigital,
+  observaciones = '',
+  motivoDiscrepancia = '',
+  usuarioUid = null,
+}) {
+  const fechaStr = String(fecha || '').trim();
+  if (!fechaStr) throw new Error('La fecha es obligatoria.');
+  const hoy = toDateStrCR(new Date());
+  if (fechaStr > hoy) throw new Error('La fecha no puede ser futura.');
+
+  const qExistente = query(
+    collection(db, 'cierres_caja'),
+    where('fecha', '==', fechaStr),
+    where('estado', '==', 'cerrado')
+  );
+  const existente = await getDocs(qExistente);
+  if (!existente.empty) {
+    throw new Error('Dia ya cerrado, consulte historial.');
+  }
+
+  const efectivo = Number(totalEfectivo || 0);
+  const digital = Number(totalDigital || 0);
+  if (!Number.isFinite(efectivo) || efectivo < 0) {
+    throw new Error('Total efectivo invalido.');
+  }
+  if (!Number.isFinite(digital) || digital < 0) {
+    throw new Error('Total digital invalido.');
+  }
+
+  const resumen = await getResumenCierreCajaPreview(fechaStr);
+  const totalReportado = efectivo + digital;
+  const discrepancia = totalReportado - Number(resumen.balanceEsperado || 0);
+  const motivoTrim = String(motivoDiscrepancia || '').trim();
+  const tieneDiscrepancia = Math.abs(discrepancia) > 0;
+  if (tieneDiscrepancia && !motivoTrim) {
+    throw new Error('Explique discrepancia en observaciones.');
+  }
+
+  const now = new Date();
+  const cierreRef = await addDoc(collection(db, 'cierres_caja'), {
+    fecha: fechaStr,
+    estado: 'cerrado',
+    totalEfectivo: efectivo,
+    totalDigital: digital,
+    totalReportado,
+    ventasPosTotal: resumen.ventasPosTotal,
+    ventasManualTotal: resumen.ventasManualTotal,
+    ventasTotales: resumen.ventasTotales,
+    gastosTotal: resumen.gastosTotal,
+    balanceEsperado: resumen.balanceEsperado,
+    discrepancia,
+    tieneDiscrepancia,
+    motivoDiscrepancia: motivoTrim || null,
+    observaciones: String(observaciones || '').trim() || null,
+    metodosPago: resumen.metodosPago || {},
+    cerradoPorUid: usuarioUid || null,
+    cerradoAt: now,
+    reabierto: false,
+    reabiertoAt: null,
+    reabiertoPorUid: null,
+    motivoReapertura: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'cierre_caja_diario',
+      cierreCajaId: cierreRef.id,
+      fecha: fechaStr,
+      uid: usuarioUid || null,
+      detalles: {
+        totalReportado,
+        balanceEsperado: resumen.balanceEsperado,
+        discrepancia,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+
+  return cierreRef.id;
+}
+
+/**
+ * CF-002: Historial de cierres por rango de fecha.
+ */
+export async function getCierresCajaByRange(fechaInicio, fechaFin) {
+  if (!fechaInicio || !fechaFin) return [];
+  const q = query(
+    collection(db, 'cierres_caja'),
+    where('fecha', '>=', fechaInicio),
+    where('fecha', '<=', fechaFin)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  return list;
+}
+
+/**
+ * CF-002: Reapertura de cierre (solo fecha de hoy).
+ */
+export async function reabrirCierreCaja({
+  cierreId,
+  motivoReapertura,
+  usuarioUid = null,
+}) {
+  if (!cierreId) throw new Error('cierreId es obligatorio.');
+  const motivo = String(motivoReapertura || '').trim();
+  if (!motivo) throw new Error('Debe indicar motivo para reabrir.');
+
+  const cierreRef = doc(db, 'cierres_caja', cierreId);
+  const snap = await getDoc(cierreRef);
+  if (!snap.exists()) throw new Error('Cierre no encontrado.');
+
+  const data = snap.data() || {};
+  if (String(data.estado || '').toLowerCase() !== 'cerrado') {
+    throw new Error('El cierre no esta en estado cerrado.');
+  }
+
+  const hoy = toDateStrCR(new Date());
+  if (String(data.fecha || '') !== hoy) {
+    throw new Error('Solo se puede reabrir un cierre del mismo dia.');
+  }
+
+  const now = new Date();
+  await updateDoc(cierreRef, {
+    estado: 'reabierto',
+    reabierto: true,
+    reabiertoAt: now,
+    reabiertoPorUid: usuarioUid || null,
+    motivoReapertura: motivo,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'reapertura_cierre_caja',
+      cierreCajaId: cierreId,
+      fecha: data.fecha || null,
+      uid: usuarioUid || null,
+      motivo,
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
 // ==================== TURNOS POS ====================
 
 /**

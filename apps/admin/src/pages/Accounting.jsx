@@ -231,7 +231,7 @@ export default function Accounting() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Contabilidad y Finanzas</h1>
-          <p className="text-gray-600 text-sm">CF-001: Registro de movimientos financieros diarios con filtros por día, semana y mes</p>
+          <p className="text-gray-600 text-sm">Control de movimientos financieros diarios</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
@@ -242,19 +242,12 @@ export default function Accounting() {
           <button onClick={() => setAnchorDate(shiftAnchorDate(anchorDate, period, -1))} className="btn btn-ghost btn-sm px-2">
             <ChevronLeftIcon className="w-4 h-4" />
           </button>
-          <input
-            type="date"
-            value={anchorDate}
-            onChange={e => setAnchorDate(e.target.value)}
-            className="input input-bordered input-sm"
-          />
+          <input type="date" value={anchorDate} onChange={e => setAnchorDate(e.target.value)} className="input input-bordered input-sm" />
           <button onClick={() => setAnchorDate(shiftAnchorDate(anchorDate, period, 1))} className="btn btn-ghost btn-sm px-2">
             <ChevronRightIcon className="w-4 h-4" />
           </button>
           {anchorDate !== today && (
-            <button onClick={() => setAnchorDate(today)} className="btn btn-ghost btn-sm">
-              Hoy
-            </button>
+            <button onClick={() => setAnchorDate(today)} className="btn btn-ghost btn-sm">Hoy</button>
           )}
           <button onClick={loadMovements} className="btn btn-outline btn-sm gap-2" disabled={loading}>
             <ArrowPathIcon className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -270,21 +263,14 @@ export default function Accounting() {
         </p>
         {period !== 'dia' && (
           <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              onClick={() => setSelectedDayFilter('all')}
-              className={`px-2.5 py-1.5 rounded-md text-xs border transition ${selectedDayFilter === 'all' ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-            >
+            <button onClick={() => setSelectedDayFilter('all')} className={`px-2.5 py-1.5 rounded-md text-xs border transition ${selectedDayFilter === 'all' ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
               Todo el periodo
             </button>
             {periodDays.map(day => {
               const d = parseDate(day)
-              const daily = dayTotals[day] || { ingresos: 0, egresos: 0, total: 0 }
+              const daily = dayTotals[day] || { total: 0 }
               return (
-                <button
-                  key={day}
-                  onClick={() => setSelectedDayFilter(day)}
-                  className={`px-2.5 py-1.5 rounded-md text-xs border transition ${selectedDayFilter === day ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-                >
+                <button key={day} onClick={() => setSelectedDayFilter(day)} className={`px-2.5 py-1.5 rounded-md text-xs border transition ${selectedDayFilter === day ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                   {DAYS_SHORT[d.getDay()]} {String(d.getDate()).padStart(2, '0')} ({formatCRC(daily.total)})
                 </button>
               )
@@ -318,55 +304,28 @@ export default function Accounting() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
               <label className="text-xs text-gray-600 block mb-1">Fecha *</label>
-              <input
-                type="date"
-                value={formData.fecha}
-                onChange={e => setFormData(p => ({ ...p, fecha: e.target.value }))}
-                className="input input-bordered input-sm w-full"
-              />
+              <input type="date" value={formData.fecha} onChange={e => setFormData(p => ({ ...p, fecha: e.target.value }))} className="input input-bordered input-sm w-full" />
             </div>
             <div>
               <label className="text-xs text-gray-600 block mb-1">Tipo *</label>
-              <select
-                value={formData.tipo}
-                onChange={e => setFormData(p => ({ ...p, tipo: e.target.value }))}
-                className="select select-bordered select-sm w-full"
-              >
+              <select value={formData.tipo} onChange={e => setFormData(p => ({ ...p, tipo: e.target.value }))} className="select select-bordered select-sm w-full">
                 <option value="venta">Venta</option>
                 <option value="gasto">Gasto</option>
               </select>
             </div>
             <div>
               <label className="text-xs text-gray-600 block mb-1">Monto (CRC) *</label>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={formData.monto}
-                onChange={e => setFormData(p => ({ ...p, monto: e.target.value }))}
-                className="input input-bordered input-sm w-full"
-                placeholder="15000"
-              />
+              <input type="number" min="1" step="1" value={formData.monto} onChange={e => setFormData(p => ({ ...p, monto: e.target.value }))} className="input input-bordered input-sm w-full" placeholder="15000" />
             </div>
             {formData.tipo === 'venta' ? (
               <div>
                 <label className="text-xs text-gray-600 block mb-1">Origen *</label>
-                <input
-                  type="text"
-                  value={formData.origen}
-                  onChange={e => setFormData(p => ({ ...p, origen: e.target.value }))}
-                  className="input input-bordered input-sm w-full"
-                  placeholder="POS / Evento / Catering"
-                />
+                <input type="text" value={formData.origen} onChange={e => setFormData(p => ({ ...p, origen: e.target.value }))} className="input input-bordered input-sm w-full" placeholder="POS / Evento / Catering" />
               </div>
             ) : (
               <div>
                 <label className="text-xs text-gray-600 block mb-1">Categoria *</label>
-                <select
-                  value={formData.categoria}
-                  onChange={e => setFormData(p => ({ ...p, categoria: e.target.value }))}
-                  className="select select-bordered select-sm w-full"
-                >
+                <select value={formData.categoria} onChange={e => setFormData(p => ({ ...p, categoria: e.target.value }))} className="select select-bordered select-sm w-full">
                   <option value="">Seleccionar...</option>
                   <option value="insumos">Insumos</option>
                   <option value="alquiler">Alquiler</option>
@@ -386,20 +345,8 @@ export default function Accounting() {
           </div>
           <div>
             <label className="text-xs text-gray-600 block mb-1">Descripcion *</label>
-            <input
-              type="text"
-              value={formData.descripcion}
-              onChange={e => setFormData(p => ({ ...p, descripcion: e.target.value }))}
-              className="input input-bordered input-sm w-full"
-              placeholder="Detalle del movimiento"
-            />
+            <input type="text" value={formData.descripcion} onChange={e => setFormData(p => ({ ...p, descripcion: e.target.value }))} className="input input-bordered input-sm w-full" placeholder="Detalle del movimiento" />
           </div>
-          {formData.tipo === 'gasto' && (
-            <p className="text-xs text-gray-500">
-              Sugerencia de uso diario: registrar gastos reales (insumos, servicios, transporte, comisiones, etc.).
-              Si no registras gastos, en ese periodo los egresos aparecerán en 0.
-            </p>
-          )}
           {formError && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
               <ExclamationTriangleIcon className="w-4 h-4" />
@@ -415,9 +362,7 @@ export default function Accounting() {
       </div>
 
       {error && (
-        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          {error}
-        </div>
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -439,13 +384,9 @@ export default function Accounting() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">Cargando...</td>
-                </tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">Cargando...</td></tr>
               ) : visibleMovements.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">Sin movimientos para el filtro seleccionado.</td>
-                </tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">Sin movimientos para el filtro seleccionado.</td></tr>
               ) : paginatedMovements.map(m => {
                 const isVenta = String(m.tipo || '').toLowerCase() === 'venta'
                 const amount = Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0))
@@ -473,15 +414,11 @@ export default function Accounting() {
         </div>
         {visibleMovements.length > visibleCount && (
           <div className="px-4 py-3 border-t border-gray-200 flex justify-center">
-            <button
-              onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-              className="btn btn-outline btn-sm"
-            >
-              Cargar más
-            </button>
+            <button onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)} className="btn btn-outline btn-sm">Cargar más</button>
           </div>
         )}
       </div>
+
     </div>
   )
 }
