@@ -962,6 +962,199 @@ export async function getTransaccionesPorFecha(fechaInicio, fechaFin) {
   }
 }
 
+function toDateStrCR(dateValue) {
+  const d = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function rangeForDateStr(fecha) {
+  const base = new Date(`${fecha}T00:00:00`);
+  const start = new Date(base);
+  const end = new Date(base);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/**
+ * CF-001: Registra movimiento financiero manual (venta o gasto).
+ */
+export async function createMovimientoFinanciero({
+  fecha,
+  tipo,
+  monto,
+  descripcion,
+  origen = '',
+  categoria = '',
+  usuarioUid = null,
+}) {
+  const fechaStr = String(fecha || '').trim();
+  if (!fechaStr) throw new Error('La fecha es obligatoria.');
+
+  const hoy = toDateStrCR(new Date());
+  if (fechaStr > hoy) throw new Error('La fecha no puede ser futura.');
+
+  const tipoNorm = String(tipo || '').trim().toLowerCase();
+  if (tipoNorm !== 'venta' && tipoNorm !== 'gasto') {
+    throw new Error('Tipo de movimiento invalido.');
+  }
+
+  const amount = Number(monto || 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Monto debe ser positivo.');
+  }
+
+  const descripcionTrim = String(descripcion || '').trim();
+  if (!descripcionTrim) {
+    throw new Error('Ingrese descripcion del movimiento.');
+  }
+
+  const origenTrim = String(origen || '').trim();
+  const categoriaTrim = String(categoria || '').trim();
+
+  if (tipoNorm === 'venta' && !origenTrim) {
+    throw new Error('El origen es obligatorio para ventas.');
+  }
+  if (tipoNorm === 'gasto' && !categoriaTrim) {
+    throw new Error('La categoria es obligatoria para gastos.');
+  }
+
+  const now = new Date();
+  const signedAmount = tipoNorm === 'gasto' ? -Math.abs(amount) : Math.abs(amount);
+
+  const ref = await addDoc(collection(db, 'transacciones'), {
+    tipo: tipoNorm,
+    monto: signedAmount,
+    montoAbsoluto: Math.abs(amount),
+    fecha: fechaStr,
+    descripcion: descripcionTrim,
+    origen: origenTrim || null,
+    categoria: categoriaTrim || null,
+    origenSistema: 'manual_cf001',
+    createdByUid: usuarioUid || null,
+    timestamp: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return ref.id;
+}
+
+/**
+ * CF-001: Lista movimientos financieros manuales por fecha (YYYY-MM-DD).
+ */
+export async function getMovimientosFinancierosByDate(fecha) {
+  if (!fecha) return [];
+  const q = query(collection(db, 'transacciones'), where('fecha', '==', fecha));
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data(), source: 'manual' }));
+  list.sort((a, b) => {
+    const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || a.timestamp || 0).getTime();
+    const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || b.timestamp || 0).getTime();
+    return tb - ta;
+  });
+  return list;
+}
+
+export async function getMovimientosFinancierosByRange(fechaInicio, fechaFin) {
+  if (!fechaInicio || !fechaFin) return [];
+  const q = query(
+    collection(db, 'transacciones'),
+    where('fecha', '>=', fechaInicio),
+    where('fecha', '<=', fechaFin)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data(), source: 'manual' }));
+  list.sort((a, b) => {
+    const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || a.timestamp || 0).getTime();
+    const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || b.timestamp || 0).getTime();
+    return tb - ta;
+  });
+  return list;
+}
+
+/**
+ * CF-001: Importación automática de ventas POS desde colección `pagos`.
+ */
+export async function getVentasPOSByDate(fecha) {
+  if (!fecha) return [];
+  const { start, end } = rangeForDateStr(fecha);
+  const q = query(
+    collection(db, 'pagos'),
+    where('createdAt', '>=', start),
+    where('createdAt', '<=', end)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => {
+    const data = d.data() || {};
+    const amount = Number(data.montoTotal || 0);
+    return {
+      id: `pago_${d.id}`,
+      tipo: 'venta',
+      monto: Math.abs(amount),
+      montoAbsoluto: Math.abs(amount),
+      fecha,
+      descripcion: `Venta POS - ${data.metodo || 'metodo no indicado'}`,
+      origen: 'POS',
+      categoria: null,
+      origenSistema: 'pos_auto',
+      createdAt: data.createdAt || null,
+      source: 'pos_auto',
+      referenciaId: d.id,
+      mesaId: data.mesaId || null,
+      cuentaId: data.cuentaId || null,
+    };
+  });
+  list.sort((a, b) => {
+    const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+    const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+    return tb - ta;
+  });
+  return list;
+}
+
+export async function getVentasPOSByRange(fechaInicio, fechaFin) {
+  if (!fechaInicio || !fechaFin) return [];
+  const start = new Date(`${fechaInicio}T00:00:00`);
+  const end = new Date(`${fechaFin}T23:59:59.999`);
+  const q = query(
+    collection(db, 'pagos'),
+    where('createdAt', '>=', start),
+    where('createdAt', '<=', end)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => {
+    const data = d.data() || {};
+    const amount = Number(data.montoTotal || 0);
+    const createdAt = data.createdAt || null;
+    const fecha = createdAt?.toDate ? toDateStrCR(createdAt.toDate()) : toDateStrCR(createdAt || new Date());
+    return {
+      id: `pago_${d.id}`,
+      tipo: 'venta',
+      monto: Math.abs(amount),
+      montoAbsoluto: Math.abs(amount),
+      fecha,
+      descripcion: `Venta POS - ${data.metodo || 'metodo no indicado'}`,
+      origen: 'POS',
+      categoria: null,
+      origenSistema: 'pos_auto',
+      createdAt,
+      source: 'pos_auto',
+      referenciaId: d.id,
+      mesaId: data.mesaId || null,
+      cuentaId: data.cuentaId || null,
+    };
+  });
+  list.sort((a, b) => {
+    const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+    const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+    return tb - ta;
+  });
+  return list;
+}
+
 // ==================== TURNOS POS ====================
 
 /**
