@@ -15,9 +15,9 @@ import {
   Cog6ToothIcon,
   TableCellsIcon,
   LockClosedIcon,
+  CalendarDaysIcon,
 } from '@heroicons/react/24/outline'
 
-// Mapa de iconos para uso dinamico
 const iconMap = {
   HomeIcon,
   ShoppingCartIcon,
@@ -33,6 +33,7 @@ const iconMap = {
   Cog6ToothIcon,
   TableCellsIcon,
   LockClosedIcon,
+  CalendarDaysIcon,
 }
 
 export default function Sidebar({ links = [], appName = 'Sistema', extraContent = null }) {

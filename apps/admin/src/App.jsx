@@ -15,12 +15,14 @@ import Portal from './pages/Portal'
 import Customers from './pages/Customers'
 import Settings from './pages/Settings'
 import SystemLogs from './pages/SystemLogs'
+import ReservasPage from './pages/ReservasPage'
 import NotFound from './pages/NotFound'
 import './index.css'
 
 const sidebarLinks = [
   { to: '/admin', label: 'Dashboard', icon: 'HomeIcon', roles: ['Admin'] },
   { to: '/orders', label: 'Mesas', icon: 'TableCellsIcon', roles: ['Admin'] },
+  { to: '/reservas', label: 'Reservas', icon: 'CalendarDaysIcon', roles: ['Admin'] },
   { to: '/inventory', label: 'Inventario', icon: 'CubeIcon', roles: ['Admin'] },
   { to: '/accounting', label: 'Contabilidad', icon: 'BanknotesIcon', roles: ['Admin'] },
   { to: '/reports', label: 'Reporteria', icon: 'ChartBarIcon', roles: ['Admin'] },
@@ -66,6 +68,14 @@ function App() {
             element={
               <ProtectedAuthRoute requiredRole="Admin">
                 <Orders />
+              </ProtectedAuthRoute>
+            }
+          />
+          <Route
+            path="/reservas"
+            element={
+              <ProtectedAuthRoute requiredRole="Admin">
+                <ReservasPage />
               </ProtectedAuthRoute>
             }
           />

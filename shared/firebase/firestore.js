@@ -2962,3 +2962,441 @@ export async function cerrarCuentaReabierta({ cuentaId, cerradoPorUid }) {
   });
   return { ok: true };
 }
+
+// ==================== RESERVAS (PR-006) ====================
+
+const RESERVA_BLOCK_MINUTES = 120;
+
+function timeToMinutes(timeStr) {
+  const [h, m] = (timeStr || '0:0').split(':').map(Number);
+  return h * 60 + m;
+}
+
+function reservationsOverlap(hora1, hora2) {
+  return Math.abs(timeToMinutes(hora1) - timeToMinutes(hora2)) < RESERVA_BLOCK_MINUTES;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatReadableDate(fecha) {
+  const [year, month, day] = String(fecha || '').split('-').map(Number);
+  if (!year || !month || !day) return fecha || '';
+  const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  return `${day} de ${months[month - 1]} de ${year}`;
+}
+
+function toGoogleDateTime(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  return `${year}${month}${day}T${hour}${minute}${second}`;
+}
+
+function buildPublicReservaCode(fecha, reservaId) {
+  const compactDate = String(fecha || '').replaceAll('-', '');
+  const suffix = String(reservaId || '').slice(-4).toUpperCase();
+  return `R-${compactDate}-${suffix}`;
+}
+
+function buildGoogleCalendarLink({ fecha, hora, clienteNombre, cantidadPersonas, mesaNumero, observaciones, codigoReserva }) {
+  const start = new Date(`${fecha}T${hora}:00`);
+  const end = new Date(start.getTime() + RESERVA_BLOCK_MINUTES * 60 * 1000);
+  const title = `Reserva en Ceviche del Rey`;
+  const details = [
+    `Cliente: ${clienteNombre}`,
+    `Personas: ${cantidadPersonas}`,
+    `Mesa: ${mesaNumero}`,
+    observaciones ? `Observaciones: ${observaciones}` : null,
+    `Codigo de reserva: ${codigoReserva}`,
+  ].filter(Boolean).join('\\n');
+
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: title,
+    dates: `${toGoogleDateTime(start)}/${toGoogleDateTime(end)}`,
+    details,
+    location: `Ceviche del Rey - Mesa ${mesaNumero}`,
+    ctz: 'America/Costa_Rica',
+  });
+
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+async function enqueueReservaEmailConfirmation({
+  reservaId,
+  codigoReserva,
+  clienteNombre,
+  clienteEmail,
+  fecha,
+  hora,
+  cantidadPersonas,
+  mesaNumero,
+  observaciones,
+}) {
+  if (!clienteEmail) {
+    return { queued: false, reason: 'without_email' };
+  }
+
+  const fechaLegible = formatReadableDate(fecha);
+  const clienteNombreSafe = escapeHtml(clienteNombre);
+  const observacionesSafe = escapeHtml(observaciones);
+  const googleCalendarLink = buildGoogleCalendarLink({
+    fecha,
+    hora,
+    clienteNombre,
+    cantidadPersonas,
+    mesaNumero,
+    observaciones,
+    codigoReserva,
+  });
+  const googleCalendarLinkEscaped = escapeHtml(googleCalendarLink);
+  const subject = `Reserva confirmada - Ceviche del Rey (${fechaLegible}, ${hora})`;
+  const observacionesBlock = observaciones
+    ? `
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;">
+          <strong>Observaciones:</strong><br />
+          <span style="color: #111827;">${observacionesSafe}</span>
+        </td>
+      </tr>
+    `
+    : '';
+  const textBody = [
+    `Hola ${clienteNombre}, tu reserva fue confirmada.`,
+    '',
+    `Fecha: ${fechaLegible}`,
+    `Hora: ${hora}`,
+    `Personas: ${cantidadPersonas}`,
+    `Mesa: ${mesaNumero}`,
+    observaciones ? `Observaciones: ${observaciones}` : null,
+    `Codigo de reserva: ${codigoReserva}`,
+    '',
+    `Agregar a Google Calendar: ${googleCalendarLink}`,
+    '',
+    'Gracias por elegir Ceviche del Rey.',
+  ].filter(Boolean).join('\n');
+
+  const mailRef = await addDoc(collection(db, 'mail'), {
+    to: [clienteEmail],
+    reservaId,
+    tipo: 'reserva_confirmacion',
+    meta: {
+      fecha,
+      hora,
+      mesaNumero,
+      codigoReserva,
+    },
+    message: {
+      subject,
+      text: textBody,
+      html: `
+        <div style="margin:0; padding:24px 12px; background:#f3f4f6; font-family:Arial, sans-serif; color:#111827;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 620px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden;">
+            <tr>
+              <td style="padding: 22px 24px; background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%); color: #ffffff;">
+                <div style="font-size: 12px; letter-spacing: .8px; text-transform: uppercase; opacity: .9;">Ceviche del Rey</div>
+                <h2 style="margin: 6px 0 0 0; font-size: 24px; line-height: 1.2;">Reserva confirmada</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 22px 24px 8px 24px; font-size: 15px; color: #374151;">
+                Hola <strong style="color:#111827;">${clienteNombreSafe}</strong>, tu reserva fue registrada correctamente.
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 24px 0 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Fecha:</strong> ${fechaLegible}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Hora:</strong> ${hora}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Personas:</strong> ${cantidadPersonas}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Mesa:</strong> ${mesaNumero}</td>
+                  </tr>
+                  ${observacionesBlock}
+                  <tr>
+                    <td style="padding: 10px 0; color: #374151; font-size: 14px;"><strong>Codigo de reserva:</strong> <span style="font-family:monospace; color:#111827;">${codigoReserva}</span></td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 18px 24px 8px 24px;">
+                <a href="${googleCalendarLinkEscaped}" target="_blank" rel="noopener noreferrer" style="display:inline-block; background:#1d4ed8; color:#ffffff; text-decoration:none; padding:11px 16px; border-radius:10px; font-size:14px; font-weight:600;">
+                  Agregar a Google Calendar
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 0 24px 18px 24px; font-size: 12px; color: #6b7280;">
+                Si el boton no abre, copie este enlace en su navegador:<br />
+                <a href="${googleCalendarLinkEscaped}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; word-break: break-all;">${googleCalendarLinkEscaped}</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 0 24px 24px 24px; font-size: 13px; color:#6b7280;">
+                Gracias por elegir Ceviche del Rey.
+              </td>
+            </tr>
+          </table>
+        </div>
+      `,
+    },
+  });
+
+  return { queued: true, mailId: mailRef.id };
+}
+
+export async function getReservasByDate(fecha) {
+  const q = query(collection(db, 'reservas'), where('fecha', '==', fecha));
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+  return list;
+}
+
+export async function getReservasByDateRange(fechaInicio, fechaFin) {
+  if (!fechaInicio || !fechaFin) return [];
+  const q = query(
+    collection(db, 'reservas'),
+    where('fecha', '>=', fechaInicio),
+    where('fecha', '<=', fechaFin)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => {
+    const dateCmp = (a.fecha || '').localeCompare(b.fecha || '');
+    if (dateCmp !== 0) return dateCmp;
+    return (a.hora || '').localeCompare(b.hora || '');
+  });
+  return list;
+}
+
+export async function getReservaEmailDeliveryMap(mailIds = []) {
+  const uniqueIds = [...new Set((mailIds || []).filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const results = await Promise.all(
+    uniqueIds.map(async (mailId) => {
+      try {
+        const snap = await getDoc(doc(db, 'mail', mailId));
+        if (!snap.exists()) return [mailId, null];
+        const data = snap.data() || {};
+        return [mailId, data?.delivery?.state || null];
+      } catch (_) {
+        return [mailId, null];
+      }
+    })
+  );
+
+  return Object.fromEntries(results);
+}
+
+export async function getMesasDisponiblesParaReserva(fecha, hora, cantidadPersonas) {
+  const mesas = await getMesasOrThrow();
+  const reservas = await getReservasByDate(fecha);
+  const activas = reservas.filter(r => r.estado !== 'cancelada');
+  return mesas
+    .filter(m => m.capacidad >= cantidadPersonas)
+    .filter(m => !activas.some(r => r.mesaId === m.id && reservationsOverlap(r.hora, hora)))
+    .sort((a, b) => a.numero - b.numero);
+}
+
+export async function checkReservaDuplicada(clienteNombre, fecha, hora) {
+  const reservas = await getReservasByDate(fecha);
+  const norm = clienteNombre.trim().toLowerCase();
+  return reservas.find(r =>
+    r.estado !== 'cancelada' &&
+    (r.clienteNombre || '').trim().toLowerCase() === norm &&
+    reservationsOverlap(r.hora, hora)
+  ) || null;
+}
+
+export async function createReserva({
+  clienteNombre,
+  clienteTelefono,
+  clienteEmail,
+  fecha,
+  hora,
+  cantidadPersonas,
+  mesaId,
+  mesaNumero,
+  observaciones,
+  adminUid,
+}) {
+  if (!clienteNombre?.trim()) throw new Error('El nombre del cliente es obligatorio.');
+  if (!fecha) throw new Error('La fecha es obligatoria.');
+  if (!hora) throw new Error('La hora es obligatoria.');
+  if (!cantidadPersonas || cantidadPersonas < 1) throw new Error('La cantidad de personas debe ser al menos 1.');
+  if (!mesaId) throw new Error('Debe seleccionar una mesa.');
+  const emailNorm = (clienteEmail || '').trim().toLowerCase();
+  if (emailNorm && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+    throw new Error('El correo no tiene un formato valido.');
+  }
+
+  const now = new Date();
+  const docRef = await addDoc(collection(db, 'reservas'), {
+    clienteNombre: clienteNombre.trim(),
+    clienteTelefono: clienteTelefono?.trim() || '',
+    clienteEmail: emailNorm,
+    fecha,
+    hora,
+    cantidadPersonas: Number(cantidadPersonas),
+    mesaId,
+    mesaNumero: Number(mesaNumero),
+    observaciones: observaciones?.trim() || '',
+    estado: 'confirmada',
+    estadoEmail: emailNorm ? 'pendiente' : 'sin_correo',
+    creadoPor: adminUid || null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const codigoPublico = buildPublicReservaCode(fecha, docRef.id);
+
+  if (emailNorm) {
+    try {
+      const queueResult = await enqueueReservaEmailConfirmation({
+        reservaId: docRef.id,
+        codigoReserva: codigoPublico,
+        clienteNombre: clienteNombre.trim(),
+        clienteEmail: emailNorm,
+        fecha,
+        hora,
+        cantidadPersonas: Number(cantidadPersonas),
+        mesaNumero: Number(mesaNumero),
+        observaciones: observaciones?.trim() || '',
+      });
+      await updateDoc(docRef, {
+        codigoPublico,
+        estadoEmail: 'en_cola',
+        emailQueueId: queueResult.mailId || null,
+        updatedAt: new Date(),
+      });
+    } catch (_) {
+      await updateDoc(docRef, {
+        codigoPublico,
+        estadoEmail: 'error_cola',
+        emailQueueId: null,
+        updatedAt: new Date(),
+      });
+    }
+  } else {
+    await updateDoc(docRef, {
+      codigoPublico,
+      updatedAt: new Date(),
+    });
+  }
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'reserva_creada',
+      reservaId: docRef.id,
+      codigoReserva: codigoPublico,
+      clienteNombre: clienteNombre.trim(),
+      clienteEmail: emailNorm || null,
+      fecha, hora,
+      mesaNumero: Number(mesaNumero),
+      cantidadPersonas: Number(cantidadPersonas),
+      uid: adminUid || null,
+      timestamp: now,
+    });
+  } catch (_) {}
+
+  return docRef.id;
+}
+
+export async function cancelarReserva(reservaId, adminUid) {
+  const reservaRef = doc(db, 'reservas', reservaId);
+  const snap = await getDoc(reservaRef);
+  if (!snap.exists()) throw new Error('Reserva no encontrada.');
+
+  const data = snap.data();
+  if (data.estado === 'cancelada') throw new Error('La reserva ya esta cancelada.');
+  if (data.estado === 'completada') throw new Error('No se puede cancelar una reserva completada.');
+
+  const now = new Date();
+  await updateDoc(reservaRef, { estado: 'cancelada', updatedAt: now });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'reserva_cancelada',
+      reservaId,
+      clienteNombre: data.clienteNombre,
+      fecha: data.fecha, hora: data.hora,
+      mesaNumero: data.mesaNumero,
+      uid: adminUid || null,
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+export async function completarReserva(reservaId, adminUid) {
+  const reservaRef = doc(db, 'reservas', reservaId);
+  const snap = await getDoc(reservaRef);
+  if (!snap.exists()) throw new Error('Reserva no encontrada.');
+
+  const data = snap.data();
+  if (data.estado === 'completada') throw new Error('La reserva ya fue completada.');
+  if (data.estado === 'cancelada') throw new Error('No se puede completar una reserva cancelada.');
+
+  const now = new Date();
+  await updateDoc(reservaRef, { estado: 'completada', updatedAt: now });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'reserva_completada',
+      reservaId,
+      clienteNombre: data.clienteNombre,
+      fecha: data.fecha, hora: data.hora,
+      mesaNumero: data.mesaNumero,
+      uid: adminUid || null,
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
+ * Sugiere horarios alternativos cuando no hay mesas disponibles.
+ * Devuelve hasta 5 horarios cercanos al solicitado con mesas libres.
+ */
+export async function getAlternativasReserva(fecha, hora, cantidadPersonas) {
+  const mesas = await getMesasOrThrow();
+  const reservas = await getReservasByDate(fecha);
+  const activas = reservas.filter(r => r.estado !== 'cancelada');
+
+  const horarios = [
+    '11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00',
+    '18:00','18:30','19:00','19:30','20:00','20:30','21:00','21:30',
+  ];
+
+  const resultado = [];
+  for (const h of horarios) {
+    if (reservationsOverlap(h, hora)) continue;
+    const mesasDisp = mesas.filter(m => {
+      if (m.capacidad < cantidadPersonas) return false;
+      return !activas.some(r => r.mesaId === m.id && reservationsOverlap(r.hora, h));
+    });
+    if (mesasDisp.length > 0) {
+      resultado.push({ hora: h, mesasDisponibles: mesasDisp.length });
+    }
+  }
+
+  const reqMin = timeToMinutes(hora);
+  resultado.sort((a, b) => Math.abs(timeToMinutes(a.hora) - reqMin) - Math.abs(timeToMinutes(b.hora) - reqMin));
+  return resultado.slice(0, 5);
+}
