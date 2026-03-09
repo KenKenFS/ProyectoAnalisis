@@ -8,6 +8,7 @@ import {
 import { useAuth } from '@shared/firebase/AuthContext'
 import {
   getResumenCierreCajaPreview,
+  getResumenDiarioCaja,
   createCierreCajaDiario,
   getCierresCajaByRange,
   reabrirCierreCaja,
@@ -38,8 +39,10 @@ export default function CierresCajaPage() {
   const [preview, setPreview] = useState(null)
   const [cierreDelDia, setCierreDelDia] = useState(null)
   const [historial, setHistorial] = useState([])
+  const [resumenDiario, setResumenDiario] = useState(null)
 
   const [loading, setLoading] = useState(false)
+  const [loadingResumen, setLoadingResumen] = useState(false)
   const [error, setError] = useState('')
   const [closing, setClosing] = useState(false)
   const [reopening, setReopening] = useState(false)
@@ -55,6 +58,14 @@ export default function CierresCajaPage() {
   useEffect(() => {
     loadData()
   }, [cierreDate])
+
+  useEffect(() => {
+    loadResumenDiario()
+    const interval = setInterval(() => {
+      loadResumenDiario()
+    }, 20000)
+    return () => clearInterval(interval)
+  }, [])
 
   async function loadData() {
     setLoading(true)
@@ -75,6 +86,18 @@ export default function CierresCajaPage() {
       setHistorial([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadResumenDiario() {
+    setLoadingResumen(true)
+    try {
+      const resumen = await getResumenDiarioCaja(today)
+      setResumenDiario(resumen)
+    } catch (_) {
+      setResumenDiario(null)
+    } finally {
+      setLoadingResumen(false)
     }
   }
 
@@ -158,6 +181,59 @@ export default function CierresCajaPage() {
           {error}
         </div>
       )}
+
+      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-gray-800">Resumen del día ({today})</h3>
+          <button onClick={loadResumenDiario} className="btn btn-ghost btn-xs" disabled={loadingResumen}>
+            {loadingResumen ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
+        {!resumenDiario ? (
+          <p className="text-sm text-gray-500">No hay datos de resumen diario.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="rounded-lg bg-green-50 border border-green-200 p-3">
+                <p className="text-xs text-green-700">Ventas</p>
+                <p className="font-bold text-green-700">{formatCRC(resumenDiario.resumenActual?.ventasTotales || 0)}</p>
+              </div>
+              <div className="rounded-lg bg-red-50 border border-red-200 p-3">
+                <p className="text-xs text-red-700">Gastos + devoluciones</p>
+                <p className="font-bold text-red-600">{formatCRC(resumenDiario.resumenActual?.gastosTotal || 0)}</p>
+              </div>
+              <div className="rounded-lg bg-cyan-50 border border-cyan-200 p-3">
+                <p className="text-xs text-cyan-700">Balance neto</p>
+                <p className="font-bold text-cyan-700">{formatCRC(resumenDiario.resumenActual?.balanceEsperado || 0)}</p>
+              </div>
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
+                <p className="text-xs text-blue-700">Transacciones</p>
+                <p className="font-bold text-blue-700">{Number(resumenDiario.cantidadTransacciones || 0)}</p>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <p className="text-xs text-amber-700">Vs. ayer</p>
+                <p className={`font-bold ${Number(resumenDiario.comparacion?.deltaBalance || 0) >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {Number(resumenDiario.comparacion?.deltaBalance || 0) >= 0 ? '+' : ''}{formatCRC(resumenDiario.comparacion?.deltaBalance || 0)}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div className="rounded-lg border border-gray-200 p-3">
+                <p className="font-medium text-gray-700 mb-1">Desglose por método</p>
+                <p className="text-gray-600">Efectivo: {formatCRC(resumenDiario.metodosPago?.efectivo || 0)}</p>
+                <p className="text-gray-600">Tarjeta: {formatCRC(resumenDiario.metodosPago?.tarjeta || 0)}</p>
+                <p className="text-gray-600">Mixto: {formatCRC(resumenDiario.metodosPago?.mixto || 0)}</p>
+              </div>
+              <div className="rounded-lg border border-gray-200 p-3">
+                <p className="font-medium text-gray-700 mb-1">Desglose por tipo de venta</p>
+                <p className="text-gray-600">Mesa: {formatCRC(resumenDiario.ventasPorTipo?.mesa || 0)}</p>
+                <p className="text-gray-600">Para llevar: {formatCRC(resumenDiario.ventasPorTipo?.para_llevar || 0)}</p>
+                <p className="text-gray-600">Otras: {formatCRC(resumenDiario.ventasPorTipo?.otras || 0)}</p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-4">
         {loading ? (

@@ -979,6 +979,7 @@ function rangeForDateStr(fecha) {
 }
 
 const FORMAL_EXPENSE_MIN_AMOUNT = 50000;
+const ROLES_CORRECCION = ['admin', 'cajero', 'contador'];
 
 function buildInternalComprobanteCode(tipo, now = new Date()) {
   const y = now.getFullYear();
@@ -990,6 +991,86 @@ function buildInternalComprobanteCode(tipo, now = new Date()) {
   const prefix = String(tipo || '').toLowerCase() === 'gasto' ? 'GAS' : 'VEN';
   const random = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `${prefix}-${y}${m}${d}-${hh}${mm}${ss}-${random}`;
+}
+
+function normalizeRole(role) {
+  return String(role || '').trim().toLowerCase();
+}
+
+function assertRoleCanCorrect(rolEjecutor) {
+  const role = normalizeRole(rolEjecutor);
+  if (!ROLES_CORRECCION.includes(role)) {
+    throw new Error('Permisos insuficientes para correcciones.');
+  }
+}
+
+async function isFechaConCierreCerrado(fechaStr) {
+  const q = query(
+    collection(db, 'cierres_caja'),
+    where('fecha', '==', fechaStr),
+    where('estado', '==', 'cerrado')
+  );
+  const snap = await getDocs(q);
+  return !snap.empty;
+}
+
+function isMovimientoAnulado(data) {
+  return String(data?.estado || 'activo').toLowerCase() === 'anulado';
+}
+
+function toAmountAbs(data) {
+  return Math.abs(Number(data?.montoAbsoluto ?? data?.monto ?? 0));
+}
+
+async function resolveVentaReferencia(referenciaRaw) {
+  const referencia = String(referenciaRaw || '').trim();
+  if (!referencia) throw new Error('Debe indicar referencia de venta.');
+
+  if (referencia.startsWith('pago_')) {
+    const pagoId = referencia.slice(5);
+    if (!pagoId) throw new Error('Venta no encontrada.');
+    const pagoSnap = await getDoc(doc(db, 'pagos', pagoId));
+    if (!pagoSnap.exists()) throw new Error('Venta no encontrada.');
+    const data = pagoSnap.data() || {};
+    return {
+      source: 'pos_auto',
+      docId: pagoId,
+      ventaKey: `pos:${pagoId}`,
+      montoOriginal: Math.abs(Number(data.montoTotal || 0)),
+      fechaOriginal: data.createdAt?.toDate ? toDateStrCR(data.createdAt.toDate()) : toDateStrCR(data.createdAt || new Date()),
+      descripcion: `Venta POS ${pagoId}`,
+    };
+  }
+
+  const txSnap = await getDoc(doc(db, 'transacciones', referencia));
+  if (txSnap.exists()) {
+    const data = txSnap.data() || {};
+    if (String(data.tipo || '').toLowerCase() !== 'venta') {
+      throw new Error('Venta no encontrada.');
+    }
+    return {
+      source: 'manual',
+      docId: referencia,
+      ventaKey: `manual:${referencia}`,
+      montoOriginal: toAmountAbs(data),
+      fechaOriginal: String(data.fecha || '').trim() || toDateStrCR(new Date()),
+      descripcion: data.descripcion || `Venta manual ${referencia}`,
+    };
+  }
+
+  const qComp = query(collection(db, 'transacciones'), where('comprobanteInterno', '==', referencia));
+  const compSnap = await getDocs(qComp);
+  const ventaDoc = compSnap.docs.find(d => String(d.data()?.tipo || '').toLowerCase() === 'venta');
+  if (!ventaDoc) throw new Error('Venta no encontrada.');
+  const ventaData = ventaDoc.data() || {};
+  return {
+    source: 'manual',
+    docId: ventaDoc.id,
+    ventaKey: `manual:${ventaDoc.id}`,
+    montoOriginal: toAmountAbs(ventaData),
+    fechaOriginal: String(ventaData.fecha || '').trim() || toDateStrCR(new Date()),
+    descripcion: ventaData.descripcion || `Venta manual ${referencia}`,
+  };
 }
 
 /**
@@ -1146,6 +1227,312 @@ export async function anularGastoOperativo({
 }
 
 /**
+ * CF-004: Registro de devolución asociada a una venta original.
+ */
+export async function createAjusteDevolucion({
+  fecha,
+  referenciaVenta,
+  montoDevolucion,
+  motivo,
+  usuarioUid = null,
+}) {
+  const fechaStr = String(fecha || '').trim();
+  if (!fechaStr) throw new Error('La fecha es obligatoria.');
+  const hoy = toDateStrCR(new Date());
+  if (fechaStr > hoy) throw new Error('La fecha no puede ser futura.');
+
+  const amount = Number(montoDevolucion || 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Monto debe ser positivo.');
+  }
+
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) {
+    throw new Error('Ingrese motivo de la devolución.');
+  }
+
+  const venta = await resolveVentaReferencia(referenciaVenta);
+  if (!venta?.ventaKey || !Number.isFinite(venta.montoOriginal) || venta.montoOriginal <= 0) {
+    throw new Error('Venta no encontrada.');
+  }
+
+  const qDev = query(collection(db, 'transacciones'), where('tipo', '==', 'devolucion'));
+  const devSnap = await getDocs(qDev);
+  const totalPrevio = devSnap.docs
+    .map(d => d.data() || {})
+    .filter(d => !isMovimientoAnulado(d) && String(d.referenciaVentaKey || '') === venta.ventaKey)
+    .reduce((sum, d) => sum + toAmountAbs(d), 0);
+
+  if (totalPrevio + Math.abs(amount) > venta.montoOriginal) {
+    throw new Error('Monto devuelto no puede exceder venta original.');
+  }
+
+  const now = new Date();
+  const comprobanteInterno = buildInternalComprobanteCode('devolucion', now);
+  const ref = await addDoc(collection(db, 'transacciones'), {
+    tipo: 'devolucion',
+    monto: -Math.abs(amount),
+    montoAbsoluto: Math.abs(amount),
+    fecha: fechaStr,
+    descripcion: `Devolución: ${motivoTrim}`,
+    origen: 'Ajuste',
+    categoria: 'devolucion',
+    categoriaLabel: 'devolucion',
+    referenciaVenta: String(referenciaVenta || '').trim(),
+    referenciaVentaKey: venta.ventaKey,
+    referenciaVentaId: venta.docId,
+    referenciaVentaSource: venta.source,
+    motivoDevolucion: motivoTrim,
+    comprobanteInterno,
+    estado: 'activo',
+    origenSistema: 'cf004_devolucion',
+    createdByUid: usuarioUid || null,
+    timestamp: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'ajuste_devolucion',
+      transaccionId: ref.id,
+      uid: usuarioUid || null,
+      detalles: {
+        referenciaVenta: String(referenciaVenta || '').trim(),
+        ventaKey: venta.ventaKey,
+        montoDevolucion: Math.abs(amount),
+        montoVentaOriginal: venta.montoOriginal,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+
+  return ref.id;
+}
+
+/**
+ * CF-004: Lista ventas referenciables para devolución.
+ */
+export async function getVentasReferenciablesParaDevolucion({
+  fechaInicio,
+  fechaFin,
+}) {
+  if (!fechaInicio || !fechaFin) return [];
+
+  const [manualRaw, posRaw] = await Promise.all([
+    getMovimientosFinancierosByRange(fechaInicio, fechaFin),
+    getVentasPOSByRange(fechaInicio, fechaFin),
+  ]);
+
+  const manualVentas = manualRaw
+    .filter(m => String(m.tipo || '').toLowerCase() === 'venta')
+    .filter(m => !isMovimientoAnulado(m));
+
+  const devoluciones = manualRaw
+    .filter(m => String(m.tipo || '').toLowerCase() === 'devolucion')
+    .filter(m => !isMovimientoAnulado(m));
+
+  const devByRef = {};
+  devoluciones.forEach(m => {
+    const key = String(m.referenciaVentaKey || '').trim();
+    if (!key) return;
+    devByRef[key] = (devByRef[key] || 0) + toAmountAbs(m);
+  });
+
+  const options = [];
+
+  manualVentas.forEach(m => {
+    const key = `manual:${m.id}`;
+    const montoOriginal = toAmountAbs(m);
+    const montoDevuelto = Number(devByRef[key] || 0);
+    const montoDisponible = Math.max(0, montoOriginal - montoDevuelto);
+    if (montoDisponible <= 0) return;
+
+    options.push({
+      key,
+      value: m.id,
+      tipoFuente: 'manual',
+      fecha: String(m.fecha || ''),
+      descripcion: String(m.descripcion || 'Venta manual'),
+      montoOriginal,
+      montoDevuelto,
+      montoDisponible,
+      comprobanteInterno: m.comprobanteInterno || null,
+      referenciaDocId: m.id,
+    });
+  });
+
+  posRaw.forEach(m => {
+    const pagoId = String(m.referenciaId || '').trim();
+    if (!pagoId) return;
+    const key = `pos:${pagoId}`;
+    const montoOriginal = toAmountAbs(m);
+    const montoDevuelto = Number(devByRef[key] || 0);
+    const montoDisponible = Math.max(0, montoOriginal - montoDevuelto);
+    if (montoDisponible <= 0) return;
+
+    options.push({
+      key,
+      value: `pago_${pagoId}`,
+      tipoFuente: 'pos',
+      fecha: String(m.fecha || ''),
+      descripcion: String(m.descripcion || 'Venta POS'),
+      montoOriginal,
+      montoDevuelto,
+      montoDisponible,
+      comprobanteInterno: null,
+      referenciaDocId: pagoId,
+    });
+  });
+
+  options.sort((a, b) => {
+    const byDate = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+    if (byDate !== 0) return byDate;
+    return Number(b.montoDisponible || 0) - Number(a.montoDisponible || 0);
+  });
+
+  return options;
+}
+
+/**
+ * CF-007: Corrección de movimiento manual.
+ */
+export async function corregirMovimientoFinanciero({
+  transaccionId,
+  tipo,
+  monto,
+  descripcion,
+  origen,
+  categoria,
+  motivo,
+  usuarioUid = null,
+  rolEjecutor = '',
+}) {
+  assertRoleCanCorrect(rolEjecutor);
+  if (!transaccionId) throw new Error('transaccionId es obligatorio.');
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) throw new Error('Debe indicar motivo de corrección.');
+
+  const txRef = doc(db, 'transacciones', transaccionId);
+  const snap = await getDoc(txRef);
+  if (!snap.exists()) throw new Error('Movimiento no encontrado.');
+  const data = snap.data() || {};
+
+  if (isMovimientoAnulado(data)) throw new Error('El movimiento ya está anulado.');
+  const fecha = String(data.fecha || '').trim();
+  if (fecha && await isFechaConCierreCerrado(fecha)) {
+    throw new Error('Movimiento en período cerrado, reabra cierre primero.');
+  }
+
+  const tipoActual = String(data.tipo || '').toLowerCase();
+  if (tipoActual !== 'venta' && tipoActual !== 'gasto' && tipoActual !== 'devolucion') {
+    throw new Error('Solo se pueden corregir movimientos manuales.');
+  }
+
+  const nextTipo = tipo ? String(tipo).trim().toLowerCase() : tipoActual;
+  if (!['venta', 'gasto', 'devolucion'].includes(nextTipo)) {
+    throw new Error('Tipo de movimiento invalido.');
+  }
+
+  const amountRaw = monto === undefined || monto === null || monto === '' ? toAmountAbs(data) : Number(monto);
+  if (!Number.isFinite(amountRaw) || amountRaw <= 0) {
+    throw new Error('Monto debe ser positivo.');
+  }
+
+  const descTrim = descripcion === undefined ? String(data.descripcion || '').trim() : String(descripcion || '').trim();
+  if (!descTrim) throw new Error('Ingrese descripcion del movimiento.');
+
+  const origenTrim = origen === undefined ? String(data.origen || '').trim() : String(origen || '').trim();
+  const categoriaTrim = categoria === undefined ? String(data.categoria || '').trim() : String(categoria || '').trim();
+
+  if (nextTipo === 'venta' && !origenTrim) throw new Error('El origen es obligatorio para ventas.');
+  if ((nextTipo === 'gasto' || nextTipo === 'devolucion') && !categoriaTrim) {
+    throw new Error('La categoria es obligatoria para egresos.');
+  }
+
+  const signedAmount = nextTipo === 'venta' ? Math.abs(amountRaw) : -Math.abs(amountRaw);
+  const now = new Date();
+  await updateDoc(txRef, {
+    tipo: nextTipo,
+    monto: signedAmount,
+    montoAbsoluto: Math.abs(amountRaw),
+    descripcion: descTrim,
+    origen: nextTipo === 'venta' ? origenTrim : (origenTrim || null),
+    categoria: nextTipo !== 'venta' ? categoriaTrim : null,
+    categoriaLabel: nextTipo !== 'venta' ? (categoriaTrim || null) : null,
+    ultimoMotivoCorreccion: motivoTrim,
+    ultimaCorreccionAt: now,
+    ultimaCorreccionPorUid: usuarioUid || null,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'correccion_movimiento_financiero',
+      transaccionId,
+      uid: usuarioUid || null,
+      detalles: {
+        tipoAnterior: tipoActual,
+        tipoNuevo: nextTipo,
+        montoAnterior: toAmountAbs(data),
+        montoNuevo: Math.abs(amountRaw),
+        motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
+ * CF-007: Anulación de movimiento manual con motivo.
+ */
+export async function anularMovimientoFinanciero({
+  transaccionId,
+  motivo,
+  usuarioUid = null,
+  rolEjecutor = '',
+}) {
+  assertRoleCanCorrect(rolEjecutor);
+  if (!transaccionId) throw new Error('transaccionId es obligatorio.');
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) throw new Error('Ingrese motivo para anulación.');
+
+  const txRef = doc(db, 'transacciones', transaccionId);
+  const snap = await getDoc(txRef);
+  if (!snap.exists()) throw new Error('Movimiento no encontrado.');
+  const data = snap.data() || {};
+  if (isMovimientoAnulado(data)) throw new Error('El movimiento ya fue anulado.');
+
+  const fecha = String(data.fecha || '').trim();
+  if (fecha && await isFechaConCierreCerrado(fecha)) {
+    throw new Error('Movimiento en período cerrado, reabra cierre primero.');
+  }
+
+  const now = new Date();
+  await updateDoc(txRef, {
+    estado: 'anulado',
+    motivoAnulacion: motivoTrim,
+    anuladoAt: now,
+    anuladoPorUid: usuarioUid || null,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'anulacion_movimiento_financiero',
+      transaccionId,
+      uid: usuarioUid || null,
+      detalles: {
+        tipo: String(data.tipo || '').toLowerCase(),
+        montoAbsoluto: toAmountAbs(data),
+        motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
  * CF-001: Lista movimientos financieros manuales por fecha (YYYY-MM-DD).
  */
 export async function getMovimientosFinancierosByDate(fecha) {
@@ -1258,6 +1645,96 @@ export async function getVentasPOSByRange(fechaInicio, fechaFin) {
   return list;
 }
 
+/**
+ * CF-005: Reporte contable por período.
+ */
+export async function getReporteContablePorPeriodo({
+  modo = 'mensual',
+  anio,
+  mes,
+  fechaInicio,
+  fechaFin,
+  categoria = 'all',
+}) {
+  const now = new Date();
+  let startStr = '';
+  let endStr = '';
+
+  if (modo === 'anual') {
+    const y = Number(anio || now.getFullYear());
+    if (!Number.isFinite(y) || y < 2000) throw new Error('Año inválido.');
+    startStr = `${y}-01-01`;
+    endStr = `${y}-12-31`;
+  } else if (modo === 'personalizado') {
+    startStr = String(fechaInicio || '').trim();
+    endStr = String(fechaFin || '').trim();
+    if (!startStr || !endStr || startStr > endStr) throw new Error('Rango personalizado inválido.');
+  } else {
+    const y = Number(anio || now.getFullYear());
+    const m = Number(mes || (now.getMonth() + 1));
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) throw new Error('Mes o año inválido.');
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 0);
+    startStr = toDateStrCR(start);
+    endStr = toDateStrCR(end);
+  }
+
+  const [manualRaw, ventasPos] = await Promise.all([
+    getMovimientosFinancierosByRange(startStr, endStr),
+    getVentasPOSByRange(startStr, endStr),
+  ]);
+
+  const manual = manualRaw.filter(m => !isMovimientoAnulado(m));
+  let merged = [...ventasPos, ...manual];
+  const catFilter = String(categoria || 'all').trim().toLowerCase();
+
+  if (catFilter !== 'all') {
+    merged = merged.filter(m => {
+      const tipo = String(m.tipo || '').toLowerCase();
+      const cat = String(m.categoriaLabel || m.categoria || '').toLowerCase();
+      if (catFilter === 'ventas') return tipo === 'venta';
+      if (catFilter === 'egresos') return tipo === 'gasto' || tipo === 'devolucion';
+      return cat === catFilter;
+    });
+  }
+
+  const totals = merged.reduce((acc, m) => {
+    const tipo = String(m.tipo || '').toLowerCase();
+    const amount = toAmountAbs(m);
+    if (tipo === 'venta') acc.ingresos += amount;
+    else acc.egresos += amount;
+    return acc;
+  }, { ingresos: 0, egresos: 0 });
+
+  const breakdownMap = {};
+  merged.forEach(m => {
+    const key = modo === 'anual' ? String(m.fecha || '').slice(0, 7) : String(m.fecha || '');
+    if (!key) return;
+    if (!breakdownMap[key]) breakdownMap[key] = { ingresos: 0, egresos: 0, total: 0 };
+    const amount = toAmountAbs(m);
+    const tipo = String(m.tipo || '').toLowerCase();
+    if (tipo === 'venta') breakdownMap[key].ingresos += amount;
+    else breakdownMap[key].egresos += amount;
+    breakdownMap[key].total = breakdownMap[key].ingresos - breakdownMap[key].egresos;
+  });
+
+  const breakdown = Object.entries(breakdownMap)
+    .map(([periodo, data]) => ({ periodo, ...data }))
+    .sort((a, b) => String(a.periodo).localeCompare(String(b.periodo)));
+
+  return {
+    rango: { inicio: startStr, fin: endStr },
+    modo,
+    categoria: catFilter,
+    totalIngresos: totals.ingresos,
+    totalEgresos: totals.egresos,
+    balance: totals.ingresos - totals.egresos,
+    cantidadMovimientos: merged.length,
+    breakdown,
+    movimientos: merged,
+  };
+}
+
 function normalizeMetodoPago(value) {
   const v = String(value || '').trim().toLowerCase();
   if (!v) return 'no_indicado';
@@ -1281,12 +1758,16 @@ export async function getResumenCierreCajaPreview(fecha) {
     getVentasPOSByDate(fechaStr),
   ]);
 
+  const manualActivos = manual.filter(m => !isMovimientoAnulado(m));
   const ventasPosTotal = pagosPos.reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
-  const ventasManualTotal = manual
+  const ventasManualTotal = manualActivos
     .filter(m => String(m.tipo || '').toLowerCase() === 'venta')
     .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
-  const gastosTotal = manual
-    .filter(m => String(m.tipo || '').toLowerCase() === 'gasto')
+  const gastosTotal = manualActivos
+    .filter(m => {
+      const tipo = String(m.tipo || '').toLowerCase();
+      return tipo === 'gasto' || tipo === 'devolucion';
+    })
     .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
 
   const qPagosDia = query(
@@ -1314,6 +1795,79 @@ export async function getResumenCierreCajaPreview(fecha) {
     gastosTotal,
     balanceEsperado,
     metodosPago,
+  };
+}
+
+/**
+ * CF-006: Resumen diario de caja con comparación contra día anterior.
+ */
+export async function getResumenDiarioCaja(fecha = null) {
+  const baseFecha = String(fecha || '').trim() || toDateStrCR(new Date());
+  const hoy = toDateStrCR(new Date());
+  if (baseFecha > hoy) throw new Error('La fecha no puede ser futura.');
+
+  const prevDate = new Date(`${baseFecha}T12:00:00`);
+  prevDate.setDate(prevDate.getDate() - 1);
+  const fechaAnterior = toDateStrCR(prevDate);
+
+  const [resumenActual, resumenAnterior, manualActual, pagosActual] = await Promise.all([
+    getResumenCierreCajaPreview(baseFecha),
+    getResumenCierreCajaPreview(fechaAnterior),
+    getMovimientosFinancierosByDate(baseFecha),
+    getVentasPOSByDate(baseFecha),
+  ]);
+
+  const manualActivos = manualActual.filter(m => !isMovimientoAnulado(m));
+  const cantidadTransacciones = manualActivos.length + pagosActual.length;
+
+  const cuentaIds = [...new Set(
+    pagosActual
+      .map(p => String(p.cuentaId || '').trim())
+      .filter(Boolean)
+  )];
+  const cuentasSnap = await Promise.all(cuentaIds.map(async (id) => {
+    try {
+      const s = await getDoc(doc(db, 'cuentas', id));
+      return [id, s.exists() ? s.data() : null];
+    } catch (_) {
+      return [id, null];
+    }
+  }));
+  const cuentasMap = Object.fromEntries(cuentasSnap);
+
+  const ventasPorTipo = { mesa: 0, para_llevar: 0, otras: 0 };
+  pagosActual.forEach(p => {
+    const monto = Math.abs(Number(p.montoAbsoluto ?? p.monto ?? 0));
+    const cuentaId = String(p.cuentaId || '').trim();
+    const cuenta = cuentaId ? cuentasMap[cuentaId] : null;
+    const tipoVenta = String(cuenta?.tipoVenta || '').toLowerCase();
+    const tipoPedido = String(cuenta?.tipoPedido || '').toLowerCase();
+    if (tipoVenta.includes('directa') || tipoPedido === 'para_llevar') {
+      ventasPorTipo.para_llevar += monto;
+    } else if (cuenta?.mesaId || cuentaId) {
+      ventasPorTipo.mesa += monto;
+    } else {
+      ventasPorTipo.otras += monto;
+    }
+  });
+
+  const deltaBalance = Number(resumenActual.balanceEsperado || 0) - Number(resumenAnterior.balanceEsperado || 0);
+  const deltaVentas = Number(resumenActual.ventasTotales || 0) - Number(resumenAnterior.ventasTotales || 0);
+  const deltaGastos = Number(resumenActual.gastosTotal || 0) - Number(resumenAnterior.gastosTotal || 0);
+
+  return {
+    fecha: baseFecha,
+    fechaAnterior,
+    resumenActual,
+    resumenAnterior,
+    cantidadTransacciones,
+    metodosPago: resumenActual.metodosPago || {},
+    ventasPorTipo,
+    comparacion: {
+      deltaBalance,
+      deltaVentas,
+      deltaGastos,
+    },
   };
 }
 

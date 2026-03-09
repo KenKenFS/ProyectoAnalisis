@@ -11,8 +11,12 @@ import {
 import { useAuth } from '@shared/firebase/AuthContext'
 import {
   createMovimientoFinanciero,
-  anularGastoOperativo,
+  anularMovimientoFinanciero,
+  corregirMovimientoFinanciero,
+  createAjusteDevolucion,
   getMovimientosFinancierosByRange,
+  getReporteContablePorPeriodo,
+  getVentasReferenciablesParaDevolucion,
   getVentasPOSByRange,
 } from '@shared/firebase/firestore'
 
@@ -85,7 +89,7 @@ const PAGE_SIZE = 20
 const FORMAL_EXPENSE_MIN_AMOUNT = 50000
 
 export default function Accounting() {
-  const { user } = useAuth()
+  const { user, role } = useAuth()
   const today = toDateStr(new Date())
   const DAYS_SHORT = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab']
 
@@ -114,6 +118,36 @@ export default function Accounting() {
   const [anularMotivo, setAnularMotivo] = useState('')
   const [anulando, setAnulando] = useState(false)
   const [anularError, setAnularError] = useState('')
+  const [devolucionSubmitting, setDevolucionSubmitting] = useState(false)
+  const [devolucionError, setDevolucionError] = useState('')
+  const [devolucionOptions, setDevolucionOptions] = useState([])
+  const [loadingDevolucionOptions, setLoadingDevolucionOptions] = useState(false)
+  const [devolucionForm, setDevolucionForm] = useState({
+    fecha: today,
+    referenciaVenta: '',
+    monto: '',
+    motivo: '',
+  })
+  const [corregirModal, setCorregirModal] = useState({ open: false, movement: null })
+  const [corrigiendo, setCorrigiendo] = useState(false)
+  const [correccionError, setCorreccionError] = useState('')
+  const [correccionForm, setCorreccionForm] = useState({
+    tipo: 'venta',
+    monto: '',
+    descripcion: '',
+    origen: '',
+    categoria: '',
+    motivo: '',
+  })
+  const [reportMode, setReportMode] = useState('mensual')
+  const [reportYear, setReportYear] = useState(new Date().getFullYear())
+  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1)
+  const [reportStart, setReportStart] = useState(today)
+  const [reportEnd, setReportEnd] = useState(today)
+  const [reportCategory, setReportCategory] = useState('all')
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportError, setReportError] = useState('')
+  const [reportData, setReportData] = useState(null)
 
   const periodRange = useMemo(() => getPeriodRange(anchorDate, period), [anchorDate, period])
   const periodDays = useMemo(() => getDateListBetween(periodRange.start, periodRange.end), [periodRange])
@@ -134,6 +168,14 @@ export default function Accounting() {
     setVisibleCount(PAGE_SIZE)
   }, [period, periodRange.start, periodRange.end, selectedDayFilter])
 
+  useEffect(() => {
+    loadReport()
+  }, [reportMode, reportYear, reportMonth, reportStart, reportEnd, reportCategory])
+
+  useEffect(() => {
+    loadDevolucionOptions()
+  }, [anchorDate])
+
   async function loadMovements() {
     setLoading(true)
     setError('')
@@ -153,6 +195,29 @@ export default function Accounting() {
       setError('Error al cargar movimientos: ' + err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadDevolucionOptions() {
+    setLoadingDevolucionOptions(true)
+    try {
+      const end = today
+      const start = shiftAnchorDate(today, 'dia', -60)
+      const list = await getVentasReferenciablesParaDevolucion({
+        fechaInicio: start,
+        fechaFin: end,
+      })
+      setDevolucionOptions(list)
+
+      if (list.length === 0) return
+      const alreadySelected = list.some(item => item.value === devolucionForm.referenciaVenta)
+      if (!alreadySelected) {
+        setDevolucionForm(prev => ({ ...prev, referenciaVenta: list[0].value }))
+      }
+    } catch (_) {
+      setDevolucionOptions([])
+    } finally {
+      setLoadingDevolucionOptions(false)
     }
   }
 
@@ -201,10 +266,11 @@ export default function Accounting() {
     setAnularError('')
     setAnulando(true)
     try {
-      await anularGastoOperativo({
+      await anularMovimientoFinanciero({
         transaccionId: anularModal.movement.id,
         motivo: anularMotivo,
         usuarioUid: user?.uid || null,
+        rolEjecutor: role,
       })
       setAnularModal({ open: false, movement: null })
       setAnularMotivo('')
@@ -213,6 +279,84 @@ export default function Accounting() {
       setAnularError(err.message)
     } finally {
       setAnulando(false)
+    }
+  }
+
+  async function handleSubmitDevolucion(e) {
+    e.preventDefault()
+    setDevolucionError('')
+    setDevolucionSubmitting(true)
+    try {
+      await createAjusteDevolucion({
+        fecha: devolucionForm.fecha,
+        referenciaVenta: devolucionForm.referenciaVenta,
+        montoDevolucion: Number(devolucionForm.monto),
+        motivo: devolucionForm.motivo,
+        usuarioUid: user?.uid || null,
+      })
+      setDevolucionForm({
+        fecha: devolucionForm.fecha,
+        referenciaVenta: devolucionForm.referenciaVenta,
+        monto: '',
+        motivo: '',
+      })
+      await loadDevolucionOptions()
+      if (anchorDate !== devolucionForm.fecha || period !== 'dia') {
+        setPeriod('dia')
+        setAnchorDate(devolucionForm.fecha)
+      } else {
+        await loadMovements()
+      }
+    } catch (err) {
+      setDevolucionError(err.message)
+    } finally {
+      setDevolucionSubmitting(false)
+    }
+  }
+
+  async function handleCorregirMovimiento() {
+    if (!corregirModal?.movement?.id) return
+    setCorreccionError('')
+    setCorrigiendo(true)
+    try {
+      await corregirMovimientoFinanciero({
+        transaccionId: corregirModal.movement.id,
+        tipo: correccionForm.tipo,
+        monto: Number(correccionForm.monto),
+        descripcion: correccionForm.descripcion,
+        origen: correccionForm.tipo === 'venta' ? correccionForm.origen : '',
+        categoria: correccionForm.tipo !== 'venta' ? correccionForm.categoria : '',
+        motivo: correccionForm.motivo,
+        usuarioUid: user?.uid || null,
+        rolEjecutor: role,
+      })
+      setCorregirModal({ open: false, movement: null })
+      await loadMovements()
+    } catch (err) {
+      setCorreccionError(err.message)
+    } finally {
+      setCorrigiendo(false)
+    }
+  }
+
+  async function loadReport() {
+    setReportLoading(true)
+    setReportError('')
+    try {
+      const data = await getReporteContablePorPeriodo({
+        modo: reportMode,
+        anio: reportYear,
+        mes: reportMonth,
+        fechaInicio: reportStart,
+        fechaFin: reportEnd,
+        categoria: reportCategory,
+      })
+      setReportData(data)
+    } catch (err) {
+      setReportError(err.message)
+      setReportData(null)
+    } finally {
+      setReportLoading(false)
     }
   }
 
@@ -228,13 +372,17 @@ export default function Accounting() {
 
   const stats = useMemo(() => {
     const ingresos = visibleMovements
-      .filter(m => String(m.tipo || '').toLowerCase() === 'venta')
+      .filter(m => {
+        const tipo = String(m.tipo || '').toLowerCase()
+        const estado = String(m.estado || 'activo').toLowerCase()
+        return tipo === 'venta' && estado !== 'anulado'
+      })
       .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0)
     const egresos = visibleMovements
       .filter(m => {
-        const isGasto = String(m.tipo || '').toLowerCase() === 'gasto'
+        const tipo = String(m.tipo || '').toLowerCase()
         const estado = String(m.estado || 'activo').toLowerCase()
-        return isGasto && estado !== 'anulado'
+        return (tipo === 'gasto' || tipo === 'devolucion') && estado !== 'anulado'
       })
       .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0)
     const ventasPos = visibleMovements
@@ -257,7 +405,8 @@ export default function Accounting() {
       const day = m.fecha
       if (!map[day]) return
       const amount = Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0))
-      const isVenta = String(m.tipo || '').toLowerCase() === 'venta'
+      const tipo = String(m.tipo || '').toLowerCase()
+      const isVenta = tipo === 'venta'
       const isAnulado = String(m.estado || 'activo').toLowerCase() === 'anulado'
       if (isVenta) map[day].ingresos += amount
       else if (!isAnulado) map[day].egresos += amount
@@ -267,6 +416,10 @@ export default function Accounting() {
   }, [periodDays, movements])
 
   const isFormalExpense = formData.tipo === 'gasto' && Number(formData.monto || 0) >= FORMAL_EXPENSE_MIN_AMOUNT
+  const selectedVentaDevolucion = useMemo(
+    () => devolucionOptions.find(item => item.value === devolucionForm.referenciaVenta) || null,
+    [devolucionOptions, devolucionForm.referenciaVenta]
+  )
 
   return (
     <div className="space-y-6 pb-20 md:pb-6">
@@ -430,6 +583,180 @@ export default function Accounting() {
         </form>
       </div>
 
+      <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <h2 className="font-semibold text-gray-800 mb-3">Registrar devolución</h2>
+        <form onSubmit={handleSubmitDevolucion} className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Fecha *</label>
+              <input type="date" value={devolucionForm.fecha} onChange={e => setDevolucionForm(p => ({ ...p, fecha: e.target.value }))} className="input input-bordered input-sm w-full" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Referencia venta *</label>
+              <select
+                value={devolucionForm.referenciaVenta}
+                onChange={e => setDevolucionForm(p => ({ ...p, referenciaVenta: e.target.value }))}
+                className="select select-bordered select-sm w-full"
+                disabled={loadingDevolucionOptions || devolucionOptions.length === 0}
+              >
+                {loadingDevolucionOptions ? (
+                  <option value="">Cargando ventas...</option>
+                ) : devolucionOptions.length === 0 ? (
+                  <option value="">No hay ventas disponibles</option>
+                ) : (
+                  devolucionOptions.map(item => (
+                    <option key={item.key} value={item.value}>
+                      {item.fecha} | {item.tipoFuente === 'pos' ? 'POS' : 'Manual'} | Disp: {formatCRC(item.montoDisponible)}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Monto devuelto (CRC) *</label>
+              <input type="number" min="1" step="1" value={devolucionForm.monto} onChange={e => setDevolucionForm(p => ({ ...p, monto: e.target.value }))} className="input input-bordered input-sm w-full" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Motivo *</label>
+              <input type="text" value={devolucionForm.motivo} onChange={e => setDevolucionForm(p => ({ ...p, motivo: e.target.value }))} className="input input-bordered input-sm w-full" placeholder="Detalle de la devolución" />
+            </div>
+          </div>
+          {selectedVentaDevolucion && (
+            <div className="text-xs rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 flex flex-col gap-1">
+              <span className="text-gray-700">
+                Venta seleccionada: <span className="font-medium">{selectedVentaDevolucion.descripcion}</span>
+              </span>
+              <span className="text-gray-600">
+                Referencia: {selectedVentaDevolucion.value} | Monto original: {formatCRC(selectedVentaDevolucion.montoOriginal)} | Disponible: {formatCRC(selectedVentaDevolucion.montoDisponible)}
+              </span>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setDevolucionForm(p => ({ ...p, monto: String(Math.max(0, Math.trunc(selectedVentaDevolucion.montoDisponible))) }))}
+                  className="btn btn-ghost btn-xs"
+                >
+                  Usar monto disponible
+                </button>
+              </div>
+            </div>
+          )}
+          {devolucionError && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
+              <ExclamationTriangleIcon className="w-4 h-4" />
+              {devolucionError}
+            </div>
+          )}
+          <div className="flex justify-end">
+            <button type="submit" className="btn btn-secondary btn-sm" disabled={devolucionSubmitting}>
+              {devolucionSubmitting ? 'Guardando...' : 'Guardar devolución'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <h2 className="font-semibold text-gray-800">Reporte contable por período</h2>
+          <button onClick={loadReport} className="btn btn-outline btn-sm gap-2" disabled={reportLoading}>
+            <ArrowPathIcon className={`w-4 h-4 ${reportLoading ? 'animate-spin' : ''}`} />
+            Actualizar reporte
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Modo</label>
+            <select value={reportMode} onChange={e => setReportMode(e.target.value)} className="select select-bordered select-sm w-full">
+              <option value="mensual">Mensual</option>
+              <option value="anual">Anual</option>
+              <option value="personalizado">Personalizado</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Año</label>
+            <input type="number" value={reportYear} onChange={e => setReportYear(Number(e.target.value || 0))} className="input input-bordered input-sm w-full" />
+          </div>
+          {reportMode === 'mensual' && (
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Mes</label>
+              <input type="number" min="1" max="12" value={reportMonth} onChange={e => setReportMonth(Number(e.target.value || 1))} className="input input-bordered input-sm w-full" />
+            </div>
+          )}
+          {reportMode === 'personalizado' && (
+            <>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Desde</label>
+                <input type="date" value={reportStart} onChange={e => setReportStart(e.target.value)} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Hasta</label>
+                <input type="date" value={reportEnd} onChange={e => setReportEnd(e.target.value)} className="input input-bordered input-sm w-full" />
+              </div>
+            </>
+          )}
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Categoría</label>
+            <select value={reportCategory} onChange={e => setReportCategory(e.target.value)} className="select select-bordered select-sm w-full">
+              <option value="all">Todas</option>
+              <option value="ventas">Solo ventas</option>
+              <option value="egresos">Solo egresos</option>
+              <option value="insumos">Insumos</option>
+              <option value="servicios">Servicios</option>
+              <option value="devolucion">Devolución</option>
+            </select>
+          </div>
+        </div>
+        {reportError && (
+          <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</div>
+        )}
+        {reportData && (
+          <div className="space-y-2">
+            <div className="text-sm text-gray-600">
+              Rango: <span className="font-medium">{reportData.rango.inicio}</span> a <span className="font-medium">{reportData.rango.fin}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+                Ingresos: <span className="font-semibold text-emerald-700">{formatCRC(reportData.totalIngresos)}</span>
+              </div>
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm">
+                Egresos: <span className="font-semibold text-red-600">{formatCRC(reportData.totalEgresos)}</span>
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm">
+                Balance: <span className="font-semibold text-cyan-700">{formatCRC(reportData.balance)}</span>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                Movimientos: <span className="font-semibold text-gray-700">{reportData.cantidadMovimientos}</span>
+              </div>
+            </div>
+            {reportData.cantidadMovimientos === 0 ? (
+              <div className="text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-2">No hay datos para este período.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-xs text-gray-600">Período</th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-600">Ingresos</th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-600">Egresos</th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-600">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.breakdown.map(row => (
+                      <tr key={row.periodo} className="border-t border-gray-100">
+                        <td className="px-3 py-2">{row.periodo}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 font-medium">{formatCRC(row.ingresos)}</td>
+                        <td className="px-3 py-2 text-right text-red-600 font-medium">{formatCRC(row.egresos)}</td>
+                        <td className="px-3 py-2 text-right font-semibold">{formatCRC(row.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {error && (
         <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
@@ -458,10 +785,13 @@ export default function Accounting() {
               ) : visibleMovements.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">Sin movimientos para el filtro seleccionado.</td></tr>
               ) : paginatedMovements.map(m => {
-                const isVenta = String(m.tipo || '').toLowerCase() === 'venta'
+                const tipo = String(m.tipo || '').toLowerCase()
+                const isVenta = tipo === 'venta'
+                const isDevolucion = tipo === 'devolucion'
                 const amount = Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0))
                 const isAnulado = String(m.estado || 'activo').toLowerCase() === 'anulado'
-                const canAnular = !isVenta && !isAnulado && m.source !== 'pos_auto'
+                const canCorregir = !isAnulado && m.source !== 'pos_auto'
+                const canAnular = !isAnulado && m.source !== 'pos_auto'
                 const categoriaLabel = m.categoriaLabel || m.categoria || '-'
                 return (
                   <tr key={m.id} className="border-t border-gray-100">
@@ -475,8 +805,8 @@ export default function Accounting() {
                     </td>
                     <td className="px-4 py-2 text-sm text-gray-600">{m.origen || categoriaLabel}</td>
                     <td className="px-4 py-2 text-sm">
-                      <span className={`px-2 py-1 rounded-md border text-xs font-medium ${isVenta ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                        {isVenta ? 'Venta' : 'Gasto'}
+                      <span className={`px-2 py-1 rounded-md border text-xs font-medium ${isVenta ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : isDevolucion ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                        {isVenta ? 'Venta' : isDevolucion ? 'Devolución' : 'Gasto'}
                       </span>
                       {isAnulado && (
                         <span className="ml-2 px-2 py-1 rounded-md border text-xs font-medium bg-gray-50 border-gray-200 text-gray-600">
@@ -484,21 +814,44 @@ export default function Accounting() {
                         </span>
                       )}
                     </td>
-                    <td className={`px-4 py-2 text-sm text-right font-semibold ${isVenta ? 'text-emerald-700' : 'text-red-600'}`}>
+                    <td className={`px-4 py-2 text-sm text-right font-semibold ${isVenta ? 'text-emerald-700' : isDevolucion ? 'text-amber-700' : 'text-red-600'}`}>
                       {isVenta ? '+' : (isAnulado ? '' : '-')}{formatCRC(amount)}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {canAnular ? (
-                        <button
-                          onClick={() => {
-                            setAnularModal({ open: true, movement: m })
-                            setAnularMotivo('')
-                            setAnularError('')
-                          }}
-                          className="btn btn-ghost btn-xs text-red-600"
-                        >
-                          Anular
-                        </button>
+                      {canCorregir || canAnular ? (
+                        <div className="flex justify-end gap-1">
+                          {canCorregir && (
+                            <button
+                              onClick={() => {
+                                setCorregirModal({ open: true, movement: m })
+                                setCorreccionError('')
+                                setCorreccionForm({
+                                  tipo: tipo || 'venta',
+                                  monto: String(amount || ''),
+                                  descripcion: m.descripcion || '',
+                                  origen: m.origen || '',
+                                  categoria: m.categoria || '',
+                                  motivo: '',
+                                })
+                              }}
+                              className="btn btn-ghost btn-xs text-cyan-700"
+                            >
+                              Corregir
+                            </button>
+                          )}
+                          {canAnular && (
+                            <button
+                              onClick={() => {
+                                setAnularModal({ open: true, movement: m })
+                                setAnularMotivo('')
+                                setAnularError('')
+                              }}
+                              className="btn btn-ghost btn-xs text-red-600"
+                            >
+                              Anular
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-gray-400">-</span>
                       )}
@@ -519,9 +872,9 @@ export default function Accounting() {
       {anularModal.open && (
         <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
           <div className="w-full max-w-lg bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-            <h3 className="text-base font-semibold text-gray-800">Anular gasto</h3>
+            <h3 className="text-base font-semibold text-gray-800">Anular movimiento</h3>
             <p className="text-sm text-gray-600">
-              Este gasto dejará de afectar egresos y balance.
+              Este movimiento dejará de afectar el balance.
             </p>
             <div className="text-sm bg-gray-50 border border-gray-200 rounded-lg p-3">
               <div><span className="text-gray-500">Descripcion:</span> {anularModal.movement?.descripcion || '-'}</div>
@@ -563,6 +916,73 @@ export default function Accounting() {
                 disabled={anulando}
               >
                 {anulando ? 'Anulando...' : 'Confirmar anulacion'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {corregirModal.open && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-base font-semibold text-gray-800">Corregir movimiento</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Tipo</label>
+                <select value={correccionForm.tipo} onChange={e => setCorreccionForm(p => ({ ...p, tipo: e.target.value }))} className="select select-bordered select-sm w-full">
+                  <option value="venta">Venta</option>
+                  <option value="gasto">Gasto</option>
+                  <option value="devolucion">Devolución</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Monto</label>
+                <input type="number" min="1" step="1" value={correccionForm.monto} onChange={e => setCorreccionForm(p => ({ ...p, monto: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-gray-600 block mb-1">Descripción</label>
+                <input type="text" value={correccionForm.descripcion} onChange={e => setCorreccionForm(p => ({ ...p, descripcion: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              {correccionForm.tipo === 'venta' ? (
+                <div className="md:col-span-2">
+                  <label className="text-xs text-gray-600 block mb-1">Origen</label>
+                  <input type="text" value={correccionForm.origen} onChange={e => setCorreccionForm(p => ({ ...p, origen: e.target.value }))} className="input input-bordered input-sm w-full" />
+                </div>
+              ) : (
+                <div className="md:col-span-2">
+                  <label className="text-xs text-gray-600 block mb-1">Categoría</label>
+                  <input type="text" value={correccionForm.categoria} onChange={e => setCorreccionForm(p => ({ ...p, categoria: e.target.value }))} className="input input-bordered input-sm w-full" />
+                </div>
+              )}
+              <div className="md:col-span-2">
+                <label className="text-xs text-gray-600 block mb-1">Motivo de corrección *</label>
+                <textarea
+                  value={correccionForm.motivo}
+                  onChange={e => setCorreccionForm(p => ({ ...p, motivo: e.target.value }))}
+                  className="textarea textarea-bordered textarea-sm w-full"
+                  rows={3}
+                />
+              </div>
+            </div>
+            {correccionError && (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                <ExclamationTriangleIcon className="w-4 h-4" />
+                {correccionError}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (corrigiendo) return
+                  setCorregirModal({ open: false, movement: null })
+                  setCorreccionError('')
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                Cancelar
+              </button>
+              <button onClick={handleCorregirMovimiento} className="btn btn-primary btn-sm" disabled={corrigiendo}>
+                {corrigiendo ? 'Guardando...' : 'Guardar corrección'}
               </button>
             </div>
           </div>
