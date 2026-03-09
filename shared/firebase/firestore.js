@@ -978,6 +978,20 @@ function rangeForDateStr(fecha) {
   return { start, end };
 }
 
+const FORMAL_EXPENSE_MIN_AMOUNT = 50000;
+
+function buildInternalComprobanteCode(tipo, now = new Date()) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const prefix = String(tipo || '').toLowerCase() === 'gasto' ? 'GAS' : 'VEN';
+  const random = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${prefix}-${y}${m}${d}-${hh}${mm}${ss}-${random}`;
+}
+
 /**
  * CF-001: Registra movimiento financiero manual (venta o gasto).
  */
@@ -988,6 +1002,9 @@ export async function createMovimientoFinanciero({
   descripcion,
   origen = '',
   categoria = '',
+  categoriaPersonalizada = '',
+  proveedor = '',
+  numeroFactura = '',
   usuarioUid = null,
 }) {
   const fechaStr = String(fecha || '').trim();
@@ -1013,6 +1030,10 @@ export async function createMovimientoFinanciero({
 
   const origenTrim = String(origen || '').trim();
   const categoriaTrim = String(categoria || '').trim();
+  const categoriaCustomTrim = String(categoriaPersonalizada || '').trim();
+  const proveedorTrim = String(proveedor || '').trim();
+  const facturaTrim = String(numeroFactura || '').trim();
+  const facturaNorm = facturaTrim.toLowerCase();
 
   if (tipoNorm === 'venta' && !origenTrim) {
     throw new Error('El origen es obligatorio para ventas.');
@@ -1020,9 +1041,33 @@ export async function createMovimientoFinanciero({
   if (tipoNorm === 'gasto' && !categoriaTrim) {
     throw new Error('La categoria es obligatoria para gastos.');
   }
+  if (tipoNorm === 'gasto' && categoriaTrim === 'otros' && !categoriaCustomTrim) {
+    throw new Error('Debe indicar la categoria personalizada.');
+  }
+  const isFormalExpense = tipoNorm === 'gasto' && Math.abs(amount) >= FORMAL_EXPENSE_MIN_AMOUNT;
+  if (isFormalExpense && !proveedorTrim) {
+    throw new Error('El proveedor es obligatorio para gastos mayores o iguales a ₡50,000.');
+  }
+  if (isFormalExpense && !facturaTrim) {
+    throw new Error('El numero de factura es obligatorio para gastos mayores o iguales a ₡50,000.');
+  }
+  if (tipoNorm === 'gasto' && facturaNorm) {
+    const q = query(collection(db, 'transacciones'), where('tipo', '==', 'gasto'));
+    const snap = await getDocs(q);
+    const duplicada = snap.docs.some(d => {
+      const data = d.data() || {};
+      const estado = String(data.estado || 'activo').toLowerCase();
+      const facturaDoc = String(data.numeroFacturaNormalized || '').toLowerCase();
+      return estado !== 'anulado' && facturaDoc === facturaNorm;
+    });
+    if (duplicada) {
+      throw new Error('Factura ya registrada.');
+    }
+  }
 
   const now = new Date();
   const signedAmount = tipoNorm === 'gasto' ? -Math.abs(amount) : Math.abs(amount);
+  const comprobanteInterno = buildInternalComprobanteCode(tipoNorm, now);
 
   const ref = await addDoc(collection(db, 'transacciones'), {
     tipo: tipoNorm,
@@ -1032,6 +1077,15 @@ export async function createMovimientoFinanciero({
     descripcion: descripcionTrim,
     origen: origenTrim || null,
     categoria: categoriaTrim || null,
+    categoriaPersonalizada: tipoNorm === 'gasto' && categoriaTrim === 'otros' ? categoriaCustomTrim : null,
+    categoriaLabel: tipoNorm === 'gasto'
+      ? (categoriaTrim === 'otros' ? categoriaCustomTrim : categoriaTrim)
+      : null,
+    proveedor: tipoNorm === 'gasto' ? (proveedorTrim || null) : null,
+    numeroFactura: tipoNorm === 'gasto' ? (facturaTrim || null) : null,
+    numeroFacturaNormalized: tipoNorm === 'gasto' ? (facturaNorm || null) : null,
+    comprobanteInterno,
+    estado: 'activo',
     origenSistema: 'manual_cf001',
     createdByUid: usuarioUid || null,
     timestamp: now,
@@ -1040,6 +1094,55 @@ export async function createMovimientoFinanciero({
   });
 
   return ref.id;
+}
+
+/**
+ * CF-003: Anulación de gasto con motivo obligatorio.
+ */
+export async function anularGastoOperativo({
+  transaccionId,
+  motivo,
+  usuarioUid = null,
+}) {
+  if (!transaccionId) throw new Error('transaccionId es obligatorio.');
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) throw new Error('Debe indicar motivo para anular gasto.');
+
+  const txRef = doc(db, 'transacciones', transaccionId);
+  const snap = await getDoc(txRef);
+  if (!snap.exists()) throw new Error('Gasto no encontrado.');
+  const data = snap.data() || {};
+  if (String(data.tipo || '').toLowerCase() !== 'gasto') {
+    throw new Error('La transaccion no corresponde a un gasto.');
+  }
+  if (String(data.estado || 'activo').toLowerCase() === 'anulado') {
+    throw new Error('El gasto ya fue anulado.');
+  }
+
+  const now = new Date();
+  await updateDoc(txRef, {
+    estado: 'anulado',
+    motivoAnulacion: motivoTrim,
+    anuladoAt: now,
+    anuladoPorUid: usuarioUid || null,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'anulacion_gasto_operativo',
+      transaccionId,
+      uid: usuarioUid || null,
+      detalles: {
+        fecha: data.fecha || null,
+        categoria: data.categoria || null,
+        numeroFactura: data.numeroFactura || null,
+        montoAbsoluto: Number(data.montoAbsoluto || 0),
+        motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
 }
 
 /**
