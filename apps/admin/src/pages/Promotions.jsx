@@ -30,6 +30,7 @@ const WEEK_DAYS = [
   { id: 'sabado', label: 'Sab' },
   { id: 'domingo', label: 'Dom' },
 ]
+const HISTORICO_PAGE_SIZE = 5
 
 function toDateStr(d) {
   const y = d.getFullYear()
@@ -67,6 +68,15 @@ function initialForm(today) {
   }
 }
 
+function dateRangeOverlaps({ startA, endA, startB, endB }) {
+  const aStart = String(startA || '').trim()
+  const aEnd = String(endA || '').trim()
+  const bStart = String(startB || '').trim()
+  const bEnd = String(endB || '').trim()
+  if (!aStart || !aEnd || !bStart || !bEnd) return true
+  return aStart <= bEnd && aEnd >= bStart
+}
+
 export default function Promotions() {
   const { user } = useAuth()
   const today = toDateStr(new Date())
@@ -90,6 +100,9 @@ export default function Promotions() {
     fin: today,
     promocionId: '',
   })
+  const [historicoEstadoFilter, setHistoricoEstadoFilter] = useState('all')
+  const [historicoDetallePromocionId, setHistoricoDetallePromocionId] = useState('')
+  const [historicoVisibleCount, setHistoricoVisibleCount] = useState(HISTORICO_PAGE_SIZE)
 
   const [showForm, setShowForm] = useState(false)
   const [editingPromotion, setEditingPromotion] = useState(null)
@@ -103,6 +116,10 @@ export default function Promotions() {
   useEffect(() => {
     loadPromocionesAplicadas()
   }, [aplicadasRange.inicio, aplicadasRange.fin, aplicadasRange.promocionId])
+
+  useEffect(() => {
+    setHistoricoVisibleCount(HISTORICO_PAGE_SIZE)
+  }, [aplicadasRange.inicio, aplicadasRange.fin, historicoEstadoFilter])
 
   async function loadPromotions() {
     setLoading(true)
@@ -300,6 +317,84 @@ export default function Promotions() {
   const deletedPromotions = useMemo(() => {
     return promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'eliminada')
   }, [promotions])
+
+  const historicoRows = useMemo(() => {
+    const transacciones = Array.isArray(aplicadasData?.transacciones) ? aplicadasData.transacciones : []
+    const resumenMap = {}
+    ;(aplicadasData?.resumenPorPromo || []).forEach(item => {
+      const key = String(item.promocionId || '').trim()
+      if (!key) return
+      resumenMap[key] = item
+    })
+
+    return promotions
+      .filter(p => {
+        const status = String(p.estadoPromocion || '').toLowerCase()
+        if (historicoEstadoFilter !== 'all' && status !== historicoEstadoFilter) return false
+        return dateRangeOverlaps({
+          startA: p.fechaInicio,
+          endA: p.fechaFin,
+          startB: aplicadasRange.inicio,
+          endB: aplicadasRange.fin,
+        })
+      })
+      .map(p => {
+        const promoId = String(p.id || '')
+        const resumen = resumenMap[promoId] || {}
+        const usos = Number(resumen.usos || 0)
+        const descuentoTotal = Number(resumen.descuentoTotal || 0)
+        const ventasConPromo = Number(resumen.ventasConPromo || 0)
+        const ticketPromedio = usos > 0 ? (ventasConPromo / usos) : 0
+
+        const byPeriodo = {}
+        transacciones
+          .filter(t => String(t.promocionId || '') === promoId)
+          .forEach(t => {
+            const periodo = String(t.fecha || '').slice(0, 7)
+            if (!periodo) return
+            byPeriodo[periodo] = (byPeriodo[periodo] || 0) + 1
+          })
+        const periodoMayorUso = Object.entries(byPeriodo)
+          .sort((a, b) => b[1] - a[1])[0]?.[0] || '-'
+
+        const impactoVentas = ventasConPromo - descuentoTotal
+        return {
+          id: p.id,
+          nombre: p.nombre || 'Promoción',
+          estadoPromocion: String(p.estadoPromocion || '').toLowerCase(),
+          fechaInicio: p.fechaInicio || '-',
+          fechaFin: p.fechaFin || '-',
+          usos,
+          descuentoTotal,
+          ventasConPromo,
+          ticketPromedio,
+          impactoVentas,
+          periodoMayorUso,
+        }
+      })
+      .sort((a, b) => b.usos - a.usos)
+  }, [promotions, aplicadasData, aplicadasRange.inicio, aplicadasRange.fin, historicoEstadoFilter])
+
+  const historicoRowsPaginated = useMemo(
+    () => historicoRows.slice(0, historicoVisibleCount),
+    [historicoRows, historicoVisibleCount]
+  )
+
+  const detallePromocion = useMemo(() => {
+    const selectedId = String(historicoDetallePromocionId || '').trim()
+    if (!selectedId) return null
+    return historicoRows.find(row => row.id === selectedId) || null
+  }, [historicoRows, historicoDetallePromocionId])
+
+  useEffect(() => {
+    if (!historicoRows.length) {
+      setHistoricoDetallePromocionId('')
+      return
+    }
+    if (!historicoRows.some(r => r.id === historicoDetallePromocionId)) {
+      setHistoricoDetallePromocionId(historicoRows[0].id)
+    }
+  }, [historicoRows, historicoDetallePromocionId])
 
   return (
     <div className="space-y-6 pb-20 md:pb-6">
@@ -642,6 +737,105 @@ export default function Promotions() {
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-gray-800">Histórico y métricas de promociones</h2>
+            <p className="text-xs text-gray-500">
+              Análisis comparativo para el rango {aplicadasRange.inicio} a {aplicadasRange.fin}
+            </p>
+          </div>
+          <select
+            value={historicoEstadoFilter}
+            onChange={e => setHistoricoEstadoFilter(e.target.value)}
+            className="select select-bordered select-sm"
+          >
+            <option value="all">Todos los estados</option>
+            <option value="activa">Activas</option>
+            <option value="programada">Programadas</option>
+            <option value="inactiva">Inactivas</option>
+            <option value="expirada">Expiradas</option>
+            <option value="eliminada">Eliminadas</option>
+          </select>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left px-3 py-2 text-xs text-gray-600">Promoción</th>
+                  <th className="text-left px-3 py-2 text-xs text-gray-600">Vigencia</th>
+                  <th className="text-left px-3 py-2 text-xs text-gray-600">Estado</th>
+                  <th className="text-right px-3 py-2 text-xs text-gray-600">Usos</th>
+                  <th className="text-right px-3 py-2 text-xs text-gray-600">Descuento total</th>
+                  <th className="text-right px-3 py-2 text-xs text-gray-600">Impacto en ventas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historicoRowsPaginated.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
+                      No hay promociones para los filtros seleccionados.
+                    </td>
+                  </tr>
+                ) : historicoRowsPaginated.map(row => (
+                  <tr key={row.id} className="border-t border-gray-100">
+                    <td className="px-3 py-2 text-gray-800 font-medium">{row.nombre}</td>
+                    <td className="px-3 py-2 text-gray-600">{row.fechaInicio} a {row.fechaFin}</td>
+                    <td className="px-3 py-2">
+                      <span className={`px-2 py-0.5 rounded-md text-xs border ${statusBadgeClass(row.estadoPromocion)}`}>
+                        {row.estadoPromocion}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-700 font-medium">{row.usos}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700 font-semibold">₡{row.descuentoTotal.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-cyan-700 font-semibold">₡{row.impactoVentas.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {historicoRows.length > historicoVisibleCount && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => setHistoricoVisibleCount(prev => prev + HISTORICO_PAGE_SIZE)}
+                className="btn btn-outline btn-sm"
+              >
+                Ver más
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Detalle por promoción</label>
+              <select
+                value={historicoDetallePromocionId}
+                onChange={e => setHistoricoDetallePromocionId(e.target.value)}
+                className="select select-bordered select-sm w-full"
+              >
+                {historicoRows.length === 0 ? (
+                  <option value="">Sin promociones en el rango</option>
+                ) : historicoRows.map(row => (
+                  <option key={row.id} value={row.id}>{row.nombre}</option>
+                ))}
+              </select>
+            </div>
+            {detallePromocion && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm space-y-1">
+                <div className="font-semibold text-gray-800">{detallePromocion.nombre}</div>
+                <div className="text-gray-600">Usos: <span className="font-medium text-gray-800">{detallePromocion.usos}</span></div>
+                <div className="text-gray-600">Descuento total: <span className="font-medium text-emerald-700">₡{detallePromocion.descuentoTotal.toLocaleString()}</span></div>
+                <div className="text-gray-600">Ticket promedio con descuento: <span className="font-medium text-cyan-700">₡{Math.round(detallePromocion.ticketPromedio).toLocaleString()}</span></div>
+                <div className="text-gray-600">Período de mayor uso: <span className="font-medium text-gray-800">{detallePromocion.periodoMayorUso}</span></div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
