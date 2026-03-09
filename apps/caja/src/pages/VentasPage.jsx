@@ -20,6 +20,7 @@ import {
   getMesasConCuentaActivaOrThrow,
   getCuentaItems,
   getProductos,
+  getPromocionesActivasParaCobro,
   createVentaDirectaCuenta,
   addVentaDirectaItem,
   cerrarVentaDirectaCuenta,
@@ -139,18 +140,32 @@ function CartItem({ item, onIncrease, onDecrease, onRemove }) {
   )
 }
 
-function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
+function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error, promociones = [] }) {
   const [metodo, setMetodo] = useState('efectivo')
+  const [promoId, setPromoId] = useState('')
 
   useEffect(() => {
-    if (open) setMetodo('efectivo')
+    if (open) {
+      setMetodo('efectivo')
+      setPromoId('')
+    }
   }, [open])
 
   if (!open) return null
 
   const subtotal = Math.round(cart.reduce((s, i) => s + Number(i.price || 0) * Number(i.qty || 0), 0))
-  const tax = Math.round(subtotal * 0.13)
-  const total = subtotal + tax
+  const selectedPromo = promociones.find(p => p.id === promoId) || null
+  let descuento = 0
+  if (selectedPromo) {
+    const tipo = String(selectedPromo.tipoBeneficio || '').toLowerCase()
+    const valor = Number(selectedPromo.valorBeneficio || 0)
+    if (tipo === 'porcentaje') descuento = Math.round(subtotal * (valor / 100))
+    if (tipo === 'monto_fijo') descuento = Math.round(valor)
+    descuento = Math.max(0, Math.min(descuento, subtotal))
+  }
+  const subtotalConDescuento = Math.max(0, subtotal - descuento)
+  const tax = Math.round(subtotalConDescuento * 0.13)
+  const total = subtotalConDescuento + tax
 
   return (
     <ModalPortal overlayClassName="flex items-center justify-center">
@@ -175,6 +190,12 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
               <span>Subtotal</span>
               <span className="font-semibold">₡{subtotal.toLocaleString()}</span>
             </div>
+            {selectedPromo && (
+              <div className="flex justify-between text-green-700">
+                <span>Descuento ({selectedPromo.nombre})</span>
+                <span className="font-semibold">-₡{descuento.toLocaleString()}</span>
+              </div>
+            )}
             <div className="flex justify-between text-gray-600">
               <span>IVA (13%)</span>
               <span className="font-semibold">₡{tax.toLocaleString()}</span>
@@ -182,6 +203,29 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
             <div className="flex justify-between text-lg font-bold text-gray-900 bg-cyan-50 border border-cyan-200 rounded p-2 mt-2">
               <span>Total</span>
               <span>₡{total.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="font-semibold text-gray-800">Promoción (opcional)</div>
+            <div className="flex gap-2">
+              <select
+                value={promoId}
+                onChange={(e) => setPromoId(e.target.value)}
+                className="select select-bordered w-full"
+              >
+                <option value="">Sin promoción</option>
+                {promociones.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre} ({p.tipoBeneficio === 'porcentaje' ? `${p.valorBeneficio}%` : `₡${Number(p.valorBeneficio || 0).toLocaleString()}`})
+                  </option>
+                ))}
+              </select>
+              {!!promoId && (
+                <button type="button" onClick={() => setPromoId('')} className="btn btn-ghost">
+                  Quitar
+                </button>
+              )}
             </div>
           </div>
 
@@ -220,7 +264,7 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error }) {
               Cancelar
             </button>
             <button
-              onClick={() => onConfirm(metodo)}
+              onClick={() => onConfirm(metodo, promoId)}
               className="flex-1 btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
               disabled={loading}
             >
@@ -249,6 +293,7 @@ export default function VentasPage() {
   const [pedidosPendientes, setPedidosPendientes] = useState([])
   const [entregando, setEntregando] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [promocionesActivas, setPromocionesActivas] = useState([])
 
   const loadPedidosPendientes = useCallback(async () => {
     try {
@@ -275,9 +320,10 @@ export default function VentasPage() {
     try {
       setMesasLoading(true)
       setMesasError('')
-      const [mesas, productosDB] = await Promise.all([
+      const [mesas, productosDB, promos] = await Promise.all([
         getMesasConCuentaActivaOrThrow(),
         getProductos(),
+        getPromocionesActivasParaCobro().catch(() => []),
       ])
 
       const enriched = await Promise.all(
@@ -305,6 +351,7 @@ export default function VentasPage() {
 
       setMesasConCuenta(enriched)
       setProductos(productosDB || [])
+      setPromocionesActivas(promos || [])
     } catch (e) {
       setMesasError(e?.message || 'Error al cargar mesas')
     } finally {
@@ -387,7 +434,7 @@ export default function VentasPage() {
   const tax = Math.round(subtotal * 0.13)
   const total = subtotal + tax
 
-  async function cobrarVentaDirecta(metodo) {
+  async function cobrarVentaDirecta(metodo, promocionId = '') {
     if (procesandoVenta) return
     setVentaError('')
     if (cart.length === 0) {
@@ -418,6 +465,7 @@ export default function VentasPage() {
         metodo,
         cajeroUid: user?.uid || null,
         impuestoRate: 0.13,
+        promocionId: promocionId || null,
       })
 
       setCart([])
@@ -745,10 +793,11 @@ export default function VentasPage() {
       <ConfirmCobro
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
-        onConfirm={(metodo) => cobrarVentaDirecta(metodo)}
+        onConfirm={(metodo, promocionId) => cobrarVentaDirecta(metodo, promocionId)}
         loading={procesandoVenta}
         cart={cart}
         error={ventaError}
+        promociones={promocionesActivas}
       />
     </div>
   )

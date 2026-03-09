@@ -1762,6 +1762,13 @@ function normalizePromocionStatus({ fechaInicio, fechaFin, estadoForzado = null,
   return 'activa';
 }
 
+function getSemanaDiaEs(dateValue = new Date()) {
+  const d = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  const idx = d.getDay();
+  const map = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+  return map[idx] || '';
+}
+
 function validatePromocionCompleta(data = {}) {
   const nombre = String(data.nombre || '').trim();
   const start = String(data.fechaInicio || '').trim();
@@ -1781,6 +1788,113 @@ function validatePromocionCompleta(data = {}) {
   // Requisito PF-007: bloquear activación si no hay condiciones configuradas.
   const hasAnyCondition = montoMinimo > 0 || Boolean(categoria) || dias.length > 0;
   return hasAnyCondition;
+}
+
+async function resolveCategoriasFromItems(items = []) {
+  const productIds = [...new Set(
+    (items || [])
+      .map(i => String(i.productoId || '').trim())
+      .filter(Boolean)
+  )];
+  if (productIds.length === 0) return new Set();
+
+  const snaps = await Promise.all(productIds.map(async (id) => {
+    try {
+      const snap = await getDoc(doc(db, 'productos', id));
+      return snap.exists() ? snap.data() : null;
+    } catch (_) {
+      return null;
+    }
+  }));
+
+  return new Set(
+    snaps
+      .map(p => String(p?.categoria || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+async function computePromocionForCobro({
+  promocionId,
+  items,
+  subtotal,
+}) {
+  const promoId = String(promocionId || '').trim();
+  if (!promoId) {
+    return { descuento: 0, promocion: null, totalConDescuento: Math.max(0, Math.round(Number(subtotal || 0))) };
+  }
+
+  const snap = await getDoc(doc(db, 'promociones', promoId));
+  if (!snap.exists()) {
+    const err = new Error('Promoción no encontrada.');
+    err.code = 'PROMO_NOT_FOUND';
+    throw err;
+  }
+  const promo = snap.data() || {};
+  const estado = normalizePromocionStatus({
+    fechaInicio: promo.fechaInicio,
+    fechaFin: promo.fechaFin,
+    estadoForzado: promo.estadoPromocion,
+    eliminado: Boolean(promo.eliminado),
+  });
+  if (estado !== 'activa') {
+    const err = new Error('La promoción seleccionada no está activa.');
+    err.code = 'PROMO_NOT_ACTIVE';
+    throw err;
+  }
+
+  const subtotalNum = Math.max(0, Math.round(Number(subtotal || 0)));
+  const condiciones = promo.condiciones || {};
+  const montoMinimo = Number(condiciones.montoMinimo || 0);
+  const categoria = String(condiciones.categoriaProducto || '').trim().toLowerCase();
+  const dias = Array.isArray(condiciones.diaSemana)
+    ? [...new Set(condiciones.diaSemana.map(d => String(d || '').trim().toLowerCase()).filter(Boolean))]
+    : [];
+
+  if (subtotalNum < montoMinimo) {
+    const err = new Error(`La promoción requiere un monto mínimo de ₡${Math.round(montoMinimo).toLocaleString()}.`);
+    err.code = 'PROMO_CONDITION_MIN_AMOUNT';
+    throw err;
+  }
+
+  if (dias.length > 0) {
+    const hoyDia = getSemanaDiaEs(new Date());
+    if (!dias.includes(hoyDia)) {
+      const err = new Error('La promoción no aplica para el día actual.');
+      err.code = 'PROMO_CONDITION_DAY';
+      throw err;
+    }
+  }
+
+  if (categoria) {
+    const categoriesInItems = await resolveCategoriasFromItems(items);
+    if (!categoriesInItems.has(categoria)) {
+      const err = new Error(`La promoción requiere productos de la categoría "${condiciones.categoriaProducto}".`);
+      err.code = 'PROMO_CONDITION_CATEGORY';
+      throw err;
+    }
+  }
+
+  const tipo = String(promo.tipoBeneficio || '').trim().toLowerCase();
+  const valor = Number(promo.valorBeneficio || 0);
+  let descuento = 0;
+  if (tipo === 'porcentaje') {
+    descuento = Math.round(subtotalNum * (valor / 100));
+  } else if (tipo === 'monto_fijo') {
+    descuento = Math.round(valor);
+  }
+  descuento = Math.max(0, Math.min(descuento, subtotalNum));
+
+  return {
+    descuento,
+    promocion: {
+      id: promoId,
+      nombre: String(promo.nombre || ''),
+      tipoBeneficio: tipo,
+      valorBeneficio: valor,
+    },
+    totalConDescuento: subtotalNum - descuento,
+  };
 }
 
 function normalizePromotionPayload({
@@ -1929,6 +2043,14 @@ export async function getPromociones() {
   });
 
   return list;
+}
+
+/**
+ * PF-005: lista promociones activas para aplicar manualmente en cobro.
+ */
+export async function getPromocionesActivasParaCobro() {
+  const list = await getPromociones();
+  return list.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'activa');
 }
 
 /**
@@ -3623,6 +3745,7 @@ export async function cerrarVentaDirectaCuenta({
   metodo = 'efectivo',
   cajeroUid = null,
   impuestoRate = 0.13,
+  promocionId = null,
 }) {
   const cuenta = await getCuenta(cuentaId);
   if (!cuenta) {
@@ -3647,8 +3770,14 @@ export async function cerrarVentaDirectaCuenta({
   const subtotal = Math.round(
     pendientes.reduce((s, i) => s + Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1), 0)
   );
-  const impuesto = Math.round(subtotal * Number(impuestoRate || 0));
-  const total = subtotal + impuesto;
+  const promoResult = await computePromocionForCobro({
+    promocionId,
+    items: pendientes,
+    subtotal,
+  });
+  const subtotalConDescuento = Math.max(0, subtotal - Number(promoResult.descuento || 0));
+  const impuesto = Math.round(subtotalConDescuento * Number(impuestoRate || 0));
+  const total = subtotalConDescuento + impuesto;
   const now = new Date();
 
   const batch = writeBatch(db);
@@ -3666,8 +3795,12 @@ export async function cerrarVentaDirectaCuenta({
     estadoEntrega: 'pendiente_entrega',
     metodoPago: metodo,
     montoSubtotal: subtotal,
+    montoDescuentoPromocion: Number(promoResult.descuento || 0),
+    montoSubtotalConDescuento: subtotalConDescuento,
     montoImpuesto: impuesto,
     montoTotal: total,
+    promocionAplicadaId: promoResult.promocion?.id || null,
+    promocionAplicada: promoResult.promocion || null,
     cobradoAt: now,
     closedByUid: cajeroUid,
     updatedAt: now,
@@ -3684,8 +3817,10 @@ export async function cerrarVentaDirectaCuenta({
       metodo,
       itemsCount: pendientes.length,
       subtotal,
+      descuentoPromocion: Number(promoResult.descuento || 0),
       impuesto,
       total,
+      promocionAplicadaId: promoResult.promocion?.id || null,
     },
     timestamp: now,
   });
@@ -3715,7 +3850,14 @@ export async function cerrarVentaDirectaCuenta({
     updatedAt: now,
   });
 
-  return { subtotal, impuesto, total, itemsCount: pendientes.length };
+  return {
+    subtotal,
+    descuentoPromocion: Number(promoResult.descuento || 0),
+    subtotalConDescuento,
+    impuesto,
+    total,
+    itemsCount: pendientes.length,
+  };
 }
 
 /**
@@ -4083,6 +4225,7 @@ export async function payPartialForComensal({
   metodo,
   cajeroUid = null,
   impuestoRate = 0.13,
+  promocionId = null,
 }) {
   const allowed = ['efectivo', 'tarjeta', 'mixto'];
   if (!allowed.includes(metodo)) {
@@ -4095,6 +4238,13 @@ export async function payPartialForComensal({
   if (!normalizedComensalId) {
     const err = new Error('Comensal inválido.');
     err.code = 'INVALID_COMENSAL';
+    throw err;
+  }
+
+  const cuenta = await getCuenta(cuentaId);
+  if (!cuenta) {
+    const err = new Error('Cuenta no encontrada.');
+    err.code = 'CUENTA_NOT_FOUND';
     throw err;
   }
 
@@ -4123,8 +4273,20 @@ export async function payPartialForComensal({
   const subtotal = Math.round(
     items.reduce((s, i) => s + (Number(i.precioUnitSnapshot || 0) * Number(i.cantidad || 1)), 0)
   );
-  const impuesto = Math.round(subtotal * Number(impuestoRate || 0));
-  const total = subtotal + impuesto;
+  const promoId = String(promocionId || '').trim();
+  if (promoId && String(cuenta.promocionAplicadaId || '').trim() && String(cuenta.promocionAplicadaId || '').trim() !== promoId) {
+    const err = new Error('Solo se permite una promoción por cuenta.');
+    err.code = 'PROMO_ONE_PER_ACCOUNT';
+    throw err;
+  }
+  const promoResult = await computePromocionForCobro({
+    promocionId: promoId,
+    items,
+    subtotal,
+  });
+  const subtotalConDescuento = Math.max(0, subtotal - Number(promoResult.descuento || 0));
+  const impuesto = Math.round(subtotalConDescuento * Number(impuestoRate || 0));
+  const total = subtotalConDescuento + impuesto;
   const montoCuentaCompleta = Math.round(
     allItems
       .filter((i) => String(i.estadoItem || '').trim().toLowerCase() !== 'anulado')
@@ -4145,8 +4307,12 @@ export async function payPartialForComensal({
       metodo,
       estadoPago: 'pagado',
       montoSubtotal: subtotal,
+      montoDescuentoPromocion: Number(promoResult.descuento || 0),
+      montoSubtotalConDescuento: subtotalConDescuento,
       montoImpuesto: impuesto,
       montoTotal: total,
+      promocionAplicadaId: promoResult.promocion?.id || null,
+      promocionAplicada: promoResult.promocion || null,
       cajeroUid,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -4164,6 +4330,14 @@ export async function payPartialForComensal({
   }
 
   await batch.commit();
+
+  if (promoResult.promocion?.id && !String(cuenta.promocionAplicadaId || '').trim()) {
+    await updateDoc(doc(db, 'cuentas', cuentaId), {
+      promocionAplicadaId: promoResult.promocion.id,
+      promocionAplicada: promoResult.promocion,
+      updatedAt: new Date(),
+    });
+  }
 
   let cuentaCerrada = false;
 

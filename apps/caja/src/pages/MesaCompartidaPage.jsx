@@ -28,6 +28,7 @@ import {
   anularCuentaItem,
   revertirAnulacionCuentaItem,
   payPartialForComensal,
+  getPromocionesActivasParaCobro,
   cerrarCuentaReabierta,
   cancelarCuenta,
 } from '@shared/firebase/firestore'
@@ -88,14 +89,31 @@ function ClienteEstadoBadge({ estado }) {
   return <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${cfg.cls}`}>{cfg.text}</span>
 }
 
-function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
+function PaymentModal({ open, onClose, onConfirm, loading, resumen, error, promociones = [] }) {
   const [metodo, setMetodo] = useState('efectivo')
+  const [promoId, setPromoId] = useState('')
 
   useEffect(() => {
-    if (open) setMetodo('efectivo')
+    if (open) {
+      setMetodo('efectivo')
+      setPromoId('')
+    }
   }, [open])
 
   if (!open) return null
+
+  const selectedPromo = promociones.find(p => p.id === promoId) || null
+  let descuento = 0
+  if (selectedPromo) {
+    const tipo = String(selectedPromo.tipoBeneficio || '').toLowerCase()
+    const valor = Number(selectedPromo.valorBeneficio || 0)
+    if (tipo === 'porcentaje') descuento = Math.round(Number(resumen?.subtotal || 0) * (valor / 100))
+    if (tipo === 'monto_fijo') descuento = Math.round(valor)
+    descuento = Math.max(0, Math.min(descuento, Number(resumen?.subtotal || 0)))
+  }
+  const subtotalConDescuento = Math.max(0, Number(resumen?.subtotal || 0) - descuento)
+  const impuestoConDescuento = Math.round(subtotalConDescuento * 0.13)
+  const totalConDescuento = subtotalConDescuento + impuestoConDescuento
 
   return (
     <ModalPortal overlayClassName="flex items-center justify-center">
@@ -118,13 +136,19 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
                 <span>Subtotal</span>
                 <span className="font-semibold">{moneyCRC(resumen?.subtotal || 0)}</span>
               </div>
+              {selectedPromo && (
+                <div className="flex justify-between text-green-700">
+                  <span>Descuento ({selectedPromo.nombre})</span>
+                  <span className="font-semibold">-{moneyCRC(descuento)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-gray-700">
                 <span>Impuesto</span>
-                <span className="font-semibold">{moneyCRC(resumen?.impuesto || 0)}</span>
+                <span className="font-semibold">{moneyCRC(impuestoConDescuento)}</span>
               </div>
               <div className="flex justify-between text-gray-900 text-lg font-bold bg-cyan-50 border border-cyan-200 rounded p-2 mt-2">
                 <span>Total</span>
-                <span>{moneyCRC(resumen?.total || 0)}</span>
+                <span>{moneyCRC(totalConDescuento)}</span>
               </div>
             </div>
           </div>
@@ -153,6 +177,29 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
             </div>
           </div>
 
+          <div className="space-y-2">
+            <div className="font-semibold text-gray-800">Promoción (opcional)</div>
+            <div className="flex gap-2">
+              <select
+                value={promoId}
+                onChange={(e) => setPromoId(e.target.value)}
+                className="select select-bordered w-full"
+              >
+                <option value="">Sin promoción</option>
+                {promociones.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre} ({p.tipoBeneficio === 'porcentaje' ? `${p.valorBeneficio}%` : moneyCRC(p.valorBeneficio)})
+                  </option>
+                ))}
+              </select>
+              {!!promoId && (
+                <button type="button" onClick={() => setPromoId('')} className="btn btn-ghost">
+                  Quitar
+                </button>
+              )}
+            </div>
+          </div>
+
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
               {error}
@@ -164,7 +211,7 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error }) {
               Cancelar
             </button>
             <button
-              onClick={() => onConfirm(metodo)}
+              onClick={() => onConfirm(metodo, promoId)}
               className="flex-1 btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
               disabled={loading}
             >
@@ -215,6 +262,7 @@ export default function MesaCompartidaPage() {
   const [confirmCancelarOpen, setConfirmCancelarOpen] = useState(false)
   const [cancelarMotivo, setCancelarMotivo] = useState('')
   const [cancelarLoading, setCancelarLoading] = useState(false)
+  const [promocionesActivas, setPromocionesActivas] = useState([])
 
   // Solo cuentas que fueron reabiertas desde "Cuentas cerradas" tienen reopenedAt; las nuevas no.
   const cuentaReabierta = useMemo(
@@ -472,7 +520,7 @@ export default function MesaCompartidaPage() {
     setPayOpen(true)
   }
 
-  async function confirmPay(metodo) {
+  async function confirmPay(metodo, promocionId = '') {
     if (!cuenta?.id || !selectedComensalId || !selectedMesaId) return
 
     setPayLoading(true)
@@ -483,6 +531,7 @@ export default function MesaCompartidaPage() {
         mesaId: selectedMesaId,
         comensalId: selectedComensalId,
         metodo,
+        promocionId: promocionId || null,
         cajeroUid: user?.uid || null,
         impuestoRate: 0.13,
       })
@@ -588,7 +637,13 @@ export default function MesaCompartidaPage() {
     ;(async () => {
       try {
         setLoading(true)
-        await loadMesas()
+        await Promise.all([
+          loadMesas(),
+          (async () => {
+            const promos = await getPromocionesActivasParaCobro().catch(() => [])
+            if (mounted) setPromocionesActivas(promos || [])
+          })(),
+        ])
       } catch (e) {
         if (mounted) setError(e?.message || 'Error al cargar mesas')
       } finally {
@@ -941,6 +996,7 @@ export default function MesaCompartidaPage() {
         loading={payLoading}
         resumen={resumenPago}
         error={payError}
+        promociones={promocionesActivas}
       />
 
       {/* Modal Agregar producto */}
