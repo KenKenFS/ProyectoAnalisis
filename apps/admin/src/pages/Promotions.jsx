@@ -1,145 +1,370 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   GiftIcon,
   PlusIcon,
   PencilSquareIcon,
-  TrashIcon,
   CheckCircleIcon,
-  XCircleIcon,
-  SparklesIcon,
+  ClockIcon,
+  ArrowPathIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
+import { useAuth } from '@shared/firebase/AuthContext'
+import { createPromocion, getPromociones, updatePromocionProgramada } from '@shared/firebase/firestore'
 
-const promotions = [
-  { id: 1, title: 'Descuento en Ceviches', description: 'Todos los ceviches con 20% de descuento', discount: '20%', active: true },
-  { id: 2, title: 'Happy Hour Bebidas', description: 'Bebidas alcohólicas al 30% menos', discount: '30%', active: true },
-  { id: 3, title: 'Menú Ejecutivo', description: 'Entrada + plato principal + postre', discount: '15%', active: true },
-  { id: 4, title: 'Promoción Grupo', description: 'Grupos de 6+ personas: descuento en factura', discount: '25%', active: false },
-  { id: 5, title: 'Viernes Especial', description: 'Platos seleccionados con 40% de descuento', discount: '40%', active: false },
-  { id: 6, title: 'Programa de Puntos', description: 'Acumula puntos en cada compra', discount: '10%', active: true },
+const WEEK_DAYS = [
+  { id: 'lunes', label: 'Lun' },
+  { id: 'martes', label: 'Mar' },
+  { id: 'miercoles', label: 'Mie' },
+  { id: 'jueves', label: 'Jue' },
+  { id: 'viernes', label: 'Vie' },
+  { id: 'sabado', label: 'Sab' },
+  { id: 'domingo', label: 'Dom' },
 ]
 
-export default function Promotions() {
-  const [showForm, setShowForm] = useState(false)
+function toDateStr(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
-  const activePromos = promotions.filter(p => p.active).length
-  const inactivePromos = promotions.filter(p => !p.active).length
+function formatBenefit(item) {
+  const value = Number(item.valorBeneficio || 0)
+  if (item.tipoBeneficio === 'porcentaje') return `${value}%`
+  return `₡${value.toLocaleString()}`
+}
+
+function statusBadgeClass(status) {
+  const s = String(status || '').toLowerCase()
+  if (s === 'activa') return 'bg-green-50 text-green-700 border-green-200'
+  if (s === 'programada') return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (s === 'expirada') return 'bg-gray-50 text-gray-600 border-gray-200'
+  return 'bg-amber-50 text-amber-700 border-amber-200'
+}
+
+function initialForm(today) {
+  return {
+    nombre: '',
+    descripcion: '',
+    fechaInicio: today,
+    fechaFin: today,
+    tipoBeneficio: 'porcentaje',
+    valorBeneficio: '',
+    montoMinimo: '',
+    categoriaProducto: '',
+    diaSemana: [],
+  }
+}
+
+export default function Promotions() {
+  const { user } = useAuth()
+  const today = toDateStr(new Date())
+
+  const [promotions, setPromotions] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const [showForm, setShowForm] = useState(false)
+  const [editingPromotion, setEditingPromotion] = useState(null)
+  const [formData, setFormData] = useState(initialForm(today))
+  const [formError, setFormError] = useState('')
+
+  useEffect(() => {
+    loadPromotions()
+  }, [])
+
+  async function loadPromotions() {
+    setLoading(true)
+    setError('')
+    try {
+      const list = await getPromociones()
+      setPromotions(list)
+    } catch (err) {
+      setError('Error al cargar promociones: ' + err.message)
+      setPromotions([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function resetForm() {
+    setEditingPromotion(null)
+    setFormData(initialForm(today))
+    setFormError('')
+  }
+
+  function openCreateForm() {
+    resetForm()
+    setShowForm(true)
+  }
+
+  function openEditForm(item) {
+    setEditingPromotion(item)
+    setFormData({
+      nombre: item.nombre || '',
+      descripcion: item.descripcion || '',
+      fechaInicio: item.fechaInicio || today,
+      fechaFin: item.fechaFin || today,
+      tipoBeneficio: item.tipoBeneficio || 'porcentaje',
+      valorBeneficio: String(item.valorBeneficio || ''),
+      montoMinimo: String(item.condiciones?.montoMinimo || ''),
+      categoriaProducto: item.condiciones?.categoriaProducto || '',
+      diaSemana: Array.isArray(item.condiciones?.diaSemana) ? item.condiciones.diaSemana : [],
+    })
+    setFormError('')
+    setShowForm(true)
+  }
+
+  function toggleWeekDay(day) {
+    setFormData(prev => {
+      const exists = prev.diaSemana.includes(day)
+      return {
+        ...prev,
+        diaSemana: exists ? prev.diaSemana.filter(d => d !== day) : [...prev.diaSemana, day],
+      }
+    })
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setFormError('')
+    setSubmitting(true)
+    try {
+      const payload = {
+        nombre: formData.nombre,
+        descripcion: formData.descripcion,
+        fechaInicio: formData.fechaInicio,
+        fechaFin: formData.fechaFin,
+        tipoBeneficio: formData.tipoBeneficio,
+        valorBeneficio: Number(formData.valorBeneficio),
+        montoMinimo: Number(formData.montoMinimo || 0),
+        categoriaProducto: formData.categoriaProducto,
+        diaSemana: formData.diaSemana,
+        usuarioUid: user?.uid || null,
+      }
+
+      if (editingPromotion?.id) {
+        await updatePromocionProgramada({
+          promocionId: editingPromotion.id,
+          ...payload,
+        })
+      } else {
+        await createPromocion(payload)
+      }
+
+      setShowForm(false)
+      resetForm()
+      await loadPromotions()
+    } catch (err) {
+      setFormError(err.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const stats = useMemo(() => {
+    const activas = promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'activa').length
+    const programadas = promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'programada').length
+    return {
+      total: promotions.length,
+      activas,
+      programadas,
+    }
+  }, [promotions])
+
+  const visiblePromotions = useMemo(() => {
+    return promotions.filter(p => {
+      const s = String(p.estadoPromocion || '').toLowerCase()
+      return s === 'activa' || s === 'programada' || s === 'expirada'
+    })
+  }, [promotions])
 
   return (
     <div className="space-y-6 pb-20 md:pb-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 font-poppins">Promociones y Fidelización</h1>
-          <p className="text-gray-600 text-sm">Gestión de ofertas y programa de lealtad</p>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Promociones y Fidelización</h1>
+          <p className="text-gray-600 text-sm">Gestión de promociones por vigencia, beneficio y condiciones</p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="btn btn-primary gap-2"
-        >
-          <PlusIcon className="w-5 h-5" />
-          {showForm ? 'Cerrar' : 'Nueva Promoción'}
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-3 md:grid-cols-3 gap-4">
-        <div className="card bg-gradient-to-br from-green-500 to-emerald-600 text-white p-4 shadow-lg shadow-green-500/20">
-          <div className="flex items-center gap-3">
-            <GiftIcon className="w-8 h-8 opacity-80" />
-            <div>
-              <div className="text-2xl font-bold">{activePromos}</div>
-              <div className="text-green-100 text-xs">Activas</div>
-            </div>
-          </div>
-        </div>
-        <div className="card bg-gradient-to-br from-purple-500 to-violet-600 text-white p-4 shadow-lg shadow-purple-500/20">
-          <div className="flex items-center gap-3">
-            <SparklesIcon className="w-8 h-8 opacity-80" />
-            <div>
-              <div className="text-2xl font-bold">{inactivePromos}</div>
-              <div className="text-purple-100 text-xs">Inactivas</div>
-            </div>
-          </div>
-        </div>
-        <div className="card bg-gradient-to-br from-amber-500 to-orange-600 text-white p-4 shadow-lg shadow-orange-500/20">
-          <div className="flex items-center gap-3">
-            <CheckCircleIcon className="w-8 h-8 opacity-80" />
-            <div>
-              <div className="text-2xl font-bold">{promotions.length}</div>
-              <div className="text-amber-100 text-xs">Total</div>
-            </div>
-          </div>
+        <div className="flex items-center gap-2">
+          <button onClick={loadPromotions} className="btn btn-outline btn-sm gap-2" disabled={loading}>
+            <ArrowPathIcon className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refrescar
+          </button>
+          <button onClick={openCreateForm} className="btn btn-primary btn-sm gap-2">
+            <PlusIcon className="w-4 h-4" />
+            Nueva promoción
+          </button>
         </div>
       </div>
 
-      {/* Active Promotions */}
-      <div>
-        <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-          <CheckCircleIcon className="w-5 h-5 text-green-500" />
-          Promociones Activas
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {promotions.filter(p => p.active).map(p => (
-            <div key={p.id} className="card bg-white border-l-4 border-green-500 shadow-md hover:shadow-lg transition-shadow">
-              <div className="p-4">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h4 className="font-bold text-gray-800 text-lg">{p.title}</h4>
-                    <span className="badge badge-success badge-sm">Activa</span>
-                  </div>
-                  <span className="badge bg-gradient-to-r from-green-500 to-emerald-500 text-white border-0 text-lg px-3 py-2">
-                    {p.discount}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-600 mb-4">{p.description}</p>
-                <div className="flex gap-2">
-                  <button className="btn btn-outline btn-sm flex-1 gap-1">
-                    <PencilSquareIcon className="w-4 h-4" />
-                    Editar
-                  </button>
-                  <button className="btn btn-ghost btn-sm text-red-500 gap-1">
-                    <XCircleIcon className="w-4 h-4" />
-                  </button>
-                </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+          <p className="text-xs text-green-700">Activas</p>
+          <p className="text-2xl font-bold text-green-700">{stats.activas}</p>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+          <p className="text-xs text-blue-700">Programadas</p>
+          <p className="text-2xl font-bold text-blue-700">{stats.programadas}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <p className="text-xs text-gray-600">Total</p>
+          <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+      )}
+
+      {showForm && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <h2 className="font-semibold text-gray-800 mb-3">
+            {editingPromotion ? 'Editar promoción programada' : 'Registrar promoción'}
+          </h2>
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Nombre *</label>
+                <input type="text" value={formData.nombre} onChange={e => setFormData(p => ({ ...p, nombre: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Descripción</label>
+                <input type="text" value={formData.descripcion} onChange={e => setFormData(p => ({ ...p, descripcion: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Fecha inicio *</label>
+                <input type="date" value={formData.fechaInicio} onChange={e => setFormData(p => ({ ...p, fechaInicio: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Fecha fin *</label>
+                <input type="date" value={formData.fechaFin} onChange={e => setFormData(p => ({ ...p, fechaFin: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Tipo beneficio *</label>
+                <select value={formData.tipoBeneficio} onChange={e => setFormData(p => ({ ...p, tipoBeneficio: e.target.value }))} className="select select-bordered select-sm w-full">
+                  <option value="porcentaje">Porcentaje</option>
+                  <option value="monto_fijo">Monto fijo</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">
+                  Valor beneficio * {formData.tipoBeneficio === 'porcentaje' ? '(%)' : '(CRC)'}
+                </label>
+                <input type="number" min="1" step="1" value={formData.valorBeneficio} onChange={e => setFormData(p => ({ ...p, valorBeneficio: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Monto mínimo (CRC)</label>
+                <input type="number" min="0" step="1" value={formData.montoMinimo} onChange={e => setFormData(p => ({ ...p, montoMinimo: e.target.value }))} className="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Categoría producto (opcional)</label>
+                <input type="text" value={formData.categoriaProducto} onChange={e => setFormData(p => ({ ...p, categoriaProducto: e.target.value }))} className="input input-bordered input-sm w-full" placeholder="Ej: ceviches, bebidas" />
               </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* Inactive Promotions */}
-      <div>
-        <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-          <XCircleIcon className="w-5 h-5 text-gray-400" />
-          Promociones Inactivas
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {promotions.filter(p => !p.active).map(p => (
-            <div key={p.id} className="card bg-gray-50 border-l-4 border-gray-300 opacity-75 shadow-sm hover:shadow-md transition-shadow">
-              <div className="p-4">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h4 className="font-bold text-gray-700 text-lg">{p.title}</h4>
-                    <span className="badge badge-ghost badge-sm">Inactiva</span>
-                  </div>
-                  <span className="badge bg-gray-400 text-white border-0 text-lg px-3 py-2">
-                    {p.discount}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-500 mb-4">{p.description}</p>
-                <div className="flex gap-2">
-                  <button className="btn btn-primary btn-sm flex-1 gap-1">
-                    <CheckCircleIcon className="w-4 h-4" />
-                    Activar
-                  </button>
-                  <button className="btn btn-ghost btn-sm text-red-500 gap-1">
-                    <TrashIcon className="w-4 h-4" />
-                  </button>
-                </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Días de la semana (opcional)</label>
+              <div className="flex flex-wrap gap-2">
+                {WEEK_DAYS.map(day => {
+                  const selected = formData.diaSemana.includes(day.id)
+                  return (
+                    <button
+                      key={day.id}
+                      type="button"
+                      onClick={() => toggleWeekDay(day.id)}
+                      className={`px-2.5 py-1.5 rounded-md text-xs border transition ${selected ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    >
+                      {day.label}
+                    </button>
+                  )
+                })}
               </div>
             </div>
-          ))}
+
+            {formError && (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                <ExclamationTriangleIcon className="w-4 h-4" />
+                {formError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false)
+                  resetForm()
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                Cancelar
+              </button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+                {submitting ? 'Guardando...' : editingPromotion ? 'Guardar cambios' : 'Crear promoción'}
+              </button>
+            </div>
+          </form>
         </div>
+      )}
+
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-800">Promociones registradas</h2>
+        </div>
+        {loading ? (
+          <div className="px-4 py-8 text-sm text-gray-500">Cargando promociones...</div>
+        ) : visiblePromotions.length === 0 ? (
+          <div className="px-4 py-8 text-sm text-gray-500">No hay promociones registradas.</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {visiblePromotions.map(item => {
+              const status = String(item.estadoPromocion || '').toLowerCase()
+              const canEdit = status === 'programada'
+              return (
+                <div key={item.id} className="px-4 py-3">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold text-gray-800">{item.nombre}</h3>
+                        <span className={`px-2 py-0.5 rounded-md text-xs border ${statusBadgeClass(status)}`}>
+                          {status}
+                        </span>
+                      </div>
+                      {item.descripcion && (
+                        <p className="text-sm text-gray-600">{item.descripcion}</p>
+                      )}
+                      <div className="text-xs text-gray-500">
+                        Vigencia: {item.fechaInicio} a {item.fechaFin}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Beneficio: {item.tipoBeneficio === 'porcentaje' ? 'Porcentaje' : 'Monto fijo'} ({formatBenefit(item)})
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Condiciones: monto mínimo ₡{Number(item.condiciones?.montoMinimo || 0).toLocaleString()}
+                        {item.condiciones?.categoriaProducto ? ` | categoría ${item.condiciones.categoriaProducto}` : ''}
+                        {Array.isArray(item.condiciones?.diaSemana) && item.condiciones.diaSemana.length > 0
+                          ? ` | días ${item.condiciones.diaSemana.join(', ')}`
+                          : ''}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {status === 'activa' && <CheckCircleIcon className="w-5 h-5 text-green-600" />}
+                      {status === 'programada' && <ClockIcon className="w-5 h-5 text-blue-600" />}
+                      {canEdit && (
+                        <button onClick={() => openEditForm(item)} className="btn btn-outline btn-sm gap-1">
+                          <PencilSquareIcon className="w-4 h-4" />
+                          Editar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

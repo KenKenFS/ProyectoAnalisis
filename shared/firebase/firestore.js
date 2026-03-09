@@ -1744,6 +1744,237 @@ function normalizeMetodoPago(value) {
   return v;
 }
 
+function normalizePromocionStatus({ fechaInicio, fechaFin, estadoForzado = null, eliminado = false }) {
+  if (eliminado) return 'eliminada';
+  const forced = String(estadoForzado || '').trim().toLowerCase();
+  if (forced === 'inactiva') return 'inactiva';
+
+  const today = toDateStrCR(new Date());
+  const start = String(fechaInicio || '').trim();
+  const end = String(fechaFin || '').trim();
+  if (!start || !end) return 'inactiva';
+  if (today < start) return 'programada';
+  if (today > end) return 'expirada';
+  return 'activa';
+}
+
+function normalizePromotionPayload({
+  nombre,
+  descripcion,
+  fechaInicio,
+  fechaFin,
+  tipoBeneficio,
+  valorBeneficio,
+  montoMinimo = 0,
+  categoriaProducto = '',
+  diaSemana = [],
+}) {
+  const nombreTrim = String(nombre || '').trim();
+  const descripcionTrim = String(descripcion || '').trim();
+  const inicio = String(fechaInicio || '').trim();
+  const fin = String(fechaFin || '').trim();
+  const tipo = String(tipoBeneficio || '').trim().toLowerCase();
+  const valor = Number(valorBeneficio || 0);
+  const monto = Number(montoMinimo || 0);
+  const categoria = String(categoriaProducto || '').trim();
+  const dias = Array.isArray(diaSemana)
+    ? [...new Set(diaSemana.map(d => String(d || '').trim().toLowerCase()).filter(Boolean))]
+    : [];
+
+  if (!nombreTrim) throw new Error('El nombre de la promoción es obligatorio.');
+  if (!inicio || !fin) throw new Error('La fecha de inicio y fin son obligatorias.');
+  if (fin < inicio) throw new Error('La fecha fin no puede ser menor a la fecha inicio.');
+  if (!['porcentaje', 'monto_fijo'].includes(tipo)) {
+    throw new Error('Tipo de beneficio inválido.');
+  }
+  if (!Number.isFinite(valor) || valor <= 0) {
+    throw new Error('El valor del beneficio debe ser mayor a 0.');
+  }
+  if (tipo === 'porcentaje' && valor > 100) {
+    throw new Error('El porcentaje no puede superar 100.');
+  }
+  if (!Number.isFinite(monto) || monto < 0) {
+    throw new Error('El monto mínimo no puede ser negativo.');
+  }
+
+  return {
+    nombre: nombreTrim,
+    descripcion: descripcionTrim,
+    fechaInicio: inicio,
+    fechaFin: fin,
+    tipoBeneficio: tipo,
+    valorBeneficio: valor,
+    condiciones: {
+      montoMinimo: monto,
+      categoriaProducto: categoria || null,
+      diaSemana: dias,
+    },
+  };
+}
+
+/**
+ * PF-001: Registrar promoción con validaciones y estado derivado.
+ */
+export async function createPromocion({
+  nombre,
+  descripcion,
+  fechaInicio,
+  fechaFin,
+  tipoBeneficio,
+  valorBeneficio,
+  montoMinimo = 0,
+  categoriaProducto = '',
+  diaSemana = [],
+  usuarioUid = null,
+}) {
+  const payload = normalizePromotionPayload({
+    nombre,
+    descripcion,
+    fechaInicio,
+    fechaFin,
+    tipoBeneficio,
+    valorBeneficio,
+    montoMinimo,
+    categoriaProducto,
+    diaSemana,
+  });
+
+  const now = new Date();
+  const estadoPromocion = normalizePromocionStatus({
+    fechaInicio: payload.fechaInicio,
+    fechaFin: payload.fechaFin,
+  });
+
+  const ref = await addDoc(collection(db, 'promociones'), {
+    ...payload,
+    estadoPromocion,
+    eliminado: false,
+    createdByUid: usuarioUid || null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'creacion_promocion',
+      promocionId: ref.id,
+      uid: usuarioUid || null,
+      detalles: {
+        nombre: payload.nombre,
+        estadoPromocion,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+
+  return ref.id;
+}
+
+/**
+ * PF-001: Lista promociones con estado actualizado.
+ */
+export async function getPromociones() {
+  const snap = await getDocs(collection(db, 'promociones'));
+  const now = new Date();
+  const updates = [];
+  const list = snap.docs.map(d => {
+    const data = d.data() || {};
+    const estadoCalculado = normalizePromocionStatus({
+      fechaInicio: data.fechaInicio,
+      fechaFin: data.fechaFin,
+      estadoForzado: data.estadoPromocion,
+      eliminado: Boolean(data.eliminado),
+    });
+    const estadoGuardado = String(data.estadoPromocion || '').trim().toLowerCase();
+    if (estadoCalculado !== estadoGuardado) {
+      updates.push(updateDoc(doc(db, 'promociones', d.id), { estadoPromocion: estadoCalculado, updatedAt: now }));
+    }
+    return { id: d.id, ...data, estadoPromocion: estadoCalculado };
+  });
+
+  if (updates.length) {
+    await Promise.allSettled(updates);
+  }
+
+  list.sort((a, b) => {
+    const sa = String(a.estadoPromocion || '');
+    const sb = String(b.estadoPromocion || '');
+    if (sa !== sb) return sa.localeCompare(sb);
+    return String(b.fechaInicio || '').localeCompare(String(a.fechaInicio || ''));
+  });
+
+  return list;
+}
+
+/**
+ * PF-001 escenario 5: editar promoción programada.
+ */
+export async function updatePromocionProgramada({
+  promocionId,
+  nombre,
+  descripcion,
+  fechaInicio,
+  fechaFin,
+  tipoBeneficio,
+  valorBeneficio,
+  montoMinimo = 0,
+  categoriaProducto = '',
+  diaSemana = [],
+  usuarioUid = null,
+}) {
+  if (!promocionId) throw new Error('promocionId es obligatorio.');
+  const ref = doc(db, 'promociones', promocionId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Promoción no encontrada.');
+
+  const current = snap.data() || {};
+  const currentStatus = normalizePromocionStatus({
+    fechaInicio: current.fechaInicio,
+    fechaFin: current.fechaFin,
+    estadoForzado: current.estadoPromocion,
+    eliminado: Boolean(current.eliminado),
+  });
+  if (currentStatus !== 'programada') {
+    throw new Error('Solo promociones programadas pueden editarse aquí.');
+  }
+
+  const payload = normalizePromotionPayload({
+    nombre,
+    descripcion,
+    fechaInicio,
+    fechaFin,
+    tipoBeneficio,
+    valorBeneficio,
+    montoMinimo,
+    categoriaProducto,
+    diaSemana,
+  });
+
+  const estadoPromocion = normalizePromocionStatus({
+    fechaInicio: payload.fechaInicio,
+    fechaFin: payload.fechaFin,
+  });
+  const now = new Date();
+  await updateDoc(ref, {
+    ...payload,
+    estadoPromocion,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'edicion_promocion_programada',
+      promocionId,
+      uid: usuarioUid || null,
+      detalles: {
+        nombre: payload.nombre,
+        estadoPromocion,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
 /**
  * CF-002: Vista previa para cierre diario de caja.
  */

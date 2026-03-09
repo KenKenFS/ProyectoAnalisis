@@ -16,7 +16,8 @@
     "build:admin": "APP_NAME=admin vite build",
     "build": "npm run build:caja && npm run build:cocina && npm run build:meseros && npm run build:admin",
     "preview": "vite preview",
-    "lint": "eslint . --ext .js,.jsx"
+    "lint": "eslint . --ext .js,.jsx",
+    "seed:promociones": "node scripts/seed-promociones.js"
   },
   "dependencies": {
     "@heroicons/react": "^2.0.18",
