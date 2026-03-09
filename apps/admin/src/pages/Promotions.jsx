@@ -4,6 +4,7 @@ import {
   PencilSquareIcon,
   CheckCircleIcon,
   ClockIcon,
+  PauseCircleIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
@@ -11,6 +12,7 @@ import { useAuth } from '@shared/firebase/AuthContext'
 import {
   createPromocion,
   getPromociones,
+  setPromocionEstado,
   updatePromocionActiva,
   updatePromocionProgramada,
 } from '@shared/firebase/firestore'
@@ -69,6 +71,7 @@ export default function Promotions() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [togglingId, setTogglingId] = useState('')
 
   const [showForm, setShowForm] = useState(false)
   const [editingPromotion, setEditingPromotion] = useState(null)
@@ -178,6 +181,25 @@ export default function Promotions() {
     }
   }
 
+  async function handleToggleEstado(item, activate) {
+    if (!item?.id) return
+    setFormError('')
+    setError('')
+    setTogglingId(item.id)
+    try {
+      await setPromocionEstado({
+        promocionId: item.id,
+        activar: activate,
+        usuarioUid: user?.uid || null,
+      })
+      await loadPromotions()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTogglingId('')
+    }
+  }
+
   const stats = useMemo(() => {
     const activas = promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'activa').length
     const programadas = promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'programada').length
@@ -191,7 +213,7 @@ export default function Promotions() {
   const visiblePromotions = useMemo(() => {
     return promotions.filter(p => {
       const s = String(p.estadoPromocion || '').toLowerCase()
-      return s === 'activa' || s === 'programada' || s === 'expirada'
+      return s === 'activa' || s === 'programada' || s === 'expirada' || s === 'inactiva'
     })
   }, [promotions])
 
@@ -310,6 +332,18 @@ export default function Promotions() {
                 />
               </div>
             )}
+            {editingPromotion && String(editingPromotion.estadoPromocion || '').toLowerCase() === 'inactiva' && (
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Motivo de modificación *</label>
+                <input
+                  type="text"
+                  value={formData.motivo}
+                  onChange={e => setFormData(p => ({ ...p, motivo: e.target.value }))}
+                  className="input input-bordered input-sm w-full"
+                  placeholder="Ej: ajustes antes de reactivar la promoción"
+                />
+              </div>
+            )}
 
             {formError && (
               <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
@@ -349,7 +383,10 @@ export default function Promotions() {
           <div className="divide-y divide-gray-100">
             {visiblePromotions.map(item => {
               const status = String(item.estadoPromocion || '').toLowerCase()
-              const canEdit = status === 'programada' || status === 'activa'
+              const canEdit = status === 'programada' || status === 'activa' || status === 'inactiva'
+              const canActivate = status === 'programada' || status === 'inactiva'
+              const canDeactivate = status === 'activa'
+              const isToggling = togglingId === item.id
               return (
                 <div key={item.id} className="px-4 py-3">
                   <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -380,10 +417,29 @@ export default function Promotions() {
                     <div className="flex items-center gap-2">
                       {status === 'activa' && <CheckCircleIcon className="w-5 h-5 text-green-600" />}
                       {status === 'programada' && <ClockIcon className="w-5 h-5 text-blue-600" />}
+                      {status === 'inactiva' && <PauseCircleIcon className="w-5 h-5 text-amber-600" />}
                       {canEdit && (
                         <button onClick={() => openEditForm(item)} className="btn btn-outline btn-sm gap-1">
                           <PencilSquareIcon className="w-4 h-4" />
                           Editar
+                        </button>
+                      )}
+                      {canActivate && (
+                        <button
+                          onClick={() => handleToggleEstado(item, true)}
+                          className="btn btn-outline btn-sm text-green-700"
+                          disabled={isToggling}
+                        >
+                          {isToggling ? '...' : 'Activar'}
+                        </button>
+                      )}
+                      {canDeactivate && (
+                        <button
+                          onClick={() => handleToggleEstado(item, false)}
+                          className="btn btn-outline btn-sm text-amber-700"
+                          disabled={isToggling}
+                        >
+                          {isToggling ? '...' : 'Desactivar'}
                         </button>
                       )}
                     </div>

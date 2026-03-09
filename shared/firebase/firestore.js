@@ -1753,9 +1753,34 @@ function normalizePromocionStatus({ fechaInicio, fechaFin, estadoForzado = null,
   const start = String(fechaInicio || '').trim();
   const end = String(fechaFin || '').trim();
   if (!start || !end) return 'inactiva';
+  if (forced === 'activa') {
+    if (today > end) return 'expirada';
+    return 'activa';
+  }
   if (today < start) return 'programada';
   if (today > end) return 'expirada';
   return 'activa';
+}
+
+function validatePromocionCompleta(data = {}) {
+  const nombre = String(data.nombre || '').trim();
+  const start = String(data.fechaInicio || '').trim();
+  const end = String(data.fechaFin || '').trim();
+  const tipo = String(data.tipoBeneficio || '').trim().toLowerCase();
+  const valor = Number(data.valorBeneficio || 0);
+  const condiciones = data.condiciones || {};
+  const montoMinimo = Number(condiciones.montoMinimo || 0);
+  const categoria = String(condiciones.categoriaProducto || '').trim();
+  const dias = Array.isArray(condiciones.diaSemana) ? condiciones.diaSemana.filter(Boolean) : [];
+
+  if (!nombre || !start || !end) return false;
+  if (!['porcentaje', 'monto_fijo'].includes(tipo)) return false;
+  if (!Number.isFinite(valor) || valor <= 0) return false;
+  if (tipo === 'porcentaje' && valor > 100) return false;
+
+  // Requisito PF-007: bloquear activación si no hay condiciones configuradas.
+  const hasAnyCondition = montoMinimo > 0 || Boolean(categoria) || dias.length > 0;
+  return hasAnyCondition;
 }
 
 function normalizePromotionPayload({
@@ -2046,6 +2071,59 @@ export async function updatePromocionActiva({
         estadoAnterior: currentStatus,
         estadoNuevo: estadoPromocion,
         motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
+ * PF-007: Activar / desactivar promoción con trazabilidad.
+ */
+export async function setPromocionEstado({
+  promocionId,
+  activar,
+  usuarioUid = null,
+}) {
+  if (!promocionId) throw new Error('promocionId es obligatorio.');
+  const ref = doc(db, 'promociones', promocionId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Promoción no encontrada.');
+
+  const current = snap.data() || {};
+  const estadoAnterior = normalizePromocionStatus({
+    fechaInicio: current.fechaInicio,
+    fechaFin: current.fechaFin,
+    estadoForzado: current.estadoPromocion,
+    eliminado: Boolean(current.eliminado),
+  });
+  if (estadoAnterior === 'expirada' || estadoAnterior === 'eliminada') {
+    throw new Error('No se puede cambiar estado en promociones expiradas o eliminadas.');
+  }
+
+  const shouldActivate = Boolean(activar);
+  if (shouldActivate && !validatePromocionCompleta(current)) {
+    throw new Error('Complete beneficio y condiciones antes de activar.');
+  }
+
+  const now = new Date();
+  const payload = {
+    estadoPromocion: shouldActivate ? 'activa' : 'inactiva',
+    updatedAt: now,
+  };
+  if (shouldActivate && String(current.fechaInicio || '').trim() > toDateStrCR(now)) {
+    payload.fechaInicio = toDateStrCR(now);
+  }
+  await updateDoc(ref, payload);
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'cambio_estado_promocion',
+      promocionId,
+      uid: usuarioUid || null,
+      detalles: {
+        estadoAnterior,
+        estadoNuevo: shouldActivate ? 'activa' : 'inactiva',
       },
       timestamp: now,
     });
