@@ -92,11 +92,13 @@ function ClienteEstadoBadge({ estado }) {
 function PaymentModal({ open, onClose, onConfirm, loading, resumen, error, promociones = [] }) {
   const [metodo, setMetodo] = useState('efectivo')
   const [promoId, setPromoId] = useState('')
+  const [promoMotivo, setPromoMotivo] = useState('')
 
   useEffect(() => {
     if (open) {
       setMetodo('efectivo')
       setPromoId('')
+      setPromoMotivo('')
     }
   }, [open])
 
@@ -198,6 +200,15 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error, promo
                 </button>
               )}
             </div>
+            {selectedPromo && (
+              <input
+                type="text"
+                value={promoMotivo}
+                onChange={(e) => setPromoMotivo(e.target.value)}
+                className="input input-bordered w-full"
+                placeholder="Motivo (opcional): cortesía por campaña, ajuste comercial, etc."
+              />
+            )}
           </div>
 
           {error && (
@@ -211,7 +222,7 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error, promo
               Cancelar
             </button>
             <button
-              onClick={() => onConfirm(metodo, promoId)}
+              onClick={() => onConfirm(metodo, promoId, promoMotivo)}
               className="flex-1 btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
               disabled={loading}
             >
@@ -520,7 +531,7 @@ export default function MesaCompartidaPage() {
     setPayOpen(true)
   }
 
-  async function confirmPay(metodo, promocionId = '') {
+  async function confirmPay(metodo, promocionId = '', promocionMotivo = '') {
     if (!cuenta?.id || !selectedComensalId || !selectedMesaId) return
 
     setPayLoading(true)
@@ -532,6 +543,7 @@ export default function MesaCompartidaPage() {
         comensalId: selectedComensalId,
         metodo,
         promocionId: promocionId || null,
+        promocionMotivo: promocionMotivo || '',
         cajeroUid: user?.uid || null,
         impuestoRate: 0.13,
       })

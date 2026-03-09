@@ -121,6 +121,7 @@ export default function Accounting() {
   const [devolucionSubmitting, setDevolucionSubmitting] = useState(false)
   const [devolucionError, setDevolucionError] = useState('')
   const [devolucionOptions, setDevolucionOptions] = useState([])
+  const [devolucionVisibleCount, setDevolucionVisibleCount] = useState(PAGE_SIZE)
   const [loadingDevolucionOptions, setLoadingDevolucionOptions] = useState(false)
   const [devolucionForm, setDevolucionForm] = useState({
     fecha: today,
@@ -148,6 +149,7 @@ export default function Accounting() {
   const [reportLoading, setReportLoading] = useState(false)
   const [reportError, setReportError] = useState('')
   const [reportData, setReportData] = useState(null)
+  const [reportBreakdownVisibleCount, setReportBreakdownVisibleCount] = useState(PAGE_SIZE)
 
   const periodRange = useMemo(() => getPeriodRange(anchorDate, period), [anchorDate, period])
   const periodDays = useMemo(() => getDateListBetween(periodRange.start, periodRange.end), [periodRange])
@@ -173,7 +175,15 @@ export default function Accounting() {
   }, [reportMode, reportYear, reportMonth, reportStart, reportEnd, reportCategory])
 
   useEffect(() => {
+    setReportBreakdownVisibleCount(PAGE_SIZE)
+  }, [reportMode, reportYear, reportMonth, reportStart, reportEnd, reportCategory])
+
+  useEffect(() => {
     loadDevolucionOptions()
+  }, [anchorDate])
+
+  useEffect(() => {
+    setDevolucionVisibleCount(PAGE_SIZE)
   }, [anchorDate])
 
   async function loadMovements() {
@@ -421,6 +431,16 @@ export default function Accounting() {
     [devolucionOptions, devolucionForm.referenciaVenta]
   )
 
+  const paginatedDevolucionOptions = useMemo(
+    () => devolucionOptions.slice(0, devolucionVisibleCount),
+    [devolucionOptions, devolucionVisibleCount]
+  )
+
+  const paginatedReportBreakdown = useMemo(
+    () => (reportData?.breakdown || []).slice(0, reportBreakdownVisibleCount),
+    [reportData, reportBreakdownVisibleCount]
+  )
+
   return (
     <div className="space-y-6 pb-20 md:pb-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -604,13 +624,24 @@ export default function Accounting() {
                 ) : devolucionOptions.length === 0 ? (
                   <option value="">No hay ventas disponibles</option>
                 ) : (
-                  devolucionOptions.map(item => (
+                  paginatedDevolucionOptions.map(item => (
                     <option key={item.key} value={item.value}>
                       {item.fecha} | {item.tipoFuente === 'pos' ? 'POS' : 'Manual'} | Disp: {formatCRC(item.montoDisponible)}
                     </option>
                   ))
                 )}
               </select>
+              {devolucionOptions.length > devolucionVisibleCount && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDevolucionVisibleCount(prev => prev + PAGE_SIZE)}
+                    className="btn btn-outline btn-xs"
+                  >
+                    Ver más ventas
+                  </button>
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-600 block mb-1">Monto devuelto (CRC) *</label>
@@ -730,28 +761,41 @@ export default function Accounting() {
             {reportData.cantidadMovimientos === 0 ? (
               <div className="text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-2">No hay datos para este período.</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="text-left px-3 py-2 text-xs text-gray-600">Período</th>
-                      <th className="text-right px-3 py-2 text-xs text-gray-600">Ingresos</th>
-                      <th className="text-right px-3 py-2 text-xs text-gray-600">Egresos</th>
-                      <th className="text-right px-3 py-2 text-xs text-gray-600">Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportData.breakdown.map(row => (
-                      <tr key={row.periodo} className="border-t border-gray-100">
-                        <td className="px-3 py-2">{row.periodo}</td>
-                        <td className="px-3 py-2 text-right text-emerald-700 font-medium">{formatCRC(row.ingresos)}</td>
-                        <td className="px-3 py-2 text-right text-red-600 font-medium">{formatCRC(row.egresos)}</td>
-                        <td className="px-3 py-2 text-right font-semibold">{formatCRC(row.total)}</td>
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left px-3 py-2 text-xs text-gray-600">Período</th>
+                        <th className="text-right px-3 py-2 text-xs text-gray-600">Ingresos</th>
+                        <th className="text-right px-3 py-2 text-xs text-gray-600">Egresos</th>
+                        <th className="text-right px-3 py-2 text-xs text-gray-600">Balance</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {paginatedReportBreakdown.map(row => (
+                        <tr key={row.periodo} className="border-t border-gray-100">
+                          <td className="px-3 py-2">{row.periodo}</td>
+                          <td className="px-3 py-2 text-right text-emerald-700 font-medium">{formatCRC(row.ingresos)}</td>
+                          <td className="px-3 py-2 text-right text-red-600 font-medium">{formatCRC(row.egresos)}</td>
+                          <td className="px-3 py-2 text-right font-semibold">{formatCRC(row.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {(reportData.breakdown || []).length > reportBreakdownVisibleCount && (
+                  <div className="pt-2 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setReportBreakdownVisibleCount(prev => prev + PAGE_SIZE)}
+                      className="btn btn-outline btn-sm"
+                    >
+                      Ver más
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -790,8 +834,9 @@ export default function Accounting() {
                 const isDevolucion = tipo === 'devolucion'
                 const amount = Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0))
                 const isAnulado = String(m.estado || 'activo').toLowerCase() === 'anulado'
-                const canCorregir = !isAnulado && m.source !== 'pos_auto'
-                const canAnular = !isAnulado && m.source !== 'pos_auto'
+                const isPosAuto = String(m.source || '').startsWith('pos_auto')
+                const canCorregir = !isAnulado && !isPosAuto
+                const canAnular = !isAnulado && !isPosAuto
                 const categoriaLabel = m.categoriaLabel || m.categoria || '-'
                 return (
                   <tr key={m.id} className="border-t border-gray-100">
@@ -864,7 +909,7 @@ export default function Accounting() {
         </div>
         {visibleMovements.length > visibleCount && (
           <div className="px-4 py-3 border-t border-gray-200 flex justify-center">
-            <button onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)} className="btn btn-outline btn-sm">Cargar más</button>
+            <button onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)} className="btn btn-outline btn-sm">Ver más</button>
           </div>
         )}
       </div>

@@ -143,11 +143,13 @@ function CartItem({ item, onIncrease, onDecrease, onRemove }) {
 function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error, promociones = [] }) {
   const [metodo, setMetodo] = useState('efectivo')
   const [promoId, setPromoId] = useState('')
+  const [promoMotivo, setPromoMotivo] = useState('')
 
   useEffect(() => {
     if (open) {
       setMetodo('efectivo')
       setPromoId('')
+      setPromoMotivo('')
     }
   }, [open])
 
@@ -227,6 +229,15 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error, promocio
                 </button>
               )}
             </div>
+            {selectedPromo && (
+              <input
+                type="text"
+                value={promoMotivo}
+                onChange={(e) => setPromoMotivo(e.target.value)}
+                className="input input-bordered w-full"
+                placeholder="Motivo (opcional): cortesía por campaña, ajuste comercial, etc."
+              />
+            )}
           </div>
 
           <div className="space-y-2">
@@ -264,7 +275,7 @@ function ConfirmCobro({ open, onClose, onConfirm, loading, cart, error, promocio
               Cancelar
             </button>
             <button
-              onClick={() => onConfirm(metodo, promoId)}
+              onClick={() => onConfirm(metodo, promoId, promoMotivo)}
               className="flex-1 btn bg-cyan-600 hover:bg-cyan-700 text-white border-0"
               disabled={loading}
             >
@@ -434,7 +445,7 @@ export default function VentasPage() {
   const tax = Math.round(subtotal * 0.13)
   const total = subtotal + tax
 
-  async function cobrarVentaDirecta(metodo, promocionId = '') {
+  async function cobrarVentaDirecta(metodo, promocionId = '', promocionMotivo = '') {
     if (procesandoVenta) return
     setVentaError('')
     if (cart.length === 0) {
@@ -466,6 +477,7 @@ export default function VentasPage() {
         cajeroUid: user?.uid || null,
         impuestoRate: 0.13,
         promocionId: promocionId || null,
+        promocionMotivo: promocionMotivo || '',
       })
 
       setCart([])
@@ -793,7 +805,7 @@ export default function VentasPage() {
       <ConfirmCobro
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
-        onConfirm={(metodo, promocionId) => cobrarVentaDirecta(metodo, promocionId)}
+        onConfirm={(metodo, promocionId, promocionMotivo) => cobrarVentaDirecta(metodo, promocionId, promocionMotivo)}
         loading={procesandoVenta}
         cart={cart}
         error={ventaError}

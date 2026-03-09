@@ -13,6 +13,7 @@ import { useAuth } from '@shared/firebase/AuthContext'
 import {
   createPromocion,
   deletePromocionExpirada,
+  getPromocionesAplicadasTransacciones,
   getPromociones,
   restorePromocionEliminada,
   setPromocionEstado,
@@ -81,6 +82,14 @@ export default function Promotions() {
   const [restoreTarget, setRestoreTarget] = useState(null)
   const [restoreMotivo, setRestoreMotivo] = useState('')
   const [restoring, setRestoring] = useState(false)
+  const [aplicadasLoading, setAplicadasLoading] = useState(false)
+  const [aplicadasError, setAplicadasError] = useState('')
+  const [aplicadasData, setAplicadasData] = useState(null)
+  const [aplicadasRange, setAplicadasRange] = useState({
+    inicio: toDateStr(new Date(Date.now() - (29 * 24 * 60 * 60 * 1000))),
+    fin: today,
+    promocionId: '',
+  })
 
   const [showForm, setShowForm] = useState(false)
   const [editingPromotion, setEditingPromotion] = useState(null)
@@ -90,6 +99,10 @@ export default function Promotions() {
   useEffect(() => {
     loadPromotions()
   }, [])
+
+  useEffect(() => {
+    loadPromocionesAplicadas()
+  }, [aplicadasRange.inicio, aplicadasRange.fin, aplicadasRange.promocionId])
 
   async function loadPromotions() {
     setLoading(true)
@@ -102,6 +115,24 @@ export default function Promotions() {
       setPromotions([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadPromocionesAplicadas() {
+    setAplicadasLoading(true)
+    setAplicadasError('')
+    try {
+      const result = await getPromocionesAplicadasTransacciones({
+        fechaInicio: aplicadasRange.inicio,
+        fechaFin: aplicadasRange.fin,
+        promocionId: aplicadasRange.promocionId || '',
+      })
+      setAplicadasData(result)
+    } catch (err) {
+      setAplicadasError(err.message)
+      setAplicadasData(null)
+    } finally {
+      setAplicadasLoading(false)
     }
   }
 
@@ -515,6 +546,103 @@ export default function Promotions() {
             })}
           </div>
         )}
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <h2 className="font-semibold text-gray-800">Promociones aplicadas en transacciones</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="date"
+              value={aplicadasRange.inicio}
+              onChange={e => setAplicadasRange(p => ({ ...p, inicio: e.target.value }))}
+              className="input input-bordered input-sm"
+            />
+            <input
+              type="date"
+              value={aplicadasRange.fin}
+              onChange={e => setAplicadasRange(p => ({ ...p, fin: e.target.value }))}
+              className="input input-bordered input-sm"
+            />
+            <select
+              value={aplicadasRange.promocionId}
+              onChange={e => setAplicadasRange(p => ({ ...p, promocionId: e.target.value }))}
+              className="select select-bordered select-sm"
+            >
+              <option value="">Todas las promociones</option>
+              {promotions
+                .filter(p => String(p.estadoPromocion || '').toLowerCase() !== 'eliminada')
+                .map(p => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
+                ))}
+            </select>
+            <button onClick={loadPromocionesAplicadas} className="btn btn-outline btn-sm gap-2" disabled={aplicadasLoading}>
+              <ArrowPathIcon className={`w-4 h-4 ${aplicadasLoading ? 'animate-spin' : ''}`} />
+              Refrescar
+            </button>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {aplicadasError && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {aplicadasError}
+            </div>
+          )}
+
+          {aplicadasData && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="text-xs text-gray-500">Transacciones con promoción</div>
+                  <div className="text-xl font-bold text-gray-800">{aplicadasData.totalTransacciones || 0}</div>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="text-xs text-emerald-700">Descuento acumulado</div>
+                  <div className="text-xl font-bold text-emerald-700">₡{Number(aplicadasData.totalDescuento || 0).toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <div className="text-xs text-blue-700">Promociones con uso</div>
+                  <div className="text-xl font-bold text-blue-700">{(aplicadasData.resumenPorPromo || []).length}</div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-xs text-gray-600">Fecha</th>
+                      <th className="text-left px-3 py-2 text-xs text-gray-600">Promoción</th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-600">Descuento</th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-600">Monto venta</th>
+                      <th className="text-left px-3 py-2 text-xs text-gray-600">Aplicación</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(aplicadasData.transacciones || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-6 text-center text-gray-500">No hay transacciones con promociones en este rango.</td>
+                      </tr>
+                    ) : (aplicadasData.transacciones || []).map(t => (
+                      <tr key={t.id} className="border-t border-gray-100">
+                        <td className="px-3 py-2 text-gray-700">{t.fecha}</td>
+                        <td className="px-3 py-2 text-gray-800 font-medium">{t.promocionNombre}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 font-semibold">₡{Number(t.descuentoAplicado || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">₡{Number(t.montoTotal || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2 text-xs text-gray-600">
+                          {t.aplicacionTipo === 'manual' ? 'Manual' : (t.aplicacionTipo || '-')}
+                          {' | '}Cajero: {t.cajeroNombre || '-'}
+                          {' | '}Origen: {t.fuente === 'venta_directa' ? 'Venta directa' : 'Pago de cuenta'}
+                          {' | '}Motivo: {t.motivoAplicacion || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">

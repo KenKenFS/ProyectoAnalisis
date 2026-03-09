@@ -1571,13 +1571,20 @@ export async function getMovimientosFinancierosByRange(fechaInicio, fechaFin) {
 export async function getVentasPOSByDate(fecha) {
   if (!fecha) return [];
   const { start, end } = rangeForDateStr(fecha);
-  const q = query(
-    collection(db, 'pagos'),
-    where('createdAt', '>=', start),
-    where('createdAt', '<=', end)
-  );
-  const snap = await getDocs(q);
-  const list = snap.docs.map(d => {
+  const [pagosSnap, cuentasSnap] = await Promise.all([
+    getDocs(query(
+      collection(db, 'pagos'),
+      where('createdAt', '>=', start),
+      where('createdAt', '<=', end)
+    )),
+    getDocs(query(
+      collection(db, 'cuentas'),
+      where('cobradoAt', '>=', start),
+      where('cobradoAt', '<=', end)
+    )),
+  ]);
+
+  const pagosList = pagosSnap.docs.map(d => {
     const data = d.data() || {};
     const amount = Number(data.montoTotal || 0);
     return {
@@ -1595,8 +1602,42 @@ export async function getVentasPOSByDate(fecha) {
       referenciaId: d.id,
       mesaId: data.mesaId || null,
       cuentaId: data.cuentaId || null,
+      metodo: normalizeMetodoPago(data.metodo),
+      tipoVenta: data.tipoVenta || null,
     };
   });
+
+  const ventasDirectasList = cuentasSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(c => String(c.tipoVenta || '').trim().toLowerCase() === 'directa_para_llevar')
+    .filter(c => {
+      const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+      const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+      return estado === 'cobrada' || estado === 'cerrada' || estadoPago === 'pagado';
+    })
+    .map(c => {
+      const amount = Number(c.montoTotal || 0);
+      return {
+        id: `venta_directa_${c.id}`,
+        tipo: 'venta',
+        monto: Math.abs(amount),
+        montoAbsoluto: Math.abs(amount),
+        fecha,
+        descripcion: `Venta directa - ${c.metodoPago || 'metodo no indicado'}`,
+        origen: 'POS',
+        categoria: null,
+        origenSistema: 'pos_auto_directa',
+        createdAt: c.cobradoAt || c.updatedAt || null,
+        source: 'pos_auto_directa',
+        referenciaId: c.id,
+        mesaId: c.mesaId || null,
+        cuentaId: c.id,
+        metodo: normalizeMetodoPago(c.metodoPago),
+        tipoVenta: c.tipoVenta || 'directa_para_llevar',
+      };
+    });
+
+  const list = [...pagosList, ...ventasDirectasList];
   list.sort((a, b) => {
     const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
     const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
@@ -1609,13 +1650,20 @@ export async function getVentasPOSByRange(fechaInicio, fechaFin) {
   if (!fechaInicio || !fechaFin) return [];
   const start = new Date(`${fechaInicio}T00:00:00`);
   const end = new Date(`${fechaFin}T23:59:59.999`);
-  const q = query(
-    collection(db, 'pagos'),
-    where('createdAt', '>=', start),
-    where('createdAt', '<=', end)
-  );
-  const snap = await getDocs(q);
-  const list = snap.docs.map(d => {
+  const [pagosSnap, cuentasSnap] = await Promise.all([
+    getDocs(query(
+      collection(db, 'pagos'),
+      where('createdAt', '>=', start),
+      where('createdAt', '<=', end)
+    )),
+    getDocs(query(
+      collection(db, 'cuentas'),
+      where('cobradoAt', '>=', start),
+      where('cobradoAt', '<=', end)
+    )),
+  ]);
+
+  const pagosList = pagosSnap.docs.map(d => {
     const data = d.data() || {};
     const amount = Number(data.montoTotal || 0);
     const createdAt = data.createdAt || null;
@@ -1635,8 +1683,44 @@ export async function getVentasPOSByRange(fechaInicio, fechaFin) {
       referenciaId: d.id,
       mesaId: data.mesaId || null,
       cuentaId: data.cuentaId || null,
+      metodo: normalizeMetodoPago(data.metodo),
+      tipoVenta: data.tipoVenta || null,
     };
   });
+
+  const ventasDirectasList = cuentasSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(c => String(c.tipoVenta || '').trim().toLowerCase() === 'directa_para_llevar')
+    .filter(c => {
+      const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+      const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+      return estado === 'cobrada' || estado === 'cerrada' || estadoPago === 'pagado';
+    })
+    .map(c => {
+      const amount = Number(c.montoTotal || 0);
+      const createdAt = c.cobradoAt || c.updatedAt || null;
+      const fecha = createdAt?.toDate ? toDateStrCR(createdAt.toDate()) : toDateStrCR(createdAt || new Date());
+      return {
+        id: `venta_directa_${c.id}`,
+        tipo: 'venta',
+        monto: Math.abs(amount),
+        montoAbsoluto: Math.abs(amount),
+        fecha,
+        descripcion: `Venta directa - ${c.metodoPago || 'metodo no indicado'}`,
+        origen: 'POS',
+        categoria: null,
+        origenSistema: 'pos_auto_directa',
+        createdAt,
+        source: 'pos_auto_directa',
+        referenciaId: c.id,
+        mesaId: c.mesaId || null,
+        cuentaId: c.id,
+        metodo: normalizeMetodoPago(c.metodoPago),
+        tipoVenta: c.tipoVenta || 'directa_para_llevar',
+      };
+    });
+
+  const list = [...pagosList, ...ventasDirectasList];
   list.sort((a, b) => {
     const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
     const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
@@ -2352,6 +2436,151 @@ export async function restorePromocionEliminada({
 }
 
 /**
+ * PF-004: Transacciones con promociones aplicadas por rango y filtro.
+ */
+export async function getPromocionesAplicadasTransacciones({
+  fechaInicio,
+  fechaFin,
+  promocionId = '',
+}) {
+  const start = String(fechaInicio || '').trim();
+  const end = String(fechaFin || '').trim();
+  if (!start || !end || start > end) {
+    throw new Error('Rango de fechas inválido.');
+  }
+
+  const startDate = new Date(`${start}T00:00:00`);
+  const endDate = new Date(`${end}T23:59:59.999`);
+  const [pagosSnap, cuentasDirectasSnap] = await Promise.all([
+    getDocs(query(
+      collection(db, 'pagos'),
+      where('createdAt', '>=', startDate),
+      where('createdAt', '<=', endDate)
+    )),
+    getDocs(query(
+      collection(db, 'cuentas'),
+      where('cobradoAt', '>=', startDate),
+      where('cobradoAt', '<=', endDate)
+    )),
+  ]);
+  const filterPromoId = String(promocionId || '').trim();
+
+  const pagosRows = pagosSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(p => String(p.promocionAplicadaId || '').trim())
+    .map(p => {
+      const createdAt = p.createdAt || null;
+      const fecha = createdAt?.toDate ? toDateStrCR(createdAt.toDate()) : toDateStrCR(createdAt || new Date());
+      const descuento = Math.abs(Number(p.montoDescuentoPromocion || 0));
+      const total = Math.abs(Number(p.montoTotal || 0));
+      const promo = p.promocionAplicada || {};
+      return {
+        id: p.id,
+        fecha,
+        createdAt,
+        fuente: 'pago',
+        cuentaId: p.cuentaId || null,
+        mesaId: p.mesaId || null,
+        cajeroUid: p.cajeroUid || p.promocionAplicadaPorUid || null,
+        promocionId: p.promocionAplicadaId || null,
+        promocionNombre: String(promo.nombre || p.promocionNombre || 'Promoción'),
+        tipoBeneficio: promo.tipoBeneficio || null,
+        valorBeneficio: Number(promo.valorBeneficio || 0),
+        descuentoAplicado: descuento,
+        montoTotal: total,
+        aplicacionTipo: p.promocionAplicacionTipo || 'manual',
+        motivoAplicacion: String(p.promocionMotivo || '').trim() || 'Aplicación manual en caja',
+      };
+    });
+
+  const cuentasRows = cuentasDirectasSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(c => String(c.tipoVenta || '').trim().toLowerCase() === 'directa_para_llevar')
+    .filter(c => String(c.promocionAplicadaId || '').trim())
+    .map(c => {
+      const createdAt = c.cobradoAt || null;
+      const fecha = createdAt?.toDate ? toDateStrCR(createdAt.toDate()) : toDateStrCR(createdAt || new Date());
+      const descuento = Math.abs(Number(c.montoDescuentoPromocion || 0));
+      const total = Math.abs(Number(c.montoTotal || 0));
+      const promo = c.promocionAplicada || {};
+      return {
+        id: `cuenta_${c.id}`,
+        fecha,
+        createdAt,
+        fuente: 'venta_directa',
+        cuentaId: c.id,
+        mesaId: c.mesaId || null,
+        cajeroUid: c.closedByUid || c.promocionAplicadaPorUid || null,
+        promocionId: c.promocionAplicadaId || null,
+        promocionNombre: String(promo.nombre || c.promocionNombre || 'Promoción'),
+        tipoBeneficio: promo.tipoBeneficio || null,
+        valorBeneficio: Number(promo.valorBeneficio || 0),
+        descuentoAplicado: descuento,
+        montoTotal: total,
+        aplicacionTipo: c.promocionAplicacionTipo || 'manual',
+        motivoAplicacion: String(c.promocionMotivo || '').trim() || 'Aplicación manual en caja',
+      };
+    });
+
+  const rows = [...pagosRows, ...cuentasRows]
+    .filter(r => (filterPromoId ? String(r.promocionId || '') === filterPromoId : true));
+
+  const uniqueCajeroUids = [...new Set(rows.map(r => String(r.cajeroUid || '').trim()).filter(Boolean))];
+  const cajeroMap = {};
+  if (uniqueCajeroUids.length > 0) {
+    const userSnaps = await Promise.all(
+      uniqueCajeroUids.map(uid => getDoc(doc(db, 'users', uid)))
+    );
+    userSnaps.forEach((snap, idx) => {
+      const uid = uniqueCajeroUids[idx];
+      if (!snap.exists()) return;
+      const data = snap.data() || {};
+      cajeroMap[uid] = String(data.name || data.nombre || data.email || uid).trim();
+    });
+  }
+
+  rows.forEach(r => {
+    const uid = String(r.cajeroUid || '').trim();
+    r.cajeroNombre = uid ? (cajeroMap[uid] || uid) : '-';
+  });
+
+  rows.sort((a, b) => {
+    const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+    const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+    return tb - ta;
+  });
+
+  const resumenPorPromoMap = {};
+  rows.forEach(r => {
+    const key = r.promocionId || 'sin_id';
+    if (!resumenPorPromoMap[key]) {
+      resumenPorPromoMap[key] = {
+        promocionId: r.promocionId,
+        promocionNombre: r.promocionNombre,
+        usos: 0,
+        descuentoTotal: 0,
+        ventasConPromo: 0,
+      };
+    }
+    resumenPorPromoMap[key].usos += 1;
+    resumenPorPromoMap[key].descuentoTotal += Number(r.descuentoAplicado || 0);
+    resumenPorPromoMap[key].ventasConPromo += Number(r.montoTotal || 0);
+  });
+
+  const resumenPorPromo = Object.values(resumenPorPromoMap).sort((a, b) => b.descuentoTotal - a.descuentoTotal);
+  const totalDescuento = rows.reduce((sum, r) => sum + Number(r.descuentoAplicado || 0), 0);
+  const totalTransacciones = rows.length;
+
+  return {
+    rango: { inicio: start, fin: end },
+    totalTransacciones,
+    totalDescuento,
+    resumenPorPromo,
+    transacciones: rows,
+  };
+}
+
+/**
  * CF-002: Vista previa para cierre diario de caja.
  */
 export async function getResumenCierreCajaPreview(fecha) {
@@ -2377,17 +2606,10 @@ export async function getResumenCierreCajaPreview(fecha) {
     })
     .reduce((sum, m) => sum + Math.abs(Number(m.montoAbsoluto ?? m.monto ?? 0)), 0);
 
-  const qPagosDia = query(
-    collection(db, 'pagos'),
-    where('createdAt', '>=', new Date(`${fechaStr}T00:00:00`)),
-    where('createdAt', '<=', new Date(`${fechaStr}T23:59:59.999`))
-  );
-  const pagosSnap = await getDocs(qPagosDia);
   const metodosPago = {};
-  pagosSnap.docs.forEach(d => {
-    const data = d.data() || {};
-    const metodo = normalizeMetodoPago(data.metodo);
-    const monto = Math.abs(Number(data.montoTotal || 0));
+  pagosPos.forEach((p) => {
+    const metodo = normalizeMetodoPago(p.metodo);
+    const monto = Math.abs(Number(p.montoAbsoluto ?? p.monto ?? 0));
     metodosPago[metodo] = (metodosPago[metodo] || 0) + monto;
   });
 
@@ -3746,6 +3968,7 @@ export async function cerrarVentaDirectaCuenta({
   cajeroUid = null,
   impuestoRate = 0.13,
   promocionId = null,
+  promocionMotivo = '',
 }) {
   const cuenta = await getCuenta(cuentaId);
   if (!cuenta) {
@@ -3775,6 +3998,10 @@ export async function cerrarVentaDirectaCuenta({
     items: pendientes,
     subtotal,
   });
+  const promoMotivoTrim = String(promocionMotivo || '').trim();
+  const promoMotivoFinal = promoResult.promocion
+    ? (promoMotivoTrim || 'Aplicación manual en caja')
+    : null;
   const subtotalConDescuento = Math.max(0, subtotal - Number(promoResult.descuento || 0));
   const impuesto = Math.round(subtotalConDescuento * Number(impuestoRate || 0));
   const total = subtotalConDescuento + impuesto;
@@ -3801,6 +4028,9 @@ export async function cerrarVentaDirectaCuenta({
     montoTotal: total,
     promocionAplicadaId: promoResult.promocion?.id || null,
     promocionAplicada: promoResult.promocion || null,
+    promocionAplicacionTipo: promoResult.promocion ? 'manual' : null,
+    promocionAplicadaPorUid: promoResult.promocion ? (cajeroUid || null) : null,
+    promocionMotivo: promoMotivoFinal,
     cobradoAt: now,
     closedByUid: cajeroUid,
     updatedAt: now,
@@ -3821,6 +4051,8 @@ export async function cerrarVentaDirectaCuenta({
       impuesto,
       total,
       promocionAplicadaId: promoResult.promocion?.id || null,
+      promocionAplicacionTipo: promoResult.promocion ? 'manual' : null,
+      promocionMotivo: promoMotivoFinal,
     },
     timestamp: now,
   });
@@ -4226,6 +4458,7 @@ export async function payPartialForComensal({
   cajeroUid = null,
   impuestoRate = 0.13,
   promocionId = null,
+  promocionMotivo = '',
 }) {
   const allowed = ['efectivo', 'tarjeta', 'mixto'];
   if (!allowed.includes(metodo)) {
@@ -4284,6 +4517,10 @@ export async function payPartialForComensal({
     items,
     subtotal,
   });
+  const promoMotivoTrim = String(promocionMotivo || '').trim();
+  const promoMotivoFinal = promoResult.promocion
+    ? (promoMotivoTrim || 'Aplicación manual en caja')
+    : null;
   const subtotalConDescuento = Math.max(0, subtotal - Number(promoResult.descuento || 0));
   const impuesto = Math.round(subtotalConDescuento * Number(impuestoRate || 0));
   const total = subtotalConDescuento + impuesto;
@@ -4313,6 +4550,9 @@ export async function payPartialForComensal({
       montoTotal: total,
       promocionAplicadaId: promoResult.promocion?.id || null,
       promocionAplicada: promoResult.promocion || null,
+      promocionAplicacionTipo: promoResult.promocion ? 'manual' : null,
+      promocionAplicadaPorUid: promoResult.promocion ? (cajeroUid || null) : null,
+      promocionMotivo: promoMotivoFinal,
       cajeroUid,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -4335,6 +4575,9 @@ export async function payPartialForComensal({
     await updateDoc(doc(db, 'cuentas', cuentaId), {
       promocionAplicadaId: promoResult.promocion.id,
       promocionAplicada: promoResult.promocion,
+      promocionAplicacionTipo: 'manual',
+      promocionAplicadaPorUid: cajeroUid || null,
+      promocionMotivo: promoMotivoFinal,
       updatedAt: new Date(),
     });
   }
