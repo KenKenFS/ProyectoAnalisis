@@ -5,13 +5,16 @@ import {
   CheckCircleIcon,
   ClockIcon,
   PauseCircleIcon,
+  TrashIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@shared/firebase/AuthContext'
 import {
   createPromocion,
+  deletePromocionExpirada,
   getPromociones,
+  restorePromocionEliminada,
   setPromocionEstado,
   updatePromocionActiva,
   updatePromocionProgramada,
@@ -72,6 +75,12 @@ export default function Promotions() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [togglingId, setTogglingId] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleteMotivo, setDeleteMotivo] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState(null)
+  const [restoreMotivo, setRestoreMotivo] = useState('')
+  const [restoring, setRestoring] = useState(false)
 
   const [showForm, setShowForm] = useState(false)
   const [editingPromotion, setEditingPromotion] = useState(null)
@@ -200,6 +209,46 @@ export default function Promotions() {
     }
   }
 
+  async function handleDeleteExpirada() {
+    if (!deleteTarget?.id) return
+    setError('')
+    setDeleting(true)
+    try {
+      await deletePromocionExpirada({
+        promocionId: deleteTarget.id,
+        motivo: deleteMotivo,
+        usuarioUid: user?.uid || null,
+      })
+      setDeleteTarget(null)
+      setDeleteMotivo('')
+      await loadPromotions()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  async function handleRestorePromocion() {
+    if (!restoreTarget?.id) return
+    setError('')
+    setRestoring(true)
+    try {
+      await restorePromocionEliminada({
+        promocionId: restoreTarget.id,
+        motivo: restoreMotivo,
+        usuarioUid: user?.uid || null,
+      })
+      setRestoreTarget(null)
+      setRestoreMotivo('')
+      await loadPromotions()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setRestoring(false)
+    }
+  }
+
   const stats = useMemo(() => {
     const activas = promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'activa').length
     const programadas = promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'programada').length
@@ -215,6 +264,10 @@ export default function Promotions() {
       const s = String(p.estadoPromocion || '').toLowerCase()
       return s === 'activa' || s === 'programada' || s === 'expirada' || s === 'inactiva'
     })
+  }, [promotions])
+
+  const deletedPromotions = useMemo(() => {
+    return promotions.filter(p => String(p.estadoPromocion || '').toLowerCase() === 'eliminada')
   }, [promotions])
 
   return (
@@ -386,6 +439,7 @@ export default function Promotions() {
               const canEdit = status === 'programada' || status === 'activa' || status === 'inactiva'
               const canActivate = status === 'programada' || status === 'inactiva'
               const canDeactivate = status === 'activa'
+              const canDelete = status === 'expirada'
               const isToggling = togglingId === item.id
               return (
                 <div key={item.id} className="px-4 py-3">
@@ -442,6 +496,18 @@ export default function Promotions() {
                           {isToggling ? '...' : 'Desactivar'}
                         </button>
                       )}
+                      {canDelete && (
+                        <button
+                          onClick={() => {
+                            setDeleteTarget(item)
+                            setDeleteMotivo('')
+                          }}
+                          className="btn btn-outline btn-sm text-red-700"
+                        >
+                          <TrashIcon className="w-4 h-4" />
+                          Eliminar
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -450,6 +516,128 @@ export default function Promotions() {
           </div>
         )}
       </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-800">Historial de promociones eliminadas</h2>
+        </div>
+        {deletedPromotions.length === 0 ? (
+          <div className="px-4 py-6 text-sm text-gray-500">No hay promociones eliminadas.</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {deletedPromotions.map(item => (
+              <div key={item.id} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium text-gray-800">{item.nombre}</div>
+                  <button
+                    onClick={() => {
+                      setRestoreTarget(item)
+                      setRestoreMotivo('')
+                    }}
+                    className="btn btn-outline btn-xs text-green-700"
+                  >
+                    Restaurar
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Vigencia original: {item.fechaInicio} a {item.fechaFin} | Beneficio: {formatBenefit(item)}
+                </div>
+                <div className="text-xs text-gray-500">
+                  Eliminada: {item.eliminadoAt?.toDate ? toDateStr(item.eliminadoAt.toDate()) : '-'} | Motivo: {item.motivoEliminacion || '-'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-base font-semibold text-gray-800">Eliminar promoción expirada</h3>
+            <p className="text-sm text-gray-600">
+              La promoción se ocultará de la vista principal y quedará en historial.
+            </p>
+            <div className="text-sm bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div><span className="text-gray-500">Promoción:</span> {deleteTarget.nombre}</div>
+              <div><span className="text-gray-500">Vigencia:</span> {deleteTarget.fechaInicio} a {deleteTarget.fechaFin}</div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Motivo de eliminación *</label>
+              <input
+                type="text"
+                value={deleteMotivo}
+                onChange={e => setDeleteMotivo(e.target.value)}
+                className="input input-bordered input-sm w-full"
+                placeholder="Ej: limpieza de promociones expiradas"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (deleting) return
+                  setDeleteTarget(null)
+                  setDeleteMotivo('')
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteExpirada}
+                className="btn btn-error btn-sm text-white"
+                disabled={deleting}
+              >
+                {deleting ? 'Eliminando...' : 'Confirmar eliminación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {restoreTarget && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+            <h3 className="text-base font-semibold text-gray-800">Restaurar promoción</h3>
+            <p className="text-sm text-gray-600">
+              La promoción volverá al listado principal con estado inactiva.
+            </p>
+            <div className="text-sm bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div><span className="text-gray-500">Promoción:</span> {restoreTarget.nombre}</div>
+              <div><span className="text-gray-500">Vigencia:</span> {restoreTarget.fechaInicio} a {restoreTarget.fechaFin}</div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-1">Motivo de restauración *</label>
+              <input
+                type="text"
+                value={restoreMotivo}
+                onChange={e => setRestoreMotivo(e.target.value)}
+                className="input input-bordered input-sm w-full"
+                placeholder="Ej: se vuelve a usar en campaña especial"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (restoring) return
+                  setRestoreTarget(null)
+                  setRestoreMotivo('')
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleRestorePromocion}
+                className="btn btn-success btn-sm text-white"
+                disabled={restoring}
+              >
+                {restoring ? 'Restaurando...' : 'Confirmar restauración'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -2131,6 +2131,105 @@ export async function setPromocionEstado({
 }
 
 /**
+ * PF-003: Eliminación lógica de promoción expirada con motivo.
+ */
+export async function deletePromocionExpirada({
+  promocionId,
+  motivo,
+  usuarioUid = null,
+}) {
+  if (!promocionId) throw new Error('promocionId es obligatorio.');
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) throw new Error('Debe indicar motivo de eliminación.');
+
+  const ref = doc(db, 'promociones', promocionId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Promoción no encontrada.');
+
+  const current = snap.data() || {};
+  const status = normalizePromocionStatus({
+    fechaInicio: current.fechaInicio,
+    fechaFin: current.fechaFin,
+    estadoForzado: current.estadoPromocion,
+    eliminado: Boolean(current.eliminado),
+  });
+  if (status !== 'expirada') {
+    throw new Error('Solo se pueden eliminar promociones expiradas.');
+  }
+
+  const now = new Date();
+  await updateDoc(ref, {
+    eliminado: true,
+    estadoPromocion: 'eliminada',
+    motivoEliminacion: motivoTrim,
+    eliminadoPorUid: usuarioUid || null,
+    eliminadoAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'eliminacion_promocion_expirada',
+      promocionId,
+      uid: usuarioUid || null,
+      detalles: {
+        nombre: String(current.nombre || ''),
+        motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
+ * PF-003: Restaurar promoción eliminada desde historial.
+ */
+export async function restorePromocionEliminada({
+  promocionId,
+  motivo,
+  usuarioUid = null,
+}) {
+  if (!promocionId) throw new Error('promocionId es obligatorio.');
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) throw new Error('Debe indicar motivo de restauración.');
+
+  const ref = doc(db, 'promociones', promocionId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Promoción no encontrada.');
+
+  const current = snap.data() || {};
+  const isDeleted = Boolean(current.eliminado) || String(current.estadoPromocion || '').toLowerCase() === 'eliminada';
+  if (!isDeleted) {
+    throw new Error('La promoción no está eliminada.');
+  }
+
+  const now = new Date();
+  await updateDoc(ref, {
+    eliminado: false,
+    estadoPromocion: 'inactiva',
+    restauradoAt: now,
+    restauradoPorUid: usuarioUid || null,
+    motivoRestauracion: motivoTrim,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'restauracion_promocion',
+      promocionId,
+      uid: usuarioUid || null,
+      detalles: {
+        nombre: String(current.nombre || ''),
+        estadoAnterior: 'eliminada',
+        estadoNuevo: 'inactiva',
+        motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
  * CF-002: Vista previa para cierre diario de caja.
  */
 export async function getResumenCierreCajaPreview(fecha) {
