@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  GiftIcon,
   PlusIcon,
   PencilSquareIcon,
   CheckCircleIcon,
@@ -9,7 +8,12 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@shared/firebase/AuthContext'
-import { createPromocion, getPromociones, updatePromocionProgramada } from '@shared/firebase/firestore'
+import {
+  createPromocion,
+  getPromociones,
+  updatePromocionActiva,
+  updatePromocionProgramada,
+} from '@shared/firebase/firestore'
 
 const WEEK_DAYS = [
   { id: 'lunes', label: 'Lun' },
@@ -53,6 +57,7 @@ function initialForm(today) {
     montoMinimo: '',
     categoriaProducto: '',
     diaSemana: [],
+    motivo: '',
   }
 }
 
@@ -111,6 +116,7 @@ export default function Promotions() {
       montoMinimo: String(item.condiciones?.montoMinimo || ''),
       categoriaProducto: item.condiciones?.categoriaProducto || '',
       diaSemana: Array.isArray(item.condiciones?.diaSemana) ? item.condiciones.diaSemana : [],
+      motivo: '',
     })
     setFormError('')
     setShowForm(true)
@@ -145,10 +151,19 @@ export default function Promotions() {
       }
 
       if (editingPromotion?.id) {
-        await updatePromocionProgramada({
-          promocionId: editingPromotion.id,
-          ...payload,
-        })
+        const status = String(editingPromotion.estadoPromocion || '').toLowerCase()
+        if (status === 'programada') {
+          await updatePromocionProgramada({
+            promocionId: editingPromotion.id,
+            ...payload,
+          })
+        } else {
+          await updatePromocionActiva({
+            promocionId: editingPromotion.id,
+            ...payload,
+            motivo: formData.motivo,
+          })
+        }
       } else {
         await createPromocion(payload)
       }
@@ -221,7 +236,7 @@ export default function Promotions() {
       {showForm && (
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <h2 className="font-semibold text-gray-800 mb-3">
-            {editingPromotion ? 'Editar promoción programada' : 'Registrar promoción'}
+            {editingPromotion ? 'Editar promoción' : 'Registrar promoción'}
           </h2>
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -283,6 +298,19 @@ export default function Promotions() {
               </div>
             </div>
 
+            {editingPromotion && String(editingPromotion.estadoPromocion || '').toLowerCase() === 'activa' && (
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">Motivo de modificación *</label>
+                <input
+                  type="text"
+                  value={formData.motivo}
+                  onChange={e => setFormData(p => ({ ...p, motivo: e.target.value }))}
+                  className="input input-bordered input-sm w-full"
+                  placeholder="Ej: ajuste por campaña de temporada"
+                />
+              </div>
+            )}
+
             {formError && (
               <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
                 <ExclamationTriangleIcon className="w-4 h-4" />
@@ -321,7 +349,7 @@ export default function Promotions() {
           <div className="divide-y divide-gray-100">
             {visiblePromotions.map(item => {
               const status = String(item.estadoPromocion || '').toLowerCase()
-              const canEdit = status === 'programada'
+              const canEdit = status === 'programada' || status === 'activa'
               return (
                 <div key={item.id} className="px-4 py-3">
                   <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">

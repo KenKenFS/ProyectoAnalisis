@@ -1976,6 +1976,83 @@ export async function updatePromocionProgramada({
 }
 
 /**
+ * PF-002: Modificar promoción activa (y programada) con motivo obligatorio.
+ */
+export async function updatePromocionActiva({
+  promocionId,
+  nombre,
+  descripcion,
+  fechaInicio,
+  fechaFin,
+  tipoBeneficio,
+  valorBeneficio,
+  montoMinimo = 0,
+  categoriaProducto = '',
+  diaSemana = [],
+  motivo,
+  usuarioUid = null,
+}) {
+  if (!promocionId) throw new Error('promocionId es obligatorio.');
+  const motivoTrim = String(motivo || '').trim();
+  if (!motivoTrim) throw new Error('Debe indicar motivo de modificación.');
+
+  const ref = doc(db, 'promociones', promocionId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Promoción no encontrada.');
+
+  const current = snap.data() || {};
+  const currentStatus = normalizePromocionStatus({
+    fechaInicio: current.fechaInicio,
+    fechaFin: current.fechaFin,
+    estadoForzado: current.estadoPromocion,
+    eliminado: Boolean(current.eliminado),
+  });
+  if (currentStatus === 'expirada' || currentStatus === 'eliminada') {
+    throw new Error('Solo promociones activas o programadas pueden editarse.');
+  }
+
+  const payload = normalizePromotionPayload({
+    nombre,
+    descripcion,
+    fechaInicio,
+    fechaFin,
+    tipoBeneficio,
+    valorBeneficio,
+    montoMinimo,
+    categoriaProducto,
+    diaSemana,
+  });
+
+  const estadoPromocion = normalizePromocionStatus({
+    fechaInicio: payload.fechaInicio,
+    fechaFin: payload.fechaFin,
+    estadoForzado: current.estadoPromocion,
+    eliminado: Boolean(current.eliminado),
+  });
+  const now = new Date();
+  await updateDoc(ref, {
+    ...payload,
+    estadoPromocion,
+    updatedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'modificacion_promocion_activa',
+      promocionId,
+      uid: usuarioUid || null,
+      detalles: {
+        nombre: payload.nombre,
+        estadoAnterior: currentStatus,
+        estadoNuevo: estadoPromocion,
+        motivo: motivoTrim,
+      },
+      timestamp: now,
+    });
+  } catch (_) {}
+}
+
+/**
  * CF-002: Vista previa para cierre diario de caja.
  */
 export async function getResumenCierreCajaPreview(fecha) {
