@@ -71,12 +71,21 @@ export function AuthProvider({ children }) {
     return () => clearInterval(interval);
   }, [user]);
 
+  const logout = async () => {
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.error('Error al cerrar sesion:', err);
+    }
+  };
+
   const value = {
     user,
     role,
     userData,
     loading,
     error,
+    logout,
     isAuthenticated: !!user,
     isAdmin: role && role.toLowerCase() === 'admin',
     isCajero: role && role.toLowerCase() === 'cajero',

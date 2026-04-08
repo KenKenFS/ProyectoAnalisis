@@ -1073,6 +1073,16 @@ export async function getCategorias() {
 }
 
 /**
+ * Obtiene productos disponibles para el portal publico (sin autenticacion).
+ * Usa where('disponible', '==', true) para que coincida con las reglas de Firestore.
+ */
+export async function getProductosPublicos() {
+  const q = query(collection(db, 'productos'), where('disponible', '==', true));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/**
  * Obtiene productos por categoria
  */
 export async function getProductosByCategoria(categoria) {
@@ -6358,6 +6368,202 @@ async function enqueueReservaEmailConfirmation({
   return { queued: true, mailId: mailRef.id };
 }
 
+/**
+ * Encola un email de solicitud de reserva (portal web).
+ * Usa el mismo diseño y logo que el email de confirmacion del POS,
+ * pero indica estado "En espera de confirmacion" en lugar de "Reserva confirmada".
+ */
+export async function enqueueReservaSolicitudEmail({
+  reservaId,
+  clienteNombre,
+  clienteEmail,
+  fecha,
+  hora,
+  cantidadPersonas,
+  observaciones,
+}) {
+  if (!clienteEmail) return { queued: false, reason: 'without_email' };
+
+  const fechaLegible = formatReadableDate(fecha);
+  const clienteNombreSafe = escapeHtml(clienteNombre);
+  const observacionesSafe = escapeHtml(observaciones);
+  const brandLogoRaw = getBrandLogoUrlForEmail();
+  const brandLogoEscaped = isHttpsUrl(brandLogoRaw) ? escapeHtml(brandLogoRaw) : '';
+  const brandLogoBlock = brandLogoEscaped
+    ? `<img src="${brandLogoEscaped}" alt="Ceviche del Rey" width="220" style="max-width: 220px; width: 100%; height: auto; display: block; margin: 0 auto; border: 0; outline: none;" />`
+    : `<div style="font-size: 22px; font-weight: 700; color: #7f1d1d; letter-spacing: -0.02em;">Ceviche del Rey</div>`;
+  const observacionesBlock = observaciones
+    ? `
+      <tr>
+        <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;">
+          <strong style="color: #0f172a;">Observaciones</strong><br />
+          <span style="color: #475569; margin-top: 6px; display: inline-block;">${observacionesSafe}</span>
+        </td>
+      </tr>
+    `
+    : '';
+
+  const subject = `Solicitud de reserva recibida - Ceviche del Rey (${fechaLegible}, ${hora})`;
+  const textBody = [
+    `Hola ${clienteNombre}, hemos recibido tu solicitud de reserva.`,
+    '',
+    `Fecha: ${fechaLegible}`,
+    `Hora: ${hora}`,
+    `Personas: ${cantidadPersonas}`,
+    observaciones ? `Observaciones: ${observaciones}` : null,
+    '',
+    'Estado: En espera de confirmacion',
+    '',
+    'Nuestro equipo revisara la disponibilidad y te contactara para confirmar.',
+    '',
+    'Gracias por elegir Ceviche del Rey.',
+  ].filter(Boolean).join('\n');
+
+  const mailRef = await addDoc(collection(db, 'mail'), {
+    to: [clienteEmail],
+    reservaId,
+    tipo: 'reserva_solicitud_portal',
+    meta: { fecha, hora, cantidadPersonas, origen: 'portal' },
+    message: {
+      subject,
+      text: textBody,
+      html: `
+        <div style="margin:0; padding:28px 14px; background:#faf5f5; font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; color:#0f172a;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 24px rgba(69, 10, 10, 0.1); border: 1px solid #f5e5e5;">
+            <tr>
+              <td style="padding: 28px 28px 20px; text-align: center; background: #ffffff;">
+                ${brandLogoBlock}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 22px 28px 26px; background: linear-gradient(155deg, #450a0a 0%, #7f1d1d 42%, #991b1b 100%); text-align: center;">
+                <p style="margin: 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.88);">Solicitud de reserva</p>
+                <h1 style="margin: 10px 0 0; font-size: 26px; line-height: 1.2; color: #ffffff; font-weight: 700;">En espera de confirmacion</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 26px 28px 8px; font-size: 16px; line-height: 1.55; color: #334155;">
+                Hola <strong style="color:#0f172a;">${clienteNombreSafe}</strong>, hemos recibido tu solicitud. Nuestro equipo la revisara y te contactara para confirmar.
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 28px 0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Fecha</strong><br /><span style="color:#475569;">${fechaLegible}</span></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Hora</strong><br /><span style="color:#475569;">${hora}</span></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 14px 0; ${observaciones ? 'border-bottom: 1px solid #e2e8f0;' : ''} color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Personas</strong><br /><span style="color:#475569;">${cantidadPersonas}</span></td>
+                  </tr>
+                  ${observacionesBlock}
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 18px 28px 8px;">
+                <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px 16px; text-align: center; color: #b45309; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
+                  ESTADO: PENDIENTE DE CONFIRMACION
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 12px 28px 22px; font-size: 14px; color: #475569;">
+                Nuestro equipo revisara la disponibilidad y te confirmara por este medio.
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 0 28px 28px; font-size: 13px; color: #64748b; border-top: 1px solid #fce8e8;">
+                <p style="margin: 20px 0 0;">Gracias por elegir <strong style="color:#7f1d1d;">Ceviche del Rey</strong>.</p>
+              </td>
+            </tr>
+          </table>
+        </div>
+      `,
+    },
+  });
+
+  return { queued: true, mailId: mailRef.id };
+}
+
+/**
+ * Confirma una reserva del portal web (pendiente -> confirmada).
+ * Opcionalmente asigna mesa. Envía el email de confirmacion standard.
+ */
+export async function confirmarReservaPortal({
+  reservaId,
+  mesaId,
+  mesaNumero,
+  adminUid,
+}) {
+  if (!reservaId) throw new Error('ID de reserva requerido.');
+
+  const reservaRef = doc(db, 'reservas', reservaId);
+  const snap = await getDoc(reservaRef);
+  if (!snap.exists()) throw new Error('Reserva no encontrada.');
+
+  const data = snap.data();
+  if (data.estado === 'confirmada') throw new Error('La reserva ya esta confirmada.');
+  if (data.estado === 'cancelada') throw new Error('No se puede confirmar una reserva cancelada.');
+
+  const codigoPublico = buildPublicReservaCode(data.fecha, reservaId);
+  const now = new Date();
+
+  const updatePayload = {
+    estado: 'confirmada',
+    codigoPublico,
+    confirmadoPor: adminUid || null,
+    confirmadaAt: now,
+    updatedAt: now,
+  };
+  if (mesaId) updatePayload.mesaId = mesaId;
+  if (mesaNumero != null) updatePayload.mesaNumero = Number(mesaNumero);
+
+  await updateDoc(reservaRef, updatePayload);
+
+  const emailNorm = (data.clienteEmail || '').trim().toLowerCase();
+  let emailQueueId = null;
+  if (emailNorm) {
+    try {
+      const queueResult = await enqueueReservaEmailConfirmation({
+        reservaId,
+        codigoReserva: codigoPublico,
+        clienteNombre: data.clienteNombre,
+        clienteEmail: emailNorm,
+        fecha: data.fecha,
+        hora: data.hora,
+        cantidadPersonas: data.cantidadPersonas,
+        mesaNumero: mesaNumero != null ? Number(mesaNumero) : data.mesaNumero,
+        observaciones: data.observaciones || '',
+      });
+      emailQueueId = queueResult.mailId || null;
+      await updateDoc(reservaRef, { estadoEmail: 'en_cola', emailQueueId, updatedAt: now });
+    } catch (_) {
+      await updateDoc(reservaRef, { estadoEmail: 'error_cola', updatedAt: now });
+    }
+  }
+
+  try {
+    await addDoc(collection(db, 'auditoria'), {
+      tipo: 'reserva_confirmada_portal',
+      reservaId,
+      codigoReserva: codigoPublico,
+      clienteNombre: data.clienteNombre,
+      clienteEmail: emailNorm || null,
+      fecha: data.fecha,
+      hora: data.hora,
+      mesaNumero: mesaNumero != null ? Number(mesaNumero) : null,
+      cantidadPersonas: data.cantidadPersonas,
+      uid: adminUid || null,
+      timestamp: now,
+    });
+  } catch (_) {}
+
+  return { codigoPublico, emailQueueId };
+}
+
 export async function getReservasByDate(fecha) {
   const q = query(collection(db, 'reservas'), where('fecha', '==', fecha));
   const snap = await getDocs(q);
@@ -6421,6 +6627,35 @@ export async function checkReservaDuplicada(clienteNombre, fecha, hora) {
     (r.clienteNombre || '').trim().toLowerCase() === norm &&
     reservationsOverlap(r.hora, hora)
   ) || null;
+}
+
+export async function getReservasByClienteUid(clienteUid) {
+  if (!clienteUid) return [];
+  const q = query(
+    collection(db, 'reservas'),
+    where('clienteUid', '==', clienteUid)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Obtiene todas las solicitudes de reserva pendientes del portal web.
+ * Las reservas del portal tienen estado 'pendiente' (las del admin son directamente 'confirmada').
+ */
+export async function getSolicitudesPortal() {
+  const q = query(
+    collection(db, 'reservas'),
+    where('estado', '==', 'pendiente')
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  list.sort((a, b) => {
+    const dateCmp = (a.fecha || '').localeCompare(b.fecha || '');
+    if (dateCmp !== 0) return dateCmp;
+    return (a.hora || '').localeCompare(b.hora || '');
+  });
+  return list;
 }
 
 export async function createReserva({

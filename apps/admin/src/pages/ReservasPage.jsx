@@ -30,6 +30,8 @@ import {
   cancelarReserva,
   completarReserva,
   getAlternativasReserva,
+  getSolicitudesPortal,
+  confirmarReservaPortal,
 } from '@shared/firebase/firestore'
 
 function toDateStr(d) {
@@ -213,6 +215,17 @@ export default function ReservasPage() {
   const [confirmCancelId, setConfirmCancelId] = useState(null)
   const [detailReserva, setDetailReserva] = useState(null)
   const [viewMode, setViewMode] = useState('dia')
+
+  const [solicitudes, setSolicitudes] = useState([])
+  const [loadingSolicitudes, setLoadingSolicitudes] = useState(false)
+  const [confirmarSolicitudData, setConfirmarSolicitudData] = useState(null)
+  const [confirmMesaId, setConfirmMesaId] = useState('')
+  const [confirmMesaNumero, setConfirmMesaNumero] = useState(null)
+  const [confirmAvailableMesas, setConfirmAvailableMesas] = useState([])
+  const [loadingConfirmMesas, setLoadingConfirmMesas] = useState(false)
+  const [loadingConfirmar, setLoadingConfirmar] = useState(false)
+  const [confirmarError, setConfirmarError] = useState('')
+  const [rechazarSolicitudId, setRechazarSolicitudId] = useState(null)
   const [calendarCursor, setCalendarCursor] = useState(new Date())
   const [monthReservaMap, setMonthReservaMap] = useState({})
   const [loadingCalendar, setLoadingCalendar] = useState(false)
@@ -225,6 +238,8 @@ export default function ReservasPage() {
   useEffect(() => { loadMonthReservaMap(calendarCursor) }, [calendarCursor])
   useEffect(() => { loadProximasReservas() }, [])
   useEffect(() => { loadEmailDeliveryStatuses() }, [reservas, proximasReservas])
+  useEffect(() => { if (viewMode === 'solicitudes') loadSolicitudes() }, [viewMode])
+  useEffect(() => { loadSolicitudes() }, [])
 
   async function loadReservas() {
     setLoading(true)
@@ -302,6 +317,67 @@ export default function ReservasPage() {
       // Los errores individuales ya se manejan dentro de cada carga.
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  async function loadSolicitudes() {
+    setLoadingSolicitudes(true)
+    try {
+      setSolicitudes(await getSolicitudesPortal())
+    } catch (_) {
+      setSolicitudes([])
+    } finally {
+      setLoadingSolicitudes(false)
+    }
+  }
+
+  async function openConfirmarModal(solicitud) {
+    setConfirmarSolicitudData(solicitud)
+    setConfirmMesaId('')
+    setConfirmMesaNumero(null)
+    setConfirmarError('')
+    setLoadingConfirmMesas(true)
+    setConfirmAvailableMesas([])
+    try {
+      const mesas = await getMesasDisponiblesParaReserva(solicitud.fecha, solicitud.hora, solicitud.cantidadPersonas)
+      setConfirmAvailableMesas(mesas)
+    } catch (_) {
+      setConfirmAvailableMesas([])
+    } finally {
+      setLoadingConfirmMesas(false)
+    }
+  }
+
+  async function handleConfirmarSolicitud() {
+    if (!confirmarSolicitudData) return
+    setLoadingConfirmar(true)
+    setConfirmarError('')
+    try {
+      await confirmarReservaPortal({
+        reservaId: confirmarSolicitudData.id,
+        mesaId: confirmMesaId || null,
+        mesaNumero: confirmMesaNumero,
+        adminUid: user?.uid,
+      })
+      setConfirmarSolicitudData(null)
+      await loadSolicitudes()
+      await loadReservas()
+    } catch (err) {
+      setConfirmarError(err.message)
+    } finally {
+      setLoadingConfirmar(false)
+    }
+  }
+
+  async function handleRechazarSolicitud() {
+    if (!rechazarSolicitudId) return
+    try {
+      await cancelarReserva(rechazarSolicitudId, user?.uid)
+      setRechazarSolicitudId(null)
+      await loadSolicitudes()
+    } catch (err) {
+      setActionError(err.message)
+      setRechazarSolicitudId(null)
     }
   }
 
@@ -550,6 +626,17 @@ export default function ReservasPage() {
         >
           Proximas reservas
         </button>
+        <button
+          onClick={() => setViewMode('solicitudes')}
+          className={`relative px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'solicitudes' ? 'bg-amber-500 text-white shadow dark:bg-amber-700' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'}`}
+        >
+          Solicitudes del portal
+          {solicitudes.length > 0 && viewMode !== 'solicitudes' && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold px-1 shadow">
+              {solicitudes.length}
+            </span>
+          )}
+        </button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -630,12 +717,12 @@ export default function ReservasPage() {
         </div>
       )}
 
-      {isCurrentListLoading ? (
+      {viewMode !== 'solicitudes' && isCurrentListLoading ? (
         <div className="text-center py-16">
           <ArrowPathIcon className="w-10 h-10 mx-auto animate-spin mb-3 text-cyan-500 dark:text-red-800/70" />
           <p className="text-gray-500 dark:text-zinc-400">Cargando reservas...</p>
         </div>
-      ) : currentList.length === 0 ? (
+      ) : viewMode !== 'solicitudes' && currentList.length === 0 ? (
         <div className="text-center py-16 bg-gray-50/50 rounded-xl border-2 border-dashed border-gray-200 dark:border-zinc-700 dark:bg-zinc-900/30">
           <CalendarDaysIcon className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-zinc-600" />
           <p className="text-lg font-semibold text-gray-500 dark:text-zinc-400">Sin reservas</p>
@@ -649,7 +736,7 @@ export default function ReservasPage() {
             Crear reserva
           </button>
         </div>
-      ) : (
+      ) : viewMode !== 'solicitudes' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {currentList.map(r => {
             const cfg = ESTADO_CONFIG[r.estado] || ESTADO_CONFIG.confirmada
@@ -745,6 +832,99 @@ export default function ReservasPage() {
               </div>
             )
           })}
+        </div>
+      ) : null}
+
+      {viewMode === 'solicitudes' && (
+        <div>
+          {loadingSolicitudes ? (
+            <div className="text-center py-16">
+              <ArrowPathIcon className="w-10 h-10 mx-auto animate-spin mb-3 text-amber-500" />
+              <p className="text-gray-500 dark:text-zinc-400">Cargando solicitudes...</p>
+            </div>
+          ) : solicitudes.length === 0 ? (
+            <div className="text-center py-16 bg-gray-50/50 rounded-xl border-2 border-dashed border-gray-200 dark:border-zinc-700 dark:bg-zinc-900/30">
+              <CheckCircleIcon className="w-16 h-16 mx-auto mb-4 text-emerald-300" />
+              <p className="text-lg font-semibold text-gray-500 dark:text-zinc-400">Sin solicitudes pendientes</p>
+              <p className="text-sm text-gray-400 mt-1 dark:text-zinc-500">Todas las reservas del portal han sido gestionadas</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {solicitudes.map(r => (
+                <div key={r.id} className="rounded-xl border border-amber-200 bg-amber-50/40 border-l-4 border-l-amber-400 dark:border-amber-900/40 dark:bg-amber-950/10">
+                  <div className="p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-[60px] rounded-lg bg-gray-900 px-3 py-1.5 text-center text-white ring-1 ring-black/10">
+                          <ClockIcon className="mx-auto mb-0.5 w-3.5 h-3.5 text-gray-400" />
+                          <div className="text-sm font-bold tracking-wide">{r.hora}</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900 dark:text-zinc-100">{r.clienteNombre}</div>
+                          <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                            <UserGroupIcon className="w-3.5 h-3.5" />
+                            {r.cantidadPersonas} persona{r.cantidadPersonas > 1 ? 's' : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/50 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+                        Portal web
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1 mb-2 text-xs text-gray-600 font-medium">
+                      <CalendarDaysIcon className="w-3.5 h-3.5 text-gray-400" />
+                      {formatShortDate(r.fecha)}
+                    </div>
+
+                    <div className="flex flex-col gap-1 text-xs text-gray-500 mb-3">
+                      {r.clienteEmail && (
+                        <div className="flex items-center gap-1.5">
+                          <EnvelopeIcon className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                          <span className="truncate">{r.clienteEmail}</span>
+                        </div>
+                      )}
+                      {r.clienteTelefono && (
+                        <div className="flex items-center gap-1.5">
+                          <PhoneIcon className="w-3.5 h-3.5 text-gray-400" />
+                          {r.clienteTelefono}
+                        </div>
+                      )}
+                    </div>
+
+                    {r.observaciones && (
+                      <div className="flex items-start gap-1.5 mb-3 text-xs text-gray-500 bg-white/60 rounded-lg px-2.5 py-1.5 border border-amber-100 dark:bg-zinc-900/30 dark:border-amber-900/20">
+                        <ChatBubbleBottomCenterTextIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-gray-400" />
+                        <span className="line-clamp-2">{r.observaciones}</span>
+                      </div>
+                    )}
+
+                    {r.clienteUid && (
+                      <p className="text-[11px] text-cyan-600 dark:text-cyan-400 mb-2">Cliente registrado</p>
+                    )}
+                  </div>
+
+                  <div className="border-t border-amber-200/60 px-4 py-2.5 flex gap-2 dark:border-amber-900/25">
+                    <button
+                      onClick={() => openConfirmarModal(r)}
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 transition"
+                    >
+                      <CheckCircleIcon className="w-4 h-4" />
+                      Confirmar
+                    </button>
+                    <button
+                      onClick={() => setRechazarSolicitudId(r.id)}
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium text-red-600 hover:bg-red-50 border border-red-200 transition dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-950/20"
+                    >
+                      <XCircleIcon className="w-4 h-4" />
+                      Rechazar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1140,6 +1320,149 @@ export default function ReservasPage() {
                 className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700"
               >
                 Si, cancelar
+              </button>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {confirmarSolicitudData && (
+        <ModalPortal overlayClassName="flex items-center justify-center">
+          <div className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-zinc-900">
+            <div className="bg-gradient-to-r from-emerald-700 to-emerald-800 p-5 text-white">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-emerald-200">Confirmar solicitud</p>
+                  <h3 className="mt-0.5 text-xl font-bold">{confirmarSolicitudData.clienteNombre}</h3>
+                  <div className="mt-1.5 flex items-center gap-3 text-sm text-emerald-100">
+                    <span className="flex items-center gap-1"><CalendarDaysIcon className="w-4 h-4" />{formatShortDate(confirmarSolicitudData.fecha)}</span>
+                    <span className="flex items-center gap-1"><ClockIcon className="w-4 h-4" />{confirmarSolicitudData.hora}</span>
+                    <span className="flex items-center gap-1"><UserGroupIcon className="w-4 h-4" />{confirmarSolicitudData.cantidadPersonas} pers.</span>
+                  </div>
+                </div>
+                <button onClick={() => setConfirmarSolicitudData(null)} className="hover:bg-white/20 p-1 rounded-lg transition">
+                  <XMarkIcon className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 dark:text-zinc-200">
+              <div className="flex flex-col gap-1.5 text-sm text-gray-600 dark:text-zinc-400">
+                {confirmarSolicitudData.clienteEmail && (
+                  <div className="flex items-center gap-2"><EnvelopeIcon className="w-4 h-4 text-gray-400" />{confirmarSolicitudData.clienteEmail}</div>
+                )}
+                {confirmarSolicitudData.clienteTelefono && (
+                  <div className="flex items-center gap-2"><PhoneIcon className="w-4 h-4 text-gray-400" />{confirmarSolicitudData.clienteTelefono}</div>
+                )}
+              </div>
+
+              {confirmarSolicitudData.observaciones && (
+                <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  <p className="mb-1 text-xs font-medium text-gray-500 dark:text-zinc-400">Observaciones</p>
+                  {confirmarSolicitudData.observaciones}
+                </div>
+              )}
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-zinc-300">
+                  Asignar mesa (opcional)
+                </label>
+                {loadingConfirmMesas ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
+                    <ArrowPathIcon className="h-4 w-4 animate-spin text-emerald-500" />
+                    Buscando mesas disponibles...
+                  </div>
+                ) : confirmAvailableMesas.length > 0 ? (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {confirmAvailableMesas.map(m => (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          if (confirmMesaId === m.id) { setConfirmMesaId(''); setConfirmMesaNumero(null) }
+                          else { setConfirmMesaId(m.id); setConfirmMesaNumero(m.numero) }
+                        }}
+                        className={`p-2.5 rounded-xl border-2 text-center transition-all ${
+                          confirmMesaId === m.id
+                            ? 'border-emerald-500 bg-emerald-50 shadow-md ring-2 ring-emerald-200 dark:bg-emerald-950/20 dark:ring-emerald-900/30'
+                            : 'border-gray-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/50 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-emerald-800'
+                        }`}
+                      >
+                        <div className={`text-lg font-bold ${confirmMesaId === m.id ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-zinc-300'}`}>{formatMesaLabel(m.numero)}</div>
+                        <div className="text-[10px] text-gray-500">{m.capacidad} pers.</div>
+                        <div className="text-[10px] text-gray-400">{m.zona || 'General'}</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-700 px-3 py-2 rounded-lg text-sm dark:bg-amber-950/20 dark:border-amber-900/30 dark:text-amber-400">
+                    No hay mesas disponibles para este horario. Puedes confirmar sin mesa y asignarla despues.
+                  </div>
+                )}
+                {confirmMesaId && (
+                  <p className="text-xs text-emerald-600 mt-1">
+                    Mesa seleccionada: {formatMesaLabel(confirmMesaNumero)} — toca de nuevo para deseleccionar
+                  </p>
+                )}
+                {!confirmMesaId && (
+                  <p className="text-xs text-gray-400 mt-1">Sin mesa seleccionada. Se confirmara sin asignacion de mesa.</p>
+                )}
+              </div>
+
+              {confirmarError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm flex items-center gap-2 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                  <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
+                  {confirmarError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-gray-200 bg-gray-50/50 p-4 dark:border-zinc-700 dark:bg-zinc-900/80">
+              <button
+                onClick={() => setConfirmarSolicitudData(null)}
+                className="rounded-lg px-5 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmarSolicitud}
+                disabled={loadingConfirmar}
+                className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {loadingConfirmar ? 'Confirmando...' : 'Confirmar y notificar'}
+              </button>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {rechazarSolicitudId && (
+        <ModalPortal overlayClassName="flex items-center justify-center">
+          <div className="w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-zinc-900">
+            <div className="border-b border-red-100 bg-red-50 p-5 dark:border-red-950/30 dark:bg-red-950/30">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-red-100 p-2 dark:bg-red-950/40">
+                  <XCircleIcon className="h-6 w-6 text-red-500 dark:text-red-300" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-zinc-100">Rechazar solicitud</h3>
+                  <p className="mt-1 text-sm text-gray-600 dark:text-zinc-400">
+                    La reserva quedara como cancelada. El cliente no recibira un correo automatico de rechazo.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 bg-white p-5 dark:bg-zinc-900">
+              <button
+                onClick={() => setRechazarSolicitudId(null)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Volver
+              </button>
+              <button
+                onClick={handleRechazarSolicitud}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600"
+              >
+                Si, rechazar
               </button>
             </div>
           </div>

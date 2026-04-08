@@ -1,0 +1,205 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    function role() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isAdmin()  { return signedIn() && (role() == 'admin'  || role() == 'Admin'); }
+    function isCajero() { return signedIn() && (role() == 'cajero' || role() == 'Cajero'); }
+    function isMesero() { return signedIn() && (role() == 'mesero' || role() == 'Mesero'); }
+    function isCocina() { return signedIn() && (role() == 'cocina' || role() == 'Cocina'); }
+    function isCliente(){ return signedIn() && (role() == 'cliente'|| role() == 'Cliente'); }
+    function isStaff()  { return isAdmin() || isCajero() || isMesero() || isCocina(); }
+
+    // users
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // clientes (portal web) - nuevo, solo el dueño o admin
+    match /clientes/{clienteId} {
+      allow read: if signedIn() && (request.auth.uid == clienteId || isAdmin());
+      allow create: if signedIn() && (request.auth.uid == clienteId || isAdmin());
+      allow update: if signedIn() && (request.auth.uid == clienteId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // turnos_pos
+    match /turnos_pos/{turnoId} {
+      allow read: if signedIn() && isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // inventario
+    match /inventario/{itemId} {
+      allow read: if signedIn() && (isAdmin() || isCajero());
+      allow create: if isAdmin();
+      allow update: if signedIn() && (isAdmin() || isCajero());
+      allow delete: if isAdmin();
+    }
+
+    // productos
+    // Staff puede leer todos; portal puede leer los disponibles sin autenticacion
+    match /productos/{productoId} {
+      allow read: if signedIn() || resource.data.disponible == true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // mesas
+    match /mesas/{mesaId} {
+      allow read: if signedIn() && (isAdmin() || isMesero() || isCajero() || isCocina());
+      allow create: if isAdmin();
+      allow update: if signedIn() && (isAdmin() || isMesero());
+      allow delete: if isAdmin();
+    }
+
+    // transacciones
+    match /transacciones/{transaccionId} {
+      allow read, create: if signedIn() && (isAdmin() || isCajero());
+      allow update, delete: if isAdmin();
+    }
+
+    // cuentas + subcolecciones
+    match /cuentas/{cuentaId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin() || isCajero() || isMesero();
+      allow delete: if isAdmin();
+
+      match /comensales/{comensalId} {
+        allow read, create: if isAdmin() || isCajero() || isMesero();
+        allow update: if (isAdmin() || isCajero() || isMesero())
+          && request.resource.data.diff(resource.data).changedKeys()
+            .hasOnly(['alias', 'estadoCliente', 'clienteCrmId', 'updatedAt']);
+        allow delete: if isAdmin();
+      }
+
+      match /items/{itemId} {
+        allow read, create: if isAdmin() || isCajero() || isMesero();
+        allow update: if (isAdmin() || isCajero() || isMesero())
+          && request.resource.data.diff(resource.data).changedKeys()
+            .hasOnly([
+              'comensalId',
+              'estadoItem',
+              'estadoPreparacion',
+              'notaEspecial',
+              'pagoId',
+              'paidAt',
+              'assignedByUid',
+              'assignedAt',
+              'updatedAt'
+            ]);
+        allow delete: if isAdmin();
+      }
+    }
+
+    // pagos
+    match /pagos/{pagoId} {
+      allow read: if isAdmin() || isCajero();
+      allow create: if isAdmin()
+        || (isCajero() && request.resource.data.cajeroUid == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    // entradas de insumos
+    match /entradas_insumos/{entradaId} {
+      allow read: if signedIn() && (isAdmin() || isCajero());
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // salidas de insumos
+    match /salidas_insumos/{salidaId} {
+      allow read: if signedIn() && (isAdmin() || isCajero());
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // conteo manual
+    match /conteos_fisicos/{conteoId} {
+      allow read, create, update: if signedIn() && isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // pedidos
+    match /pedidos/{pedidoId} {
+      allow read: if signedIn() && (
+        isAdmin() || isCajero() || isMesero() || isCocina() ||
+        (isCliente() && resource.data.clienteId == request.auth.uid)
+      );
+      allow create: if signedIn() && (isAdmin() || isCajero() || isMesero() || isCliente());
+      allow update: if signedIn() && (isAdmin() || isCajero() || isMesero() || isCocina());
+      allow delete: if isAdmin();
+    }
+
+    // auditoria
+    match /auditoria/{auditoriaId} {
+      allow read: if isStaff();
+      allow create: if isAdmin() || isCajero()
+        || (isMesero() && request.resource.data.tipo == 'pedido_enviado_cocina');
+      allow update, delete: if isAdmin();
+    }
+
+    // notificaciones
+    match /notificaciones/{notificacionId} {
+      allow read: if isStaff() || (signedIn() && resource.data.usuarioIdDestino == request.auth.uid);
+      allow create: if isAdmin() || isCajero();
+      allow update, delete: if isAdmin();
+    }
+
+    // reservas
+    // - Staff (admin/cajero/mesero/cocina): acceso total
+    // - Cliente autenticado (portal): puede crear con su uid, leer y cancelar las propias
+    // - Invitado (sin auth): puede CREAR solamente (clienteUid == null)
+    match /reservas/{reservaId} {
+      allow read: if isStaff()
+        || (signedIn() && resource.data.clienteUid == request.auth.uid);
+
+      allow create: if isStaff()
+        || (signedIn() && request.resource.data.clienteUid == request.auth.uid)
+        || !signedIn();  // invitado sin autenticacion
+
+      allow update: if isStaff()
+        || (signedIn()
+            && resource.data.clienteUid == request.auth.uid
+            && (resource.data.estado == 'pendiente' || resource.data.estado == 'confirmada')
+            && request.resource.data.estado == 'cancelada');
+
+      allow delete: if isAdmin();
+    }
+
+    // mails
+    // Staff: acceso total; portal (autenticado o invitado): puede crear para enviar emails
+    match /mail/{mailId} {
+      allow create: if true;  // cualquiera puede encolar un email (lo procesa Firebase Extension)
+      allow read, update, delete: if isAdmin();
+    }
+
+    // cierres de caja
+    match /cierres_caja/{cierreId} {
+      allow read: if signedIn() && (isAdmin() || isCajero());
+      allow create: if signedIn() && (isAdmin() || isCajero());
+      allow update: if signedIn() && (isAdmin() || isCajero());
+      allow delete: if isAdmin();
+    }
+
+    // promociones
+    match /promociones/{promocionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

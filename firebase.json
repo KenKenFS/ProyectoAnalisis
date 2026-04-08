@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "storage": {
     "rules": "storage.rules"
   },
@@ -51,6 +54,21 @@
     {
       "target": "cocina",
       "public": "apps/cocina/dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "target": "portal",
+      "public": "apps/portal/dist",
       "ignore": [
         "firebase.json",
         "**/.*",
