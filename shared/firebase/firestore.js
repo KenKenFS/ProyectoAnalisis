@@ -335,6 +335,304 @@ export async function getSalidasInsumos() {
   return list;
 }
 
+/** Motivos contados como pérdida (RA-005). */
+export const RA005_MOTIVOS_PERDIDA = ['desperdicio', 'merma', 'vencimiento'];
+
+function ra005NextDayCR(dateStr) {
+  const { start } = rangeForDateStr(String(dateStr || '').trim());
+  return toDateStrCR(new Date(start.getTime() + 86400000));
+}
+
+function ra005EachDateInclusive(startStr, endStr) {
+  const out = [];
+  let cur = String(startStr || '').trim();
+  const end = String(endStr || '').trim();
+  while (cur <= end) {
+    out.push(cur);
+    if (cur === end) break;
+    cur = ra005NextDayCR(cur);
+  }
+  return out;
+}
+
+function ra005PrecioPromedioPorInsumo(entradasList) {
+  const acc = {};
+  for (const e of entradasList) {
+    const sid = e.insumoId;
+    if (!sid) continue;
+    const c = Number(e.cantidad || 0);
+    const p = Number(e.precioUnitario || 0);
+    if (!acc[sid]) acc[sid] = { sumQty: 0, sumCost: 0 };
+    acc[sid].sumQty += c;
+    acc[sid].sumCost += c * p;
+  }
+  const out = {};
+  Object.keys(acc).forEach((sid) => {
+    const m = acc[sid];
+    out[sid] = m.sumQty > 0 ? m.sumCost / m.sumQty : 0;
+  });
+  return out;
+}
+
+/**
+ * Reporte de inventario RA-005: consumo en período, pérdidas, stock bajo, serie diaria.
+ * Costo estimado de salidas vía precio promedio ponderado de todas las entradas históricas por insumo.
+ */
+export async function getReporteInventarioRango(fechaInicio, fechaFin) {
+  const fi = String(fechaInicio || '').trim();
+  const ff = String(fechaFin || '').trim();
+  const { start, end } = rangeForDateStrInclusive(fi, ff);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+
+  const [entradasSnap, salidasSnap, inventarioSnap] = await Promise.all([
+    getDocs(collection(db, 'entradas_insumos')),
+    getDocs(
+      query(
+        collection(db, 'salidas_insumos'),
+        where('timestamp', '>=', start),
+        where('timestamp', '<=', end)
+      )
+    ),
+    getDocs(collection(db, 'inventario')),
+  ]);
+
+  const entradasAll = entradasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const precioMap = ra005PrecioPromedioPorInsumo(entradasAll);
+
+  const entradasPeriodo = entradasAll.filter((e) => {
+    const t = toMillisSafe(e.timestamp);
+    return t >= startMs && t <= endMs;
+  });
+
+  const salidasPeriodo = salidasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  const nombrePorId = {};
+  inventarioSnap.docs.forEach((d) => {
+    const x = d.data();
+    nombrePorId[d.id] = x.nombre || x.nombreInsumo || d.id;
+  });
+
+  const consumoAgg = {};
+  for (const s of salidasPeriodo) {
+    const sid = s.insumoId;
+    if (!sid) continue;
+    const qty = Number(s.cantidad || 0);
+    if (!consumoAgg[sid]) {
+      consumoAgg[sid] = {
+        insumoId: sid,
+        nombre: s.insumoNombre || nombrePorId[sid] || sid,
+        unidad: s.unidad || '',
+        cantidad: 0,
+        porMotivo: {},
+      };
+    }
+    consumoAgg[sid].cantidad += qty;
+    const mot = String(s.motivo || 'otro').toLowerCase();
+    consumoAgg[sid].porMotivo[mot] = (consumoAgg[sid].porMotivo[mot] || 0) + qty;
+  }
+
+  const topConsumo = Object.values(consumoAgg)
+    .map((row) => ({
+      ...row,
+      costoEstimado: row.cantidad * (precioMap[row.insumoId] || 0),
+    }))
+    .sort((a, b) => b.cantidad - a.cantidad);
+
+  const perdidasPorMotivo = {
+    desperdicio: { cantidad: 0, costo: 0 },
+    merma: { cantidad: 0, costo: 0 },
+    vencimiento: { cantidad: 0, costo: 0 },
+  };
+  const perdidasDetalle = [];
+
+  for (const s of salidasPeriodo) {
+    const mot = String(s.motivo || '').toLowerCase();
+    if (!RA005_MOTIVOS_PERDIDA.includes(mot)) continue;
+    const sid = s.insumoId;
+    const qty = Number(s.cantidad || 0);
+    const unit = precioMap[sid] || 0;
+    const costo = qty * unit;
+    perdidasPorMotivo[mot].cantidad += qty;
+    perdidasPorMotivo[mot].costo += costo;
+    perdidasDetalle.push({
+      id: s.id,
+      insumoId: sid,
+      nombre: s.insumoNombre || nombrePorId[sid] || sid,
+      unidad: s.unidad || '',
+      motivo: mot,
+      cantidad: qty,
+      costoEstimado: costo,
+      timestamp: s.timestamp,
+    });
+  }
+  perdidasDetalle.sort((a, b) => toMillisSafe(b.timestamp) - toMillisSafe(a.timestamp));
+
+  const inventarioItems = inventarioSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const stockBajo = inventarioItems
+    .filter((it) => {
+      const c = Number(it.cantidad || 0);
+      const min = Number(it.minCantidad ?? 10);
+      return c < min;
+    })
+    .map((it) => {
+      const c = Number(it.cantidad || 0);
+      const min = Number(it.minCantidad ?? 10);
+      return {
+        id: it.id,
+        nombre: it.nombre || it.id,
+        unidad: it.unidad || '',
+        cantidad: c,
+        minCantidad: min,
+        deficit: min - c,
+      };
+    })
+    .sort((a, b) => b.deficit - a.deficit);
+
+  let entradasCantidadTotal = 0;
+  let entradasCostoTotal = 0;
+  for (const e of entradasPeriodo) {
+    const c = Number(e.cantidad || 0);
+    const p = Number(e.precioUnitario || 0);
+    entradasCantidadTotal += c;
+    entradasCostoTotal += c * p;
+  }
+
+  let salidasCantidadTotal = 0;
+  for (const s of salidasPeriodo) {
+    salidasCantidadTotal += Number(s.cantidad || 0);
+  }
+
+  const perdidasCantidadTotal = RA005_MOTIVOS_PERDIDA.reduce(
+    (sum, m) => sum + (perdidasPorMotivo[m]?.cantidad || 0),
+    0
+  );
+
+  const dias = ra005EachDateInclusive(fi, ff);
+  const serieDiaria = dias.map((dayStr) => {
+    const { start: ds, end: de } = rangeForDateStr(dayStr);
+    const d0 = ds.getTime();
+    const d1 = de.getTime();
+    let ent = 0;
+    let sal = 0;
+    for (const e of entradasPeriodo) {
+      const t = toMillisSafe(e.timestamp);
+      if (t >= d0 && t <= d1) ent += Number(e.cantidad || 0);
+    }
+    for (const s of salidasPeriodo) {
+      const t = toMillisSafe(s.timestamp);
+      if (t >= d0 && t <= d1) sal += Number(s.cantidad || 0);
+    }
+    return { fecha: dayStr, entradas: ent, salidas: sal };
+  });
+
+  return {
+    fechaInicio: fi,
+    fechaFin: ff,
+    precioPromedioPorInsumo: precioMap,
+    topConsumo,
+    perdidasPorMotivo,
+    perdidasDetalle,
+    stockBajo,
+    totales: {
+      entradasCantidad: entradasCantidadTotal,
+      entradasCosto: entradasCostoTotal,
+      salidasCantidad: salidasCantidadTotal,
+      perdidasCantidad: perdidasCantidadTotal,
+      perdidasCosto: RA005_MOTIVOS_PERDIDA.reduce(
+        (sum, m) => sum + (perdidasPorMotivo[m]?.costo || 0),
+        0
+      ),
+    },
+    serieDiaria,
+  };
+}
+
+/**
+ * Serie diaria para un insumo: deltas por día y stock al cierre del día (alineado al inventario actual).
+ */
+export async function getReporteInventarioTendenciaInsumo(insumoId, fechaInicio, fechaFin) {
+  const sid = String(insumoId || '').trim();
+  if (!sid) throw new Error('Debe seleccionar un insumo.');
+  const fi = String(fechaInicio || '').trim();
+  const ff = String(fechaFin || '').trim();
+  const { start } = rangeForDateStrInclusive(fi, ff);
+  const startMs = start.getTime();
+
+  const itemRef = doc(db, 'inventario', sid);
+  const [itemDoc, entSnap, salSnap] = await Promise.all([
+    getDoc(itemRef),
+    getDocs(query(collection(db, 'entradas_insumos'), where('insumoId', '==', sid))),
+    getDocs(query(collection(db, 'salidas_insumos'), where('insumoId', '==', sid))),
+  ]);
+
+  if (!itemDoc.exists()) {
+    return { insumoId: sid, nombre: '', unidad: '', dias: [], error: 'Insumo no encontrado.' };
+  }
+
+  const item = itemDoc.data();
+  const nombre = item.nombre || sid;
+  const unidad = item.unidad || '';
+  const stockActual = Number(item.cantidad || 0);
+
+  const entradas = entSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const salidas = salSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  const nowMs = Date.now();
+  let entDesdeInicio = 0;
+  let salDesdeInicio = 0;
+  for (const e of entradas) {
+    const t = toMillisSafe(e.timestamp);
+    if (t >= startMs && t <= nowMs) entDesdeInicio += Number(e.cantidad || 0);
+  }
+  for (const s of salidas) {
+    const t = toMillisSafe(s.timestamp);
+    if (t >= startMs && t <= nowMs) salDesdeInicio += Number(s.cantidad || 0);
+  }
+
+  const stockInicioRango = stockActual - entDesdeInicio + salDesdeInicio;
+
+  const dias = ra005EachDateInclusive(fi, ff);
+  const series = dias.map((dayStr) => {
+    const { start: ds, end: de } = rangeForDateStr(dayStr);
+    const d0 = ds.getTime();
+    const d1 = de.getTime();
+    let entDia = 0;
+    let salDia = 0;
+    for (const e of entradas) {
+      const t = toMillisSafe(e.timestamp);
+      if (t >= d0 && t <= d1) entDia += Number(e.cantidad || 0);
+    }
+    for (const s of salidas) {
+      const t = toMillisSafe(s.timestamp);
+      if (t >= d0 && t <= d1) salDia += Number(s.cantidad || 0);
+    }
+    const { end: dayEnd } = rangeForDateStr(dayStr);
+    const endMsDay = dayEnd.getTime();
+    let entAcum = 0;
+    let salAcum = 0;
+    for (const e of entradas) {
+      const t = toMillisSafe(e.timestamp);
+      if (t >= startMs && t <= endMsDay) entAcum += Number(e.cantidad || 0);
+    }
+    for (const s of salidas) {
+      const t = toMillisSafe(s.timestamp);
+      if (t >= startMs && t <= endMsDay) salAcum += Number(s.cantidad || 0);
+    }
+    const stockFin = stockInicioRango + entAcum - salAcum;
+    return { fecha: dayStr, entradasDia: entDia, salidasDia: salDia, stockFin };
+  });
+
+  return {
+    insumoId: sid,
+    nombre,
+    unidad,
+    stockActual,
+    stockInicioRango,
+    dias: series,
+  };
+}
+
 /**
  * Actualiza un insumo existente (nombre, unidad, minCantidad).
  * Valida nombre duplicado si cambia.
