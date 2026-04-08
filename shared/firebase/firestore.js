@@ -1003,6 +1003,19 @@ export function rangeForDateStr(fecha) {
   return { start: new Date(startMs), end: new Date(endMs) };
 }
 
+/**
+ * Rango [start, end] desde el inicio del dia `fechaInicio` hasta el fin del dia `fechaFin` (YYYY-MM-DD) en CR.
+ */
+export function rangeForDateStrInclusive(fechaInicio, fechaFin) {
+  const a = String(fechaInicio || '').trim();
+  const b = String(fechaFin || '').trim();
+  if (!a || !b) throw new Error('Rango de fechas inválido.');
+  if (a > b) throw new Error('La fecha inicial no puede ser posterior a la final.');
+  const { start } = rangeForDateStr(a);
+  const { end } = rangeForDateStr(b);
+  return { start, end };
+}
+
 const FORMAL_EXPENSE_MIN_AMOUNT = 50000;
 const ROLES_CORRECCION = ['admin', 'cajero', 'contador'];
 
@@ -2848,6 +2861,109 @@ export async function getTopProductosVendidosDia(fechaStr, limite = 5) {
   return [...agg.values()]
     .sort((a, b) => b.monto - a.monto)
     .slice(0, Math.max(1, Number(limite) || 5));
+}
+
+/**
+ * RA-002: Ventas por producto en un rango (pagos con itemIds + cuentas venta directa).
+ * @param {string} fechaInicio YYYY-MM-DD
+ * @param {string} fechaFin YYYY-MM-DD
+ * @param {{ categoria?: string }} options Si `categoria` tiene valor, filtra por esa categoría del catálogo.
+ */
+export async function getVentasPorProductoRango(fechaInicio, fechaFin, options = {}) {
+  const startStr = String(fechaInicio || '').trim();
+  const endStr = String(fechaFin || '').trim();
+  if (!startStr || !endStr) throw new Error('Indique fecha inicial y final.');
+  if (startStr > endStr) throw new Error('La fecha inicial no puede ser posterior a la final.');
+  const { start, end } = rangeForDateStrInclusive(startStr, endStr);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  const categoriaFiltro = String(options.categoria || '').trim().toLowerCase();
+
+  const agg = new Map();
+
+  const addLine = (productoId, nombre, qty, monto) => {
+    const key = String(productoId || nombre || 'sin_id').trim() || 'sin_id';
+    const cur = agg.get(key) || {
+      productoId: productoId || key,
+      nombre: String(nombre || key).trim() || key,
+      cantidad: 0,
+      monto: 0,
+    };
+    cur.cantidad += qty;
+    cur.monto += monto;
+    agg.set(key, cur);
+  };
+
+  const pagosSnap = await getDocs(
+    query(
+      collection(db, 'pagos'),
+      where('createdAt', '>=', start),
+      where('createdAt', '<=', end)
+    )
+  );
+
+  for (const d of pagosSnap.docs) {
+    const p = d.data() || {};
+    const itemIds = Array.isArray(p.itemIds) ? p.itemIds : [];
+    const cuentaId = String(p.cuentaId || '').trim();
+    if (!cuentaId || itemIds.length === 0) continue;
+    const snaps = await Promise.all(
+      itemIds.map((itemId) => getDoc(doc(db, 'cuentas', cuentaId, 'items', itemId)))
+    );
+    for (const snap of snaps) {
+      if (!snap.exists()) continue;
+      const it = snap.data() || {};
+      const qty = Number(it.cantidad || 1);
+      const unit = Number(it.precioUnitSnapshot || 0);
+      addLine(it.productoId, it.nombreSnapshot, qty, Math.round(qty * unit));
+    }
+  }
+
+  const cuentasSnap = await getDocs(
+    query(
+      collection(db, 'cuentas'),
+      where('cobradoAt', '>=', start),
+      where('cobradoAt', '<=', end)
+    )
+  );
+
+  for (const d of cuentasSnap.docs) {
+    const c = d.data() || {};
+    if (String(c.tipoVenta || '').trim().toLowerCase() !== 'directa_para_llevar') continue;
+    const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+    const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+    if (estado !== 'cobrada' && estado !== 'cerrada' && estadoPago !== 'pagado') continue;
+    const items = await getCuentaItems(d.id);
+    for (const it of items) {
+      if (String(it.estadoItem || '').trim().toLowerCase() !== 'pagado') continue;
+      const paidMs = tsMsDashboard(it.paidAt);
+      if (paidMs < startMs || paidMs > endMs) continue;
+      const qty = Number(it.cantidad || 1);
+      const unit = Number(it.precioUnitSnapshot || 0);
+      addLine(it.productoId, it.nombreSnapshot, qty, Math.round(qty * unit));
+    }
+  }
+
+  const rows = [...agg.values()];
+  const ids = [...new Set(rows.map((r) => String(r.productoId || '').trim()).filter(Boolean))];
+  const catMap = new Map();
+  await Promise.all(
+    ids.map(async (id) => {
+      const snap = await getDoc(doc(db, 'productos', id));
+      catMap.set(id, snap.exists() ? String(snap.data().categoria || '').trim() : '');
+    })
+  );
+  for (const r of rows) {
+    const id = String(r.productoId || '').trim();
+    r.categoria = id ? catMap.get(id) || '' : '';
+  }
+
+  let filtered = rows;
+  if (categoriaFiltro) {
+    filtered = rows.filter((r) => String(r.categoria || '').trim().toLowerCase() === categoriaFiltro);
+  }
+
+  return filtered.sort((a, b) => b.monto - a.monto);
 }
 
 /**
