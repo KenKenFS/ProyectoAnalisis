@@ -2967,6 +2967,188 @@ export async function getVentasPorProductoRango(fechaInicio, fechaFin, options =
 }
 
 /**
+ * RA-003: Resumen de cobros por usuario de caja en rango (`pagos.cajeroUid` + venta directa `closedByUid`).
+ * @returns {Promise<Array<{ usuarioUid: string|null, nombre: string, montoTotal: number, operaciones: number }>>}
+ */
+export async function getCobrosPorUsuarioRango(fechaInicio, fechaFin) {
+  const startStr = String(fechaInicio || '').trim();
+  const endStr = String(fechaFin || '').trim();
+  if (!startStr || !endStr) throw new Error('Indique fecha inicial y final.');
+  if (startStr > endStr) throw new Error('La fecha inicial no puede ser posterior a la final.');
+  const { start, end } = rangeForDateStrInclusive(startStr, endStr);
+
+  const [pagosSnap, cuentasSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, 'pagos'),
+        where('createdAt', '>=', start),
+        where('createdAt', '<=', end)
+      )
+    ),
+    getDocs(
+      query(
+        collection(db, 'cuentas'),
+        where('cobradoAt', '>=', start),
+        where('cobradoAt', '<=', end)
+      )
+    ),
+  ]);
+
+  const agg = new Map();
+
+  const bump = (uidRaw, monto) => {
+    const uid = String(uidRaw || '').trim();
+    const key = uid || '__sin_uid__';
+    const cur = agg.get(key) || {
+      usuarioUid: uid || null,
+      montoTotal: 0,
+      operaciones: 0,
+    };
+    cur.montoTotal += Math.abs(Number(monto || 0));
+    cur.operaciones += 1;
+    agg.set(key, cur);
+  };
+
+  for (const d of pagosSnap.docs) {
+    const p = d.data() || {};
+    bump(p.cajeroUid, p.montoTotal);
+  }
+
+  for (const d of cuentasSnap.docs) {
+    const c = d.data() || {};
+    if (String(c.tipoVenta || '').trim().toLowerCase() !== 'directa_para_llevar') continue;
+    const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+    const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+    if (estado !== 'cobrada' && estado !== 'cerrada' && estadoPago !== 'pagado') continue;
+    bump(c.closedByUid, c.montoTotal);
+  }
+
+  const keys = [...agg.keys()].filter((k) => k !== '__sin_uid__');
+  const nameMap = {};
+  if (keys.length > 0) {
+    const snaps = await Promise.all(keys.map((uid) => getDoc(doc(db, 'users', uid))));
+    snaps.forEach((snap, idx) => {
+      const uid = keys[idx];
+      if (!snap.exists()) {
+        nameMap[uid] = uid;
+        return;
+      }
+      const data = snap.data() || {};
+      nameMap[uid] = String(data.name || data.nombre || data.email || uid).trim() || uid;
+    });
+  }
+
+  const rows = [...agg.entries()].map(([key, v]) => {
+    const nombre =
+      key === '__sin_uid__'
+        ? 'Sin usuario asignado'
+        : nameMap[key] || key;
+    return {
+      usuarioUid: v.usuarioUid,
+      nombre,
+      montoTotal: Math.round(v.montoTotal),
+      operaciones: v.operaciones,
+    };
+  });
+
+  return rows.sort((a, b) => b.montoTotal - a.montoTotal);
+}
+
+/**
+ * RA-003: Detalle de cobros de un usuario en el rango (pagos + cierres venta directa).
+ * @param {string|null|undefined} usuarioUid `null` o vacío = solo operaciones sin `cajeroUid` / `closedByUid`.
+ */
+export async function getDetalleCobrosUsuarioRango(usuarioUid, fechaInicio, fechaFin) {
+  const startStr = String(fechaInicio || '').trim();
+  const endStr = String(fechaFin || '').trim();
+  if (!startStr || !endStr) throw new Error('Indique fecha inicial y final.');
+  if (startStr > endStr) throw new Error('La fecha inicial no puede ser posterior a la final.');
+  const { start, end } = rangeForDateStrInclusive(startStr, endStr);
+  const target = String(usuarioUid || '').trim();
+  const matchSin = !target;
+
+  const [pagosSnap, cuentasSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, 'pagos'),
+        where('createdAt', '>=', start),
+        where('createdAt', '<=', end)
+      )
+    ),
+    getDocs(
+      query(
+        collection(db, 'cuentas'),
+        where('cobradoAt', '>=', start),
+        where('cobradoAt', '<=', end)
+      )
+    ),
+  ]);
+
+  const lineas = [];
+
+  for (const d of pagosSnap.docs) {
+    const p = d.data() || {};
+    const uid = String(p.cajeroUid || '').trim();
+    if (matchSin) {
+      if (uid) continue;
+    } else if (uid !== target) continue;
+
+    const createdAt = p.createdAt || null;
+    const fechaStr = createdAt?.toDate
+      ? toDateStrCR(createdAt.toDate())
+      : toDateStrCR(createdAt || new Date());
+    lineas.push({
+      tipo: 'pago',
+      id: d.id,
+      fechaStr,
+      createdAt,
+      monto: Math.abs(Number(p.montoTotal || 0)),
+      metodo: String(p.metodo || '').trim() || '—',
+      cuentaId: p.cuentaId || null,
+      mesaId: p.mesaId || null,
+      comensalId: p.comensalId || null,
+    });
+  }
+
+  for (const d of cuentasSnap.docs) {
+    const c = d.data() || {};
+    if (String(c.tipoVenta || '').trim().toLowerCase() !== 'directa_para_llevar') continue;
+    const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+    const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+    if (estado !== 'cobrada' && estado !== 'cerrada' && estadoPago !== 'pagado') continue;
+
+    const uid = String(c.closedByUid || '').trim();
+    if (matchSin) {
+      if (uid) continue;
+    } else if (uid !== target) continue;
+
+    const cobradoAt = c.cobradoAt || null;
+    const fechaStr = cobradoAt?.toDate
+      ? toDateStrCR(cobradoAt.toDate())
+      : toDateStrCR(cobradoAt || new Date());
+    lineas.push({
+      tipo: 'venta_directa',
+      id: d.id,
+      fechaStr,
+      createdAt: cobradoAt,
+      monto: Math.abs(Number(c.montoTotal || 0)),
+      metodo: String(c.metodoPago || '').trim() || '—',
+      cuentaId: d.id,
+      mesaId: c.mesaId || null,
+      comensalId: null,
+    });
+  }
+
+  lineas.sort((a, b) => {
+    const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+    const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+    return tb - ta;
+  });
+
+  return lineas;
+}
+
+/**
  * RA-001: Suscripcion a cambios en mesas.
  */
 export function onMesasDashboardSnapshot(callback) {
