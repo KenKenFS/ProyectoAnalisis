@@ -27,10 +27,38 @@ import {
 import { useAuth } from '@shared/firebase/AuthContext'
 
 const roleConfig = {
-  Admin: { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-400', avatar: 'bg-violet-100 text-violet-600', label: 'Administrador' },
-  Cajero: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-400', avatar: 'bg-emerald-100 text-emerald-600', label: 'Cajero' },
-  Mesero: { bg: 'bg-sky-50', text: 'text-sky-700', dot: 'bg-sky-400', avatar: 'bg-sky-100 text-sky-600', label: 'Mesero' },
-  Cocina: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-400', avatar: 'bg-amber-100 text-amber-600', label: 'Cocina' },
+  Admin: {
+    border: 'border-violet-500/45',
+    bg: 'bg-violet-500/[0.1]',
+    text: 'text-violet-800 dark:text-violet-200',
+    dot: 'bg-violet-500 dark:bg-violet-400',
+    avatar: 'bg-violet-100 text-violet-600',
+    label: 'Administrador',
+  },
+  Cajero: {
+    border: 'border-emerald-500/45',
+    bg: 'bg-emerald-500/[0.1]',
+    text: 'text-emerald-800 dark:text-emerald-200',
+    dot: 'bg-emerald-500 dark:bg-emerald-400',
+    avatar: 'bg-emerald-100 text-emerald-600',
+    label: 'Cajero',
+  },
+  Mesero: {
+    border: 'border-sky-500/45',
+    bg: 'bg-sky-500/[0.1]',
+    text: 'text-sky-800 dark:text-sky-200',
+    dot: 'bg-sky-500 dark:bg-sky-400',
+    avatar: 'bg-sky-100 text-sky-600',
+    label: 'Mesero',
+  },
+  Cocina: {
+    border: 'border-amber-500/45',
+    bg: 'bg-amber-500/[0.1]',
+    text: 'text-amber-900 dark:text-amber-200',
+    dot: 'bg-amber-500 dark:bg-amber-400',
+    avatar: 'bg-amber-100 text-amber-600',
+    label: 'Cocina',
+  },
 }
 
 const ROLES = ['Admin', 'Cajero', 'Mesero', 'Cocina']
@@ -521,9 +549,16 @@ export default function Users() {
                 {filteredUsers.map(user => {
                   const statusNorm = (user.status || '').toLowerCase()
                   const isActive = statusNorm === 'active' || statusNorm === 'activo'
-                  const rc = roleConfig[user.role] || { bg: 'bg-gray-50', text: 'text-gray-600', dot: 'bg-gray-400', avatar: 'bg-gray-100 text-gray-500', label: user.role }
+                  const rc = roleConfig[user.role] || {
+                    border: 'border-zinc-500/40',
+                    bg: 'bg-zinc-500/10',
+                    text: 'text-zinc-700 dark:text-zinc-300',
+                    dot: 'bg-zinc-400',
+                    avatar: 'bg-gray-100 text-gray-500',
+                    label: user.role,
+                  }
                   return (
-                    <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
+                    <tr key={user.id}>
                       <td>
                         <div className="flex items-center">
                           <div className="font-medium text-gray-800">{user.name || '-'}</div>
@@ -531,14 +566,24 @@ export default function Users() {
                       </td>
                       <td className="text-sm text-gray-500">{user.email}</td>
                       <td>
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md ${rc.bg} ${rc.text}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${rc.dot}`} />
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${rc.border} ${rc.bg} ${rc.text}`}
+                        >
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${rc.dot}`} />
                           {rc.label}
                         </span>
                       </td>
                       <td>
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${isActive ? 'text-emerald-600' : 'text-gray-400'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-400' : 'bg-gray-300'}`} />
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                            isActive
+                              ? 'border-emerald-500/45 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                              : 'border-zinc-500/35 bg-zinc-500/10 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400'
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${isActive ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-zinc-400 dark:bg-zinc-500'}`}
+                          />
                           {isActive ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>

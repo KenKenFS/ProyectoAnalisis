@@ -47,7 +47,6 @@ function App() {
           element={
             <InternalLayout
               navbarTitle="Ceviche del Rey"
-              navbarSubtitle="Sistema"
               sidebarLinks={sidebarLinks}
               appName="Admin"
               showNotifications={true}

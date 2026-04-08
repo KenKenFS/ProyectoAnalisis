@@ -12,10 +12,12 @@ import {
   XMarkIcon,
   LockClosedIcon,
   ArrowUturnLeftIcon,
+  MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline'
 
 import { useAuth } from '@shared/firebase/AuthContext'
 import ModalPortal from '@shared/layout/ModalPortal'
+import { formatMesaFromDoc } from '@shared/utils/mesaDisplay'
 import {
   getMesasConCuentaActivaOrThrow,
   getCuenta,
@@ -212,7 +214,7 @@ function PaymentModal({ open, onClose, onConfirm, loading, resumen, error, promo
           </div>
 
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
               {error}
             </div>
           )}
@@ -259,13 +261,18 @@ export default function MesaCompartidaPage() {
 
   const [addProductOpen, setAddProductOpen] = useState(false)
   const [productos, setProductos] = useState([])
+  const [menuSearch, setMenuSearch] = useState('')
+  const [menuCategoria, setMenuCategoria] = useState('Todos')
+  const [loadingMenuProductos, setLoadingMenuProductos] = useState(false)
   const [addingProduct, setAddingProduct] = useState(false)
   const [deletingItemId, setDeletingItemId] = useState(null)
   const [anularTarget, setAnularTarget] = useState(null)
   const [anularMotivo, setAnularMotivo] = useState('')
+  const [anularModalError, setAnularModalError] = useState(null)
   const [anulando, setAnulando] = useState(false)
   const [revertTarget, setRevertTarget] = useState(null)
   const [revertMotivo, setRevertMotivo] = useState('')
+  const [revertModalError, setRevertModalError] = useState(null)
   const [revirtiendo, setRevirtiendo] = useState(false)
 
   const [confirmCerrarOpen, setConfirmCerrarOpen] = useState(false)
@@ -286,6 +293,42 @@ export default function MesaCompartidaPage() {
       .filter(m => !!m.cuentaActivaId)
       .sort((a, b) => Number(a.numero || 0) - Number(b.numero || 0))
   }, [mesas])
+
+  const selectedMesa = useMemo(
+    () => mesas.find((m) => m.id === selectedMesaId) || null,
+    [mesas, selectedMesaId]
+  )
+
+  const categoriasMenu = useMemo(() => {
+    const unique = new Set(
+      (productos || [])
+        .filter((p) => p.disponible !== false)
+        .map((p) => p.categoria || 'General')
+    )
+    return ['Todos', ...unique]
+  }, [productos])
+
+  const productosMenuFiltrados = useMemo(() => {
+    const list = (productos || [])
+      .filter((p) => p.disponible !== false)
+      .map((p) => ({
+        id: p.id,
+        name: p.nombre ?? p.name ?? p.id,
+        categoria: p.categoria || 'General',
+        price: Number(p.precioUnit ?? p.precio ?? 0),
+        desc: String(p.descripcion || '').trim(),
+      }))
+    const q = menuSearch.trim().toLowerCase()
+    return list.filter((item) => {
+      const okCat = menuCategoria === 'Todos' || item.categoria === menuCategoria
+      const okSearch =
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.desc.toLowerCase().includes(q) ||
+        item.categoria.toLowerCase().includes(q)
+      return okCat && okSearch
+    })
+  }, [productos, menuCategoria, menuSearch])
 
   const selectedComensal = useMemo(
     () => comensales.find(c => c.id === selectedComensalId) || null,
@@ -405,16 +448,27 @@ export default function MesaCompartidaPage() {
 
   async function openAddProduct() {
     setError(null)
+    setMenuSearch('')
+    setMenuCategoria('Todos')
     setAddProductOpen(true)
     if (productos.length === 0) {
+      setLoadingMenuProductos(true)
       try {
         const list = await getProductos()
         setProductos(list)
       } catch (e) {
         setError(e?.message || 'Error al cargar productos')
+      } finally {
+        setLoadingMenuProductos(false)
       }
     }
   }
+
+  function closeAddProductModal() {
+    setAddProductOpen(false)
+    setError(null)
+  }
+
 
   async function addProductToComensal(productoId) {
     if (!cuenta?.id || !selectedComensalId) return
@@ -431,7 +485,7 @@ export default function MesaCompartidaPage() {
         comensalId: selectedComensalId,
         createdByUid: user?.uid || null,
       })
-      setAddProductOpen(false)
+      closeAddProductModal()
       await refresh()
     } catch (e) {
       if (e?.code === 'PRODUCT_NOT_FOUND') setError('Producto no encontrado.')
@@ -443,14 +497,20 @@ export default function MesaCompartidaPage() {
 
   async function confirmAnularItem() {
     if (!cuenta?.id || !anularTarget?.id) return
+    const motivoTrim = String(anularMotivo || '').trim()
+    if (!motivoTrim) {
+      setAnularModalError('Debe indicar un motivo de anulación.')
+      return
+    }
     setAnulando(true)
     setDeletingItemId(anularTarget.id)
+    setAnularModalError(null)
     setError(null)
     try {
       await anularCuentaItem({
         cuentaId: cuenta.id,
         itemId: anularTarget.id,
-        motivo: anularMotivo,
+        motivo: motivoTrim,
         usuarioId: user?.uid || null,
         rolUsuario: role || null,
       })
@@ -458,10 +518,10 @@ export default function MesaCompartidaPage() {
       setAnularMotivo('')
       await refresh()
     } catch (e) {
-      if (e?.code === 'MOTIVO_REQUIRED') setError('Debe indicar un motivo de anulación.')
-      else if (e?.code === 'PERMISSION_DENIED') setError('No tienes permisos para anular ítems.')
-      else if (e?.code === 'ITEM_ALREADY_PAID') setError('No se puede anular un ítem ya pagado.')
-      else setError(e?.message || 'Error al anular ítem')
+      if (e?.code === 'MOTIVO_REQUIRED') setAnularModalError('Debe indicar un motivo de anulación.')
+      else if (e?.code === 'PERMISSION_DENIED') setAnularModalError('No tienes permisos para anular ítems.')
+      else if (e?.code === 'ITEM_ALREADY_PAID') setAnularModalError('No se puede anular un ítem ya pagado.')
+      else setAnularModalError(e?.message || 'Error al anular ítem')
     } finally {
       setAnulando(false)
       setDeletingItemId(null)
@@ -470,14 +530,20 @@ export default function MesaCompartidaPage() {
 
   async function confirmRevertirItem() {
     if (!cuenta?.id || !revertTarget?.id) return
+    const motivoTrim = String(revertMotivo || '').trim()
+    if (!motivoTrim) {
+      setRevertModalError('Debe indicar un motivo para revertir.')
+      return
+    }
     setRevirtiendo(true)
     setDeletingItemId(revertTarget.id)
+    setRevertModalError(null)
     setError(null)
     try {
       await revertirAnulacionCuentaItem({
         cuentaId: cuenta.id,
         itemId: revertTarget.id,
-        motivo: revertMotivo,
+        motivo: motivoTrim,
         usuarioId: user?.uid || null,
         rolUsuario: role || null,
       })
@@ -485,9 +551,9 @@ export default function MesaCompartidaPage() {
       setRevertMotivo('')
       await refresh()
     } catch (e) {
-      if (e?.code === 'MOTIVO_REQUIRED') setError('Debe indicar un motivo para revertir.')
-      else if (e?.code === 'PERMISSION_DENIED') setError('No tienes permisos para revertir anulación.')
-      else setError(e?.message || 'Error al revertir anulación')
+      if (e?.code === 'MOTIVO_REQUIRED') setRevertModalError('Debe indicar un motivo para revertir.')
+      else if (e?.code === 'PERMISSION_DENIED') setRevertModalError('No tienes permisos para revertir anulación.')
+      else setRevertModalError(e?.message || 'Error al revertir anulación')
     } finally {
       setRevirtiendo(false)
       setDeletingItemId(null)
@@ -502,6 +568,8 @@ export default function MesaCompartidaPage() {
       setError('No tienes permisos para anular ítems.')
       return
     }
+    setError(null)
+    setAnularModalError(null)
     setAnularTarget(item)
     setAnularMotivo('')
   }
@@ -512,19 +580,23 @@ export default function MesaCompartidaPage() {
 
     if (!cuenta?.id) return
     if (!selectedComensalId) {
-      setError('Selecciona un comensal para hacer cierre parcial.')
+      setPayError('Selecciona un comensal para hacer cierre parcial.')
+      setPayOpen(true)
       return
     }
     if (selectedComensal?.estadoCliente === 'liberado' && pendingItemsDelComensal.length === 0) {
-      setError('Este comensal ya está liberado y no tiene ítems pendientes.')
+      setPayError('Este comensal ya está liberado y no tiene ítems pendientes.')
+      setPayOpen(true)
       return
     }
     if (unassignedPending.length > 0) {
-      setError('Hay ítems pendientes sin asignar. Asigna los ítems antes de cerrar parcialmente.')
+      setPayError('Hay ítems pendientes sin asignar. Asigna los ítems antes de cerrar parcialmente.')
+      setPayOpen(true)
       return
     }
     if (pendingItemsDelComensal.length === 0) {
-      setError('El comensal no tiene ítems pendientes.')
+      setPayError('El comensal no tiene ítems pendientes.')
+      setPayOpen(true)
       return
     }
 
@@ -621,6 +693,7 @@ export default function MesaCompartidaPage() {
       if (result.ok) {
         setConfirmCancelarOpen(false)
         setCancelarMotivo('')
+        setError(null)
         setSelectedMesaId(null)
         setSelectedComensalId(null)
         setCuenta(null)
@@ -701,8 +774,14 @@ export default function MesaCompartidaPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+      {error &&
+        !addProductOpen &&
+        !payOpen &&
+        !confirmCerrarOpen &&
+        !confirmCancelarOpen &&
+        !anularTarget &&
+        !revertTarget && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </div>
       )}
@@ -790,7 +869,10 @@ export default function MesaCompartidaPage() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setConfirmCerrarOpen(true)}
+                          onClick={() => {
+                            setError(null)
+                            setConfirmCerrarOpen(true)
+                          }}
                           className="btn border border-amber-600 text-amber-700 hover:bg-amber-100 gap-1"
                           disabled={cerrarLoading}
                         >
@@ -930,6 +1012,7 @@ export default function MesaCompartidaPage() {
                                         onClick={() => {
                                           setRevertTarget(i)
                                           setRevertMotivo('')
+                                          setRevertModalError(null)
                                           setError(null)
                                         }}
                                         className="p-1.5 rounded border border-cyan-200 text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
@@ -1003,7 +1086,10 @@ export default function MesaCompartidaPage() {
 
       <PaymentModal
         open={payOpen}
-        onClose={() => setPayOpen(false)}
+        onClose={() => {
+          setPayOpen(false)
+          setPayError(null)
+        }}
         onConfirm={confirmPay}
         loading={payLoading}
         resumen={resumenPago}
@@ -1011,43 +1097,127 @@ export default function MesaCompartidaPage() {
         promociones={promocionesActivas}
       />
 
-      {/* Modal Agregar producto */}
+      {/* Modal menú (mismo criterio que Meseros: búsqueda, categorías, tarjetas) */}
       {addProductOpen && (
-        <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-              <div className="font-bold text-gray-900">Agregar producto al comensal</div>
+        <ModalPortal overlayClassName="p-4 md:p-6 flex items-center justify-center">
+          <div className="flex h-full max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-zinc-900 dark:shadow-black/50">
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 bg-gradient-to-r from-blue-900 to-cyan-900 px-4 py-4 text-white md:px-6 dark:border-zinc-800 dark:from-zinc-950 dark:to-zinc-900">
+              <div className="min-w-0">
+                <div className="text-xl font-bold truncate">
+                  Agregar producto
+                  {selectedMesa ? ` · ${formatMesaFromDoc(selectedMesa)}` : ''}
+                </div>
+                <div className="mt-0.5 text-sm text-cyan-200 dark:text-zinc-400">
+                  {selectedMesa?.zona ? `Zona: ${selectedMesa.zona}` : 'Catálogo'}
+                  {selectedComensal?.alias ? ` · ${selectedComensal.alias}` : ''}
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setAddProductOpen(false)}
-                className="p-1 rounded hover:bg-gray-100"
+                onClick={closeAddProductModal}
+                className="btn btn-sm btn-ghost shrink-0 text-white"
+                disabled={addingProduct}
               >
-                <XMarkIcon className="w-5 h-5 text-gray-600" />
+                <XMarkIcon className="h-5 w-5" />
+                Cerrar
               </button>
             </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              {productos.length === 0 ? (
-                <div className="text-sm text-gray-500">Cargando productos...</div>
-              ) : (
-                <div className="space-y-2">
-                  {productos.map(p => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => addProductToComensal(p.id)}
-                      disabled={addingProduct}
-                      className="w-full text-left p-3 rounded-lg border border-gray-200 hover:border-cyan-400 hover:bg-cyan-50 transition flex items-center justify-between gap-2"
-                    >
-                      <span className="font-medium text-gray-900">{p.nombre ?? p.name ?? p.id}</span>
-                      <span className="text-sm font-semibold text-cyan-600">{moneyCRC(p.precioUnit ?? p.precio ?? 0)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+
+            {error && (
+              <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 md:mx-6 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                {error}
+              </div>
+            )}
+
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-6">
+              <div className="relative mb-3">
+                <MagnifyingGlassIcon className="absolute left-3 top-3 h-5 w-5 text-gray-400 dark:text-zinc-500" />
+                <input
+                  type="text"
+                  value={menuSearch}
+                  onChange={(e) => setMenuSearch(e.target.value)}
+                  placeholder="Buscar por nombre o descripción..."
+                  className="input input-bordered w-full pl-10 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </div>
+
+              <div className="mb-3 flex flex-wrap gap-2">
+                {categoriasMenu.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setMenuCategoria(cat)}
+                    className={`rounded px-3 py-1.5 text-sm font-semibold transition ${
+                      menuCategoria === cat
+                        ? 'bg-cyan-600 text-white dark:bg-cyan-500'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 p-2.5 text-sm text-cyan-900 dark:border-cyan-800/50 dark:bg-cyan-950/30 dark:text-cyan-200">
+                Agregando ítems para:{' '}
+                <span className="font-semibold">
+                  {selectedComensal?.alias || 'Selecciona un comensal en el panel'}
+                </span>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                {loadingMenuProductos ? (
+                  <div className="flex items-center gap-2 py-8 text-sm text-gray-500 dark:text-zinc-500">
+                    <span className="loading loading-spinner loading-md" />
+                    Cargando menú...
+                  </div>
+                ) : productos.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-gray-500 dark:text-zinc-500">
+                    No hay productos en el catálogo.
+                  </div>
+                ) : productosMenuFiltrados.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-gray-500 dark:text-zinc-500">
+                    No hay productos para el filtro actual.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {productosMenuFiltrados.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex flex-col rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/60"
+                      >
+                        <div className="font-semibold text-gray-800 dark:text-zinc-100">{item.name}</div>
+                        <div className="mt-0.5 text-xs text-gray-500 dark:text-zinc-500">{item.categoria}</div>
+                        {item.desc && (
+                          <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-zinc-400">{item.desc}</p>
+                        )}
+                        <div className="mt-2 text-lg font-bold text-cyan-700 dark:text-cyan-400">
+                          {moneyCRC(item.price)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => addProductToComensal(item.id)}
+                          disabled={addingProduct || !selectedComensalId}
+                          className="btn btn-sm mt-3 w-full border-0 bg-cyan-600 text-white hover:bg-cyan-700 disabled:opacity-50"
+                          title={!selectedComensalId ? 'Selecciona un comensal en el panel principal' : ''}
+                        >
+                          {addingProduct ? (
+                            <span className="loading loading-spinner loading-xs" />
+                          ) : (
+                            <PlusIcon className="h-4 w-4" />
+                          )}
+                          Agregar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+
             {addingProduct && (
-              <div className="p-2 border-t border-gray-200 text-center text-sm text-gray-500">
-                Agregando...
+              <div className="flex-shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-2 text-center text-sm text-gray-600 dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-400">
+                Agregando a la cuenta...
               </div>
             )}
           </div>
@@ -1057,19 +1227,27 @@ export default function MesaCompartidaPage() {
       {/* Modal confirmar cerrar cuenta (reabierta) */}
       {confirmCerrarOpen && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
-            <div className="p-4 border-b border-gray-200 flex items-center gap-2">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden dark:bg-zinc-900">
+            <div className="p-4 border-b border-gray-200 flex items-center gap-2 dark:border-zinc-700">
               <LockClosedIcon className="w-6 h-6 text-amber-600" />
-              <div className="font-bold text-gray-900">Cerrar cuenta</div>
+              <div className="font-bold text-gray-900 dark:text-zinc-100">Cerrar cuenta</div>
             </div>
+            {error && (
+              <div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                {error}
+              </div>
+            )}
             <div className="p-5 space-y-4">
-              <p className="text-gray-700">
+              <p className="text-gray-700 dark:text-zinc-300">
                 ¿Cerrar la cuenta sin más cambios? La cuenta quedará cerrada y dejará de aparecer en Mesa compartida.
               </p>
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setConfirmCerrarOpen(false)}
+                  onClick={() => {
+                    setConfirmCerrarOpen(false)
+                    setError(null)
+                  }}
                   className="flex-1 py-2 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
                   disabled={cerrarLoading}
                 >
@@ -1092,25 +1270,33 @@ export default function MesaCompartidaPage() {
       {/* Modal cancelar cuenta */}
       {confirmCancelarOpen && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-lg max-w-md w-full overflow-hidden">
-            <div className="p-4 border-b border-gray-200 flex items-center gap-2">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full overflow-hidden dark:bg-zinc-900">
+            <div className="p-4 border-b border-gray-200 flex items-center gap-2 dark:border-zinc-700">
               <ExclamationTriangleIcon className="w-5 h-5 text-amber-500" />
-              <div className="font-bold text-gray-900">Cancelar cuenta</div>
+              <div className="font-bold text-gray-900 dark:text-zinc-100">Cancelar cuenta</div>
             </div>
+            {error && (
+              <div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                {error}
+              </div>
+            )}
             <div className="p-5 space-y-4">
-              <p className="text-gray-700 text-sm">
+              <p className="text-gray-700 text-sm dark:text-zinc-300">
                 Esta acción cancelará la cuenta, anulará ítems pendientes y liberará la mesa.
               </p>
               <textarea
                 value={cancelarMotivo}
                 onChange={(e) => setCancelarMotivo(e.target.value)}
                 placeholder="Motivo de cancelación (obligatorio)"
-                className="textarea textarea-bordered w-full min-h-[110px]"
+                className="textarea textarea-bordered w-full min-h-[110px] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setConfirmCancelarOpen(false)}
+                  onClick={() => {
+                    setConfirmCancelarOpen(false)
+                    setError(null)
+                  }}
                   className="flex-1 py-2 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50"
                   disabled={cancelarLoading}
                 >
@@ -1133,25 +1319,50 @@ export default function MesaCompartidaPage() {
       {/* Modal anular ítem */}
       {anularTarget && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
-            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-              <div className="font-bold text-gray-900">Anular ítem</div>
-              <button type="button" onClick={() => setAnularTarget(null)} className="p-1 rounded hover:bg-gray-100">
-                <XMarkIcon className="w-5 h-5 text-gray-600" />
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden dark:bg-zinc-900">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between dark:border-zinc-700">
+              <div className="font-bold text-gray-900 dark:text-zinc-100">Anular ítem</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAnularTarget(null)
+                  setAnularModalError(null)
+                  setError(null)
+                }}
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-zinc-800"
+              >
+                <XMarkIcon className="w-5 h-5 text-gray-600 dark:text-zinc-400" />
               </button>
             </div>
+            {anularModalError && (
+              <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                {anularModalError}
+              </div>
+            )}
             <div className="p-4 space-y-3">
-              <div className="text-sm text-gray-600">
-                Ítem: <span className="font-semibold text-gray-900">{anularTarget.nombreSnapshot || anularTarget.productoId || 'Item'}</span>
+              <div className="text-sm text-gray-600 dark:text-zinc-400">
+                Ítem: <span className="font-semibold text-gray-900 dark:text-zinc-100">{anularTarget.nombreSnapshot || anularTarget.productoId || 'Item'}</span>
               </div>
               <textarea
                 value={anularMotivo}
-                onChange={(e) => setAnularMotivo(e.target.value)}
+                onChange={(e) => {
+                  setAnularMotivo(e.target.value)
+                  setAnularModalError(null)
+                }}
                 placeholder="Motivo de anulación (obligatorio)"
-                className="textarea textarea-bordered w-full min-h-[100px]"
+                className="textarea textarea-bordered w-full min-h-[100px] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
               <div className="flex gap-2 pt-1">
-                <button type="button" onClick={() => setAnularTarget(null)} className="flex-1 btn btn-ghost" disabled={anulando}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnularTarget(null)
+                    setAnularModalError(null)
+                    setError(null)
+                  }}
+                  className="flex-1 btn btn-ghost"
+                  disabled={anulando}
+                >
                   Cancelar
                 </button>
                 <button
@@ -1171,25 +1382,50 @@ export default function MesaCompartidaPage() {
       {/* Modal revertir anulación */}
       {revertTarget && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden">
-            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-              <div className="font-bold text-gray-900">Revertir anulación</div>
-              <button type="button" onClick={() => setRevertTarget(null)} className="p-1 rounded hover:bg-gray-100">
-                <XMarkIcon className="w-5 h-5 text-gray-600" />
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full overflow-hidden dark:bg-zinc-900">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between dark:border-zinc-700">
+              <div className="font-bold text-gray-900 dark:text-zinc-100">Revertir anulación</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setRevertTarget(null)
+                  setRevertModalError(null)
+                  setError(null)
+                }}
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-zinc-800"
+              >
+                <XMarkIcon className="w-5 h-5 text-gray-600 dark:text-zinc-400" />
               </button>
             </div>
+            {revertModalError && (
+              <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                {revertModalError}
+              </div>
+            )}
             <div className="p-4 space-y-3">
-              <div className="text-sm text-gray-600">
-                Ítem: <span className="font-semibold text-gray-900">{revertTarget.nombreSnapshot || revertTarget.productoId || 'Item'}</span>
+              <div className="text-sm text-gray-600 dark:text-zinc-400">
+                Ítem: <span className="font-semibold text-gray-900 dark:text-zinc-100">{revertTarget.nombreSnapshot || revertTarget.productoId || 'Item'}</span>
               </div>
               <textarea
                 value={revertMotivo}
-                onChange={(e) => setRevertMotivo(e.target.value)}
+                onChange={(e) => {
+                  setRevertMotivo(e.target.value)
+                  setRevertModalError(null)
+                }}
                 placeholder="Motivo de reversión (obligatorio)"
-                className="textarea textarea-bordered w-full min-h-[100px]"
+                className="textarea textarea-bordered w-full min-h-[100px] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
               <div className="flex gap-2 pt-1">
-                <button type="button" onClick={() => setRevertTarget(null)} className="flex-1 btn btn-ghost" disabled={revirtiendo}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRevertTarget(null)
+                    setRevertModalError(null)
+                    setError(null)
+                  }}
+                  className="flex-1 btn btn-ghost"
+                  disabled={revirtiendo}
+                >
                   Cancelar
                 </button>
                 <button

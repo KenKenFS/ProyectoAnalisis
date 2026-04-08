@@ -69,8 +69,7 @@ function AppContent() {
       <Route
         element={
           <InternalLayout
-            navbarTitle="Ceviche del Rey"
-            navbarSubtitle="Modulo Cocina"
+            navbarTitle="Ceviche del Rey - Cocina"
             sidebarLinks={sidebarLinks}
             sidebarExtra={<KitchenStatusCounter />}
             appName="Cocina"

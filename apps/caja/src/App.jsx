@@ -31,8 +31,7 @@ function App() {
         <Route
           element={
             <InternalLayout
-              navbarTitle="Ceviche del Rey"
-              navbarSubtitle="Modulo Caja - POS"
+              navbarTitle="Ceviche del Rey - Caja"
               sidebarLinks={sidebarLinks}
               appName="Caja"
               showNotifications={false}

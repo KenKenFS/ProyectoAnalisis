@@ -1,0 +1,581 @@
+/**
+ * Tema oscuro global (html.dark): sin tocar cada pagina.
+ * Cubre main, portales de modal y pantallas de login (auth-shell).
+ */
+
+@layer components {
+  /* Tablas CRUD: separadores de fila visibles pero suaves (especialmente en oscuro) */
+  main table tbody tr:not(:last-child) td,
+  [data-app-portal] table tbody tr:not(:last-child) td {
+    @apply border-b border-gray-100;
+  }
+
+  /* Hover de filas global: sutil, no tapa la fila */
+  main table tbody tr,
+  [data-app-portal] table tbody tr {
+    @apply transition-colors;
+  }
+
+  main table tbody tr:hover,
+  [data-app-portal] table tbody tr:hover {
+    background-color: rgb(243 244 246 / 0.22); /* gray-100, muy suave */
+  }
+
+  html.dark main table tbody tr:hover,
+  html.dark [data-app-portal] table tbody tr:hover {
+    background-color: rgb(39 39 42 / 0.32); /* zinc-800, suave */
+  }
+
+  /* Si una fila ya trae su propio fondo (ej: bg-gray-50/50 en timelines), no la tapamos con hover */
+  main table tbody tr.bg-gray-50\/50:hover,
+  [data-app-portal] table tbody tr.bg-gray-50\/50:hover,
+  html.dark main table tbody tr.bg-gray-50\/50:hover,
+  html.dark [data-app-portal] table tbody tr.bg-gray-50\/50:hover {
+    background-color: transparent !important;
+  }
+
+  html.dark main table tbody tr:not(:last-child) td,
+  html.dark [data-app-portal] table tbody tr:not(:last-child) td {
+    border-bottom-color: rgb(255 255 255 / 0.10);
+  }
+
+  main table thead tr th,
+  [data-app-portal] table thead tr th {
+    @apply border-b border-gray-200;
+  }
+
+  html.dark main table thead tr th,
+  html.dark [data-app-portal] table thead tr th {
+    border-bottom-color: rgb(255 255 255 / 0.14);
+  }
+
+  html.dark .card:not(.theme-preserve) {
+    @apply border-zinc-700 bg-zinc-900 text-zinc-100;
+  }
+
+  html.dark .btn-primary:not(.theme-preserve) {
+    @apply bg-red-950 shadow-red-950/30 hover:bg-red-900 hover:shadow-red-900/40;
+  }
+
+  html.dark .btn-secondary:not(.theme-preserve) {
+    @apply border border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700;
+    box-shadow: none;
+  }
+
+  html.dark .badge-primary:not(.theme-preserve) {
+    @apply border border-red-900/40 bg-red-950/40 text-red-200;
+  }
+
+  /* Pills/Badges globales: que se vean como "Usuarios" (borde fino + fondo suave) */
+  .badge:not(.theme-preserve) {
+    @apply rounded-full border border-zinc-500/35 bg-zinc-500/10 px-2.5 py-1 text-xs font-semibold;
+  }
+
+  .badge-success:not(.theme-preserve) {
+    @apply border-emerald-500/45 bg-emerald-500/10 text-emerald-800;
+  }
+
+  .badge-info:not(.theme-preserve) {
+    @apply border-sky-500/45 bg-sky-500/10 text-sky-800;
+  }
+
+  .badge-warning:not(.theme-preserve) {
+    @apply border-amber-500/45 bg-amber-500/10 text-amber-900;
+  }
+
+  .badge-error:not(.theme-preserve) {
+    @apply border-red-500/40 bg-red-500/10 text-red-700;
+  }
+}
+
+@layer utilities {
+  html.dark main .bg-white,
+  html.dark [data-app-portal] .bg-white,
+  html.dark .auth-shell .bg-white {
+    @apply !bg-zinc-900;
+  }
+
+  html.dark main .bg-gray-50,
+  html.dark [data-app-portal] .bg-gray-50,
+  html.dark .auth-shell .bg-gray-50 {
+    @apply !bg-zinc-900/55;
+  }
+
+  html.dark main .bg-gray-100,
+  html.dark [data-app-portal] .bg-gray-100,
+  html.dark .auth-shell .bg-gray-100 {
+    @apply !bg-zinc-800/70;
+  }
+
+  html.dark main .bg-slate-50,
+  html.dark [data-app-portal] .bg-slate-50,
+  html.dark .auth-shell .bg-slate-50 {
+    @apply !bg-zinc-900/50;
+  }
+
+  html.dark main .bg-slate-100,
+  html.dark [data-app-portal] .bg-slate-100,
+  html.dark .auth-shell .bg-slate-100 {
+    @apply !bg-zinc-800/60;
+  }
+
+  /* Fondos de estado/alerta (bg-*-50) en oscuro → versión "pro" (como tus capturas) */
+  html.dark main .bg-emerald-50,
+  html.dark [data-app-portal] .bg-emerald-50 {
+    @apply !bg-emerald-950/35;
+  }
+
+  html.dark main .bg-green-50,
+  html.dark [data-app-portal] .bg-green-50 {
+    @apply !bg-emerald-950/35;
+  }
+
+  html.dark main .bg-red-50,
+  html.dark [data-app-portal] .bg-red-50 {
+    @apply !bg-red-950/30;
+  }
+
+  html.dark main .bg-cyan-50,
+  html.dark [data-app-portal] .bg-cyan-50 {
+    @apply !bg-cyan-950/25;
+  }
+
+  html.dark main .bg-blue-50,
+  html.dark [data-app-portal] .bg-blue-50 {
+    @apply !bg-blue-950/25;
+  }
+
+  html.dark main .bg-sky-50,
+  html.dark [data-app-portal] .bg-sky-50 {
+    @apply !bg-sky-950/25;
+  }
+
+  html.dark main .bg-amber-50,
+  html.dark [data-app-portal] .bg-amber-50 {
+    @apply !bg-amber-950/25;
+  }
+
+  html.dark main .bg-violet-50,
+  html.dark [data-app-portal] .bg-violet-50 {
+    @apply !bg-violet-950/25;
+  }
+
+  html.dark main .bg-rose-50,
+  html.dark [data-app-portal] .bg-rose-50 {
+    @apply !bg-rose-950/25;
+  }
+
+  /* Variantes 100 usadas en labels/footers */
+  html.dark main .bg-green-100,
+  html.dark [data-app-portal] .bg-green-100 {
+    @apply !bg-emerald-950/45;
+  }
+
+  html.dark main .bg-emerald-100,
+  html.dark [data-app-portal] .bg-emerald-100 {
+    @apply !bg-emerald-950/45;
+  }
+
+  html.dark main .bg-red-100,
+  html.dark [data-app-portal] .bg-red-100 {
+    @apply !bg-red-950/45;
+  }
+
+  html.dark main .bg-blue-100,
+  html.dark [data-app-portal] .bg-blue-100 {
+    @apply !bg-blue-950/35;
+  }
+
+  html.dark main .bg-cyan-100,
+  html.dark [data-app-portal] .bg-cyan-100 {
+    @apply !bg-cyan-950/35;
+  }
+
+  html.dark main .bg-sky-100,
+  html.dark [data-app-portal] .bg-sky-100 {
+    @apply !bg-sky-950/35;
+  }
+
+  html.dark main .bg-amber-100,
+  html.dark [data-app-portal] .bg-amber-100 {
+    @apply !bg-amber-950/35;
+  }
+
+  html.dark main .border-gray-100,
+  html.dark [data-app-portal] .border-gray-100,
+  html.dark .auth-shell .border-gray-100 {
+    @apply !border-zinc-800;
+  }
+
+  html.dark main .border-gray-200,
+  html.dark [data-app-portal] .border-gray-200,
+  html.dark .auth-shell .border-gray-200 {
+    @apply !border-zinc-700;
+  }
+
+  html.dark main .border-gray-300,
+  html.dark [data-app-portal] .border-gray-300,
+  html.dark .auth-shell .border-gray-300 {
+    @apply !border-zinc-600;
+  }
+
+  /* Bordes de estado (border-*-200/100) en oscuro */
+  html.dark main .border-emerald-200,
+  html.dark [data-app-portal] .border-emerald-200,
+  html.dark .auth-shell .border-emerald-200 {
+    @apply !border-emerald-900/45;
+  }
+
+  html.dark main .border-green-200,
+  html.dark [data-app-portal] .border-green-200,
+  html.dark .auth-shell .border-green-200 {
+    @apply !border-emerald-900/45;
+  }
+
+  html.dark main .border-red-200,
+  html.dark [data-app-portal] .border-red-200,
+  html.dark .auth-shell .border-red-200 {
+    @apply !border-red-900/45;
+  }
+
+  html.dark main .border-cyan-200,
+  html.dark [data-app-portal] .border-cyan-200,
+  html.dark .auth-shell .border-cyan-200 {
+    @apply !border-cyan-900/40;
+  }
+
+  html.dark main .border-blue-200,
+  html.dark [data-app-portal] .border-blue-200,
+  html.dark .auth-shell .border-blue-200 {
+    @apply !border-blue-900/40;
+  }
+
+  html.dark main .border-sky-200,
+  html.dark [data-app-portal] .border-sky-200,
+  html.dark .auth-shell .border-sky-200 {
+    @apply !border-sky-900/40;
+  }
+
+  html.dark main .border-amber-200,
+  html.dark [data-app-portal] .border-amber-200,
+  html.dark .auth-shell .border-amber-200 {
+    @apply !border-amber-900/45;
+  }
+
+  html.dark main .border-violet-200,
+  html.dark [data-app-portal] .border-violet-200,
+  html.dark .auth-shell .border-violet-200 {
+    @apply !border-violet-900/40;
+  }
+
+  html.dark main .border-rose-100,
+  html.dark [data-app-portal] .border-rose-100,
+  html.dark .auth-shell .border-rose-100 {
+    @apply !border-rose-900/30;
+  }
+
+  html.dark main .border-green-400,
+  html.dark [data-app-portal] .border-green-400,
+  html.dark .auth-shell .border-green-400 {
+    @apply !border-emerald-400/45;
+  }
+
+  html.dark main .text-gray-900,
+  html.dark [data-app-portal] .text-gray-900,
+  html.dark .auth-shell .text-gray-900 {
+    @apply !text-zinc-100;
+  }
+
+  html.dark main .text-gray-800,
+  html.dark [data-app-portal] .text-gray-800,
+  html.dark .auth-shell .text-gray-800 {
+    @apply !text-zinc-200;
+  }
+
+  html.dark main .text-gray-700,
+  html.dark [data-app-portal] .text-gray-700,
+  html.dark .auth-shell .text-gray-700 {
+    @apply !text-zinc-300;
+  }
+
+  html.dark main .text-gray-600,
+  html.dark [data-app-portal] .text-gray-600,
+  html.dark .auth-shell .text-gray-600 {
+    @apply !text-zinc-400;
+  }
+
+  html.dark main .text-gray-500,
+  html.dark [data-app-portal] .text-gray-500,
+  html.dark .auth-shell .text-gray-500 {
+    @apply !text-zinc-500;
+  }
+
+  html.dark main .text-gray-400,
+  html.dark [data-app-portal] .text-gray-400,
+  html.dark .auth-shell .text-gray-400 {
+    /* En oscuro, íconos/auxiliares suelen venir como gray-400; lo subimos para mejor legibilidad */
+    @apply !text-zinc-400;
+  }
+
+  /* Textos de estado (green/emerald/etc) usados en tags */
+  html.dark main .text-green-700,
+  html.dark [data-app-portal] .text-green-700 {
+    @apply !text-emerald-200;
+  }
+
+  html.dark main .text-green-600,
+  html.dark [data-app-portal] .text-green-600 {
+    @apply !text-emerald-300;
+  }
+
+  html.dark main .text-green-800,
+  html.dark [data-app-portal] .text-green-800 {
+    @apply !text-emerald-100;
+  }
+
+  html.dark main .text-emerald-600,
+  html.dark [data-app-portal] .text-emerald-600 {
+    @apply !text-emerald-300;
+  }
+
+  html.dark main .text-emerald-700,
+  html.dark [data-app-portal] .text-emerald-700 {
+    @apply !text-emerald-200;
+  }
+
+  html.dark main .text-emerald-800,
+  html.dark [data-app-portal] .text-emerald-800 {
+    @apply !text-emerald-100;
+  }
+
+  /* Tags tipo "píldora" (span con bg-*-50 + text-*-600) en oscuro → borde + texto claro */
+  html.dark main span.bg-emerald-50,
+  html.dark [data-app-portal] span.bg-emerald-50 {
+    @apply !rounded-full !border !border-emerald-900/50 !bg-emerald-500/15 !text-emerald-200;
+  }
+
+  html.dark main span.bg-green-50,
+  html.dark [data-app-portal] span.bg-green-50 {
+    @apply !rounded-full !border !border-emerald-900/50 !bg-emerald-500/15 !text-emerald-200;
+  }
+
+  html.dark main span.bg-red-50,
+  html.dark [data-app-portal] span.bg-red-50 {
+    @apply !rounded-full !border !border-red-900/50 !bg-red-500/15 !text-red-200;
+  }
+
+  html.dark main span.bg-cyan-50,
+  html.dark [data-app-portal] span.bg-cyan-50 {
+    @apply !rounded-full !border !border-cyan-900/45 !bg-cyan-500/15 !text-cyan-200;
+  }
+
+  html.dark main span.bg-blue-50,
+  html.dark [data-app-portal] span.bg-blue-50 {
+    @apply !rounded-full !border !border-blue-900/45 !bg-blue-500/15 !text-blue-200;
+  }
+
+  html.dark main span.bg-sky-50,
+  html.dark [data-app-portal] span.bg-sky-50 {
+    @apply !rounded-full !border !border-sky-900/45 !bg-sky-500/15 !text-sky-200;
+  }
+
+  html.dark main span.bg-amber-50,
+  html.dark [data-app-portal] span.bg-amber-50 {
+    @apply !rounded-full !border !border-amber-900/50 !bg-amber-500/15 !text-amber-200;
+  }
+
+  html.dark main span.bg-violet-50,
+  html.dark [data-app-portal] span.bg-violet-50 {
+    @apply !rounded-full !border !border-violet-900/45 !bg-violet-500/15 !text-violet-200;
+  }
+
+  /* Contenedores translucidos en cards (ej: bg-white/60) */
+  html.dark main .bg-white\/60,
+  html.dark [data-app-portal] .bg-white\/60 {
+    @apply !bg-zinc-950/55;
+  }
+
+  /* Timelines/overlays suaves (ej: bg-cyan-50/50) → casi transparente en oscuro */
+  html.dark main .bg-cyan-50\/50,
+  html.dark [data-app-portal] .bg-cyan-50\/50 {
+    @apply !bg-transparent;
+  }
+
+  html.dark main .bg-amber-50\/50,
+  html.dark [data-app-portal] .bg-amber-50\/50 {
+    @apply !bg-transparent;
+  }
+
+  /* En oscuro, bajar el "cian eléctrico" en textos y botones a acento rojo del tema */
+  html.dark main .text-cyan-600,
+  html.dark [data-app-portal] .text-cyan-600 {
+    @apply !text-red-300;
+  }
+
+  html.dark main .text-cyan-700,
+  html.dark [data-app-portal] .text-cyan-700 {
+    @apply !text-red-200;
+  }
+
+  html.dark main .text-cyan-800,
+  html.dark [data-app-portal] .text-cyan-800 {
+    @apply !text-red-100;
+  }
+
+  html.dark main .bg-cyan-600,
+  html.dark [data-app-portal] .bg-cyan-600 {
+    @apply !bg-red-950;
+  }
+
+  html.dark main .hover\\:bg-cyan-700:hover,
+  html.dark [data-app-portal] .hover\\:bg-cyan-700:hover {
+    @apply !bg-red-900;
+  }
+
+  /* Variantes cian usadas en bordes (ej: border-cyan-300/400) */
+  html.dark main .border-cyan-300,
+  html.dark [data-app-portal] .border-cyan-300,
+  html.dark .auth-shell .border-cyan-300 {
+    @apply !border-red-900/40;
+  }
+
+  html.dark main .border-cyan-400,
+  html.dark [data-app-portal] .border-cyan-400,
+  html.dark .auth-shell .border-cyan-400 {
+    @apply !border-red-800/55;
+  }
+
+  /* Azules que aún se ven en oscuro (cards/tags/botones) */
+  html.dark main .bg-blue-600,
+  html.dark [data-app-portal] .bg-blue-600 {
+    @apply !bg-red-950;
+  }
+
+  html.dark main .hover\\:bg-blue-700:hover,
+  html.dark [data-app-portal] .hover\\:bg-blue-700:hover {
+    @apply !bg-red-900;
+  }
+
+  html.dark main .text-blue-600,
+  html.dark [data-app-portal] .text-blue-600 {
+    @apply !text-red-300;
+  }
+
+  html.dark main .text-blue-700,
+  html.dark [data-app-portal] .text-blue-700 {
+    @apply !text-red-200;
+  }
+
+  html.dark main .text-blue-800,
+  html.dark [data-app-portal] .text-blue-800 {
+    @apply !text-red-100;
+  }
+
+  html.dark main .border-blue-300,
+  html.dark [data-app-portal] .border-blue-300,
+  html.dark .auth-shell .border-blue-300 {
+    @apply !border-blue-900/55;
+  }
+
+  /* Gradientes azules/cian (cards, headers, loading de permisos) -> neutro en oscuro */
+  html.dark main .from-blue-900,
+  html.dark [data-app-portal] .from-blue-900,
+  html.dark main .from-cyan-900,
+  html.dark [data-app-portal] .from-cyan-900,
+  html.dark main .to-blue-900,
+  html.dark [data-app-portal] .to-blue-900,
+  html.dark main .to-cyan-900,
+  html.dark [data-app-portal] .to-cyan-900 {
+    --tw-gradient-from: rgb(9 9 11 / 1) !important; /* zinc-950 */
+    --tw-gradient-to: rgb(24 24 27 / 1) !important; /* zinc-900 */
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  /* Gradientes suaves en cards (from-blue-100 to-cyan-100) */
+  html.dark main .from-blue-100,
+  html.dark [data-app-portal] .from-blue-100,
+  html.dark main .to-cyan-100,
+  html.dark [data-app-portal] .to-cyan-100 {
+    --tw-gradient-from: rgb(24 24 27 / 1) !important; /* zinc-900 */
+    --tw-gradient-to: rgb(9 9 11 / 1) !important; /* zinc-950 */
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  /* Gradiente de encabezados tipo "Carrito" (from-blue-50 to-cyan-50) en oscuro -> neutro */
+  html.dark main .from-blue-50,
+  html.dark [data-app-portal] .from-blue-50,
+  html.dark main .to-cyan-50,
+  html.dark [data-app-portal] .to-cyan-50 {
+    --tw-gradient-from: rgb(24 24 27 / 1) !important; /* zinc-900 */
+    --tw-gradient-to: rgb(9 9 11 / 1) !important; /* zinc-950 */
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  /* Reportes: placeholders de gráficos (from-gray-50 to-gray-100) no deben verse claros en oscuro */
+  html.dark main .from-gray-50,
+  html.dark [data-app-portal] .from-gray-50,
+  html.dark main .to-gray-100,
+  html.dark [data-app-portal] .to-gray-100 {
+    --tw-gradient-from: rgb(24 24 27 / 1) !important; /* zinc-900 */
+    --tw-gradient-to: rgb(9 9 11 / 1) !important; /* zinc-950 */
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  /* Reportes: purple en oscuro -> rojo/zinc (evitar fondo pastel) */
+  html.dark main .bg-purple-50,
+  html.dark [data-app-portal] .bg-purple-50 {
+    @apply !bg-red-950/25;
+  }
+
+  html.dark main .border-purple-200,
+  html.dark [data-app-portal] .border-purple-200,
+  html.dark .auth-shell .border-purple-200 {
+    @apply !border-red-900/45;
+  }
+
+  html.dark main .text-purple-600,
+  html.dark [data-app-portal] .text-purple-600 {
+    @apply !text-red-300;
+  }
+
+  /* Timeline dentro de tabla (bg-gray-50/50): en oscuro no debe quedar "gris" */
+  html.dark main tr.bg-gray-50\/50,
+  html.dark [data-app-portal] tr.bg-gray-50\/50 {
+    @apply !bg-transparent;
+  }
+
+  /* Caja "Mesa XX" azul fuerte (w-10 h-10 bg-blue-600) en oscuro → neutro */
+  html.dark main .w-10.h-10.bg-blue-600,
+  html.dark [data-app-portal] .w-10.h-10.bg-blue-600 {
+    @apply !bg-zinc-900 !text-zinc-100;
+  }
+
+  html.dark main input:not([type='checkbox']):not([type='radio']),
+  html.dark [data-app-portal] input:not([type='checkbox']):not([type='radio']),
+  html.dark .auth-shell input:not([type='checkbox']):not([type='radio']) {
+    @apply !border-zinc-600 !bg-zinc-950 !text-zinc-200;
+  }
+
+  html.dark main textarea,
+  html.dark [data-app-portal] textarea,
+  html.dark .auth-shell textarea {
+    @apply !border-zinc-600 !bg-zinc-950 !text-zinc-200;
+  }
+
+  html.dark main select,
+  html.dark [data-app-portal] select,
+  html.dark .auth-shell select {
+    @apply !border-zinc-600 !bg-zinc-950 !text-zinc-200;
+  }
+
+  html.dark main .divide-gray-200,
+  html.dark [data-app-portal] .divide-gray-200 {
+    @apply !divide-zinc-700;
+  }
+}
+
+@layer base {
+  html.dark ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-red-900/45 hover:bg-red-800/55;
+  }
+}

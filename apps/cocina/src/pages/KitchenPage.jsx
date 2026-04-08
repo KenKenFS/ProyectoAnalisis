@@ -87,14 +87,8 @@ function OrderCard({ order, sequenceCode, onUpdateStatus, onFinalize, updating }
           <div className="text-base font-bold text-gray-800 truncate">
             Pedido {sequenceCode}
           </div>
-          <div className="text-xs text-gray-500 truncate" title={order.mesaId || ''}>
+          <div className="text-sm font-semibold text-gray-700 dark:text-zinc-300 truncate" title={order.mesaId || ''}>
             {order.mesaMeta || 'Mesa'}
-          </div>
-          <div className="flex items-center gap-2 mt-2">
-            <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-base">
-              {order.table}
-            </div>
-            <span className="text-sm text-gray-600">Mesa</span>
           </div>
         </div>
         <div className="text-right">

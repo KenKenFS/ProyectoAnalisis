@@ -15,6 +15,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { formatMesaLabel } from '../utils/mesaDisplay.js';
 
 // ==================== PEDIDOS ====================
 
@@ -3320,8 +3321,10 @@ async function syncPedidoCocinaReaperturaCuenta({ cuentaId, actorUid = null }) {
 
   const itemsCuenta = await getCuentaItems(cuentaId);
   const nuevosPendientes = itemsCuenta.filter((item) => {
+    if (!isEstadoPendiente(item.estadoItem)) return false;
     const createdMs = toMillisSafe(item.createdAt);
-    return createdMs >= reopenedAtMs && isEstadoPendiente(item.estadoItem);
+    const updatedMs = toMillisSafe(item.updatedAt);
+    return createdMs >= reopenedAtMs || updatedMs >= reopenedAtMs;
   });
 
   const pedidosSnap = await getDocs(query(collection(db, 'pedidos'), where('cuentaId', '==', cuentaId)));
@@ -3628,14 +3631,44 @@ export async function addCuentaItem({ cuentaId, productoId, comensalId, createdB
     cantidad: 1,
     comensalId,
     estadoItem: 'pendiente',
+    estadoPreparacion: 'pendiente',
     createdByUid,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
-  await syncPedidoCocinaReaperturaCuenta({
-    cuentaId,
-    actorUid: createdByUid,
-  });
+
+  const cuenta = await getCuenta(cuentaId);
+  const reopenedAtMs = toMillisSafe(cuenta?.reopenedAt);
+  const closedAtMs = toMillisSafe(cuenta?.closedAt || cuenta?.timestampCierre);
+  const esReaperturaCaja15m =
+    reopenedAtMs > 0 &&
+    closedAtMs > 0 &&
+    reopenedAtMs - closedAtMs <= 15 * 60 * 1000;
+
+  // Siempre enviar a cocina por el mismo pedido de mesa que ven Meseros/KDS.
+  // syncPedidoCocinaReaperturaCuenta escribe otro doc (origen reapertura_cuenta);
+  // si solo se usara en cuenta con mesa, los ítems no se mezclarían con el pedido activo.
+  if (cuenta?.mesaId) {
+    await registrarPedidoMesa({
+      mesaId: cuenta.mesaId,
+      cuentaId,
+      meseroUid: createdByUid,
+      items: [
+        {
+          productoId,
+          nombreSnapshot,
+          precioUnitSnapshot,
+          cantidad: 1,
+          notaEspecial: '',
+          comensalId,
+        },
+      ],
+      notasPedido: '',
+    });
+  } else if (esReaperturaCaja15m) {
+    await syncPedidoCocinaReaperturaCuenta({ cuentaId, actorUid: createdByUid });
+  }
+
   return docRef.id;
 }
 
@@ -3802,14 +3835,20 @@ export async function registrarPedidoMesa({
   const pedidoFinalizado = !pedidoActivo
     ? pedidosMesaMisma.find((p) => statusNorm(p.estado || p.estadoPedido) === 'finalizado') || null
     : null;
+  const pedidoEntregado = !pedidoActivo && !pedidoFinalizado
+    ? pedidosMesaMisma.find((p) => statusNorm(p.estado || p.estadoPedido) === 'entregado') || null
+    : null;
 
-  const pedidoTarget = pedidoActivo || pedidoFinalizado;
+  const pedidoTarget = pedidoActivo || pedidoFinalizado || pedidoEntregado;
   let pedidoId = null;
   let wasUpdate = false;
 
   if (pedidoTarget) {
     const estadoActualNorm = statusNorm(pedidoTarget.estado || pedidoTarget.estadoPedido);
-    const reopenFromFinished = estadoActualNorm === 'listo' || estadoActualNorm === 'finalizado';
+    const reopenFromFinished =
+      estadoActualNorm === 'listo' ||
+      estadoActualNorm === 'finalizado' ||
+      estadoActualNorm === 'entregado';
     const mergedItems = reopenFromFinished
       ? normalizePedidoItems(incomingItems, { markAsNew: true })
       : mergeItems(pedidoTarget.items || [], incomingItems);
@@ -4404,6 +4443,7 @@ export async function revertirAnulacionCuentaItem({
 
   await updateDoc(itemRef, {
     estadoItem: 'pendiente',
+    estadoPreparacion: 'pendiente',
     updatedAt: new Date(),
   });
 
@@ -4424,10 +4464,37 @@ export async function revertirAnulacionCuentaItem({
     timestamp: new Date(),
   });
 
-  await syncPedidoCocinaReaperturaCuenta({
-    cuentaId,
-    actorUid: usuarioId,
-  });
+  const cuenta = await getCuenta(cuentaId);
+  const reopenedAtMs = toMillisSafe(cuenta?.reopenedAt);
+  const closedAtMs = toMillisSafe(cuenta?.closedAt || cuenta?.timestampCierre);
+  const esReaperturaCaja15m =
+    reopenedAtMs > 0 &&
+    closedAtMs > 0 &&
+    reopenedAtMs - closedAtMs <= 15 * 60 * 1000;
+
+  if (cuenta?.mesaId) {
+    await registrarPedidoMesa({
+      mesaId: cuenta.mesaId,
+      cuentaId,
+      meseroUid: usuarioId,
+      items: [
+        {
+          productoId: item.productoId || '',
+          nombreSnapshot: item.nombreSnapshot || item.productoId || 'Item',
+          precioUnitSnapshot: Number(item.precioUnitSnapshot || 0),
+          cantidad: Number(item.cantidad || 1),
+          notaEspecial: String(item.notaEspecial || '').trim(),
+          comensalId: item.comensalId || null,
+        },
+      ],
+      notasPedido: '',
+    });
+  } else if (esReaperturaCaja15m) {
+    await syncPedidoCocinaReaperturaCuenta({
+      cuentaId,
+      actorUid: usuarioId,
+    });
+  }
 }
 
 /**
@@ -4949,6 +5016,20 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+/** Public HTTPS URL for email header (Vite build). Example: Firebase Storage getDownloadURL. */
+function getBrandLogoUrlForEmail() {
+  try {
+    const u = import.meta.env?.VITE_BRAND_LOGO_URL;
+    return typeof u === 'string' ? u.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function isHttpsUrl(value) {
+  return /^https:\/\//i.test(String(value || '').trim());
+}
+
 function formatReadableDate(fecha) {
   const [year, month, day] = String(fecha || '').split('-').map(Number);
   if (!year || !month || !day) return fecha || '';
@@ -4976,10 +5057,11 @@ function buildGoogleCalendarLink({ fecha, hora, clienteNombre, cantidadPersonas,
   const start = new Date(`${fecha}T${hora}:00`);
   const end = new Date(start.getTime() + RESERVA_BLOCK_MINUTES * 60 * 1000);
   const title = `Reserva en Ceviche del Rey`;
+  const mesaTxt = formatMesaLabel(mesaNumero);
   const details = [
     `Cliente: ${clienteNombre}`,
     `Personas: ${cantidadPersonas}`,
-    `Mesa: ${mesaNumero}`,
+    `Mesa: ${mesaTxt}`,
     observaciones ? `Observaciones: ${observaciones}` : null,
     `Codigo de reserva: ${codigoReserva}`,
   ].filter(Boolean).join('\\n');
@@ -4989,7 +5071,7 @@ function buildGoogleCalendarLink({ fecha, hora, clienteNombre, cantidadPersonas,
     text: title,
     dates: `${toGoogleDateTime(start)}/${toGoogleDateTime(end)}`,
     details,
-    location: `Ceviche del Rey - Mesa ${mesaNumero}`,
+    location: `Ceviche del Rey - ${mesaTxt}`,
     ctz: 'America/Costa_Rica',
   });
 
@@ -5024,13 +5106,20 @@ async function enqueueReservaEmailConfirmation({
     codigoReserva,
   });
   const googleCalendarLinkEscaped = escapeHtml(googleCalendarLink);
+  const mesaEtiqueta = formatMesaLabel(mesaNumero);
+  const codigoReservaSafe = escapeHtml(String(codigoReserva || ''));
   const subject = `Reserva confirmada - Ceviche del Rey (${fechaLegible}, ${hora})`;
+  const brandLogoRaw = getBrandLogoUrlForEmail();
+  const brandLogoEscaped = isHttpsUrl(brandLogoRaw) ? escapeHtml(brandLogoRaw) : '';
+  const brandLogoBlock = brandLogoEscaped
+    ? `<img src="${brandLogoEscaped}" alt="Ceviche del Rey" width="220" style="max-width: 220px; width: 100%; height: auto; display: block; margin: 0 auto; border: 0; outline: none;" />`
+    : `<div style="font-size: 22px; font-weight: 700; color: #7f1d1d; letter-spacing: -0.02em;">Ceviche del Rey</div>`;
   const observacionesBlock = observaciones
     ? `
       <tr>
-        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;">
-          <strong>Observaciones:</strong><br />
-          <span style="color: #111827;">${observacionesSafe}</span>
+        <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;">
+          <strong style="color: #0f172a;">Observaciones</strong><br />
+          <span style="color: #475569; margin-top: 6px; display: inline-block;">${observacionesSafe}</span>
         </td>
       </tr>
     `
@@ -5041,7 +5130,7 @@ async function enqueueReservaEmailConfirmation({
     `Fecha: ${fechaLegible}`,
     `Hora: ${hora}`,
     `Personas: ${cantidadPersonas}`,
-    `Mesa: ${mesaNumero}`,
+    `Mesa: ${mesaEtiqueta}`,
     observaciones ? `Observaciones: ${observaciones}` : null,
     `Codigo de reserva: ${codigoReserva}`,
     '',
@@ -5064,57 +5153,62 @@ async function enqueueReservaEmailConfirmation({
       subject,
       text: textBody,
       html: `
-        <div style="margin:0; padding:24px 12px; background:#f3f4f6; font-family:Arial, sans-serif; color:#111827;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 620px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden;">
+        <div style="margin:0; padding:28px 14px; background:#faf5f5; font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; color:#0f172a;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 24px rgba(69, 10, 10, 0.1); border: 1px solid #f5e5e5;">
             <tr>
-              <td style="padding: 22px 24px; background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%); color: #ffffff;">
-                <div style="font-size: 12px; letter-spacing: .8px; text-transform: uppercase; opacity: .9;">Ceviche del Rey</div>
-                <h2 style="margin: 6px 0 0 0; font-size: 24px; line-height: 1.2;">Reserva confirmada</h2>
+              <td style="padding: 28px 28px 20px; text-align: center; background: #ffffff;">
+                ${brandLogoBlock}
               </td>
             </tr>
             <tr>
-              <td style="padding: 22px 24px 8px 24px; font-size: 15px; color: #374151;">
-                Hola <strong style="color:#111827;">${clienteNombreSafe}</strong>, tu reserva fue registrada correctamente.
+              <td style="padding: 22px 28px 26px; background: linear-gradient(155deg, #450a0a 0%, #7f1d1d 42%, #991b1b 100%); text-align: center;">
+                <p style="margin: 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.88);">Confirmacion de reserva</p>
+                <h1 style="margin: 10px 0 0; font-size: 26px; line-height: 1.2; color: #ffffff; font-weight: 700;">Reserva confirmada</h1>
               </td>
             </tr>
             <tr>
-              <td style="padding: 8px 24px 0 24px;">
+              <td style="padding: 26px 28px 8px; font-size: 16px; line-height: 1.55; color: #334155;">
+                Hola <strong style="color:#0f172a;">${clienteNombreSafe}</strong>, tu reserva quedo registrada. Te esperamos.
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 28px 0;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
                   <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Fecha:</strong> ${fechaLegible}</td>
+                    <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Fecha</strong><br /><span style="color:#475569;">${fechaLegible}</span></td>
                   </tr>
                   <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Hora:</strong> ${hora}</td>
+                    <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Hora</strong><br /><span style="color:#475569;">${hora}</span></td>
                   </tr>
                   <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Personas:</strong> ${cantidadPersonas}</td>
+                    <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Personas</strong><br /><span style="color:#475569;">${cantidadPersonas}</span></td>
                   </tr>
                   <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 14px;"><strong>Mesa:</strong> ${mesaNumero}</td>
+                    <td style="padding: 14px 0; border-bottom: 1px solid #e2e8f0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Mesa</strong><br /><span style="color:#475569;">${mesaEtiqueta}</span></td>
                   </tr>
                   ${observacionesBlock}
                   <tr>
-                    <td style="padding: 10px 0; color: #374151; font-size: 14px;"><strong>Codigo de reserva:</strong> <span style="font-family:monospace; color:#111827;">${codigoReserva}</span></td>
+                    <td style="padding: 14px 0; color: #334155; font-size: 15px;"><strong style="color:#0f172a;">Codigo de reserva</strong><br /><span style="font-family: ui-monospace, Consolas, monospace; color:#991b1b; font-weight: 600; letter-spacing: 0.04em;">${codigoReservaSafe}</span></td>
                   </tr>
                 </table>
               </td>
             </tr>
             <tr>
-              <td style="padding: 18px 24px 8px 24px;">
-                <a href="${googleCalendarLinkEscaped}" target="_blank" rel="noopener noreferrer" style="display:inline-block; background:#1d4ed8; color:#ffffff; text-decoration:none; padding:11px 16px; border-radius:10px; font-size:14px; font-weight:600;">
+              <td style="padding: 22px 28px 8px;">
+                <a href="${googleCalendarLinkEscaped}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background: linear-gradient(155deg, #b91c1c 0%, #7f1d1d 100%); color: #ffffff; text-decoration: none; padding: 13px 22px; border-radius: 999px; font-size: 15px; font-weight: 600; box-shadow: 0 2px 14px rgba(127, 29, 29, 0.45);">
                   Agregar a Google Calendar
                 </a>
               </td>
             </tr>
             <tr>
-              <td style="padding: 0 24px 18px 24px; font-size: 12px; color: #6b7280;">
-                Si el boton no abre, copie este enlace en su navegador:<br />
-                <a href="${googleCalendarLinkEscaped}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; word-break: break-all;">${googleCalendarLinkEscaped}</a>
+              <td style="padding: 0 28px 22px; font-size: 12px; line-height: 1.5; color: #64748b;">
+                Si el boton no abre, copie este enlace en el navegador:<br />
+                <a href="${googleCalendarLinkEscaped}" target="_blank" rel="noopener noreferrer" style="color:#991b1b; word-break: break-all;">${googleCalendarLinkEscaped}</a>
               </td>
             </tr>
             <tr>
-              <td style="padding: 0 24px 24px 24px; font-size: 13px; color:#6b7280;">
-                Gracias por elegir Ceviche del Rey.
+              <td style="padding: 0 28px 28px; font-size: 13px; color: #64748b; border-top: 1px solid #fce8e8;">
+                <p style="margin: 20px 0 0;">Gracias por elegir <strong style="color:#7f1d1d;">Ceviche del Rey</strong>.</p>
               </td>
             </tr>
           </table>

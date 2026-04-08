@@ -18,6 +18,7 @@ import {
   ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@shared/firebase/AuthContext'
+import { formatMesaLabel } from '@shared/utils/mesaDisplay'
 import ModalPortal from '@shared/layout/ModalPortal'
 import {
   getReservasByDate,
@@ -94,9 +95,33 @@ function getCalendarCells(cursorDate) {
 }
 
 const ESTADO_CONFIG = {
-  confirmada: { label: 'Confirmada', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200', accent: 'border-l-emerald-500', icon: CheckCircleIcon },
-  cancelada: { label: 'Cancelada', text: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', accent: 'border-l-red-400', icon: XCircleIcon },
-  completada: { label: 'Completada', text: 'text-sky-700', bg: 'bg-sky-50', border: 'border-sky-200', accent: 'border-l-sky-500', icon: CheckCircleIcon },
+  confirmada: {
+    label: 'Confirmada',
+    pill: 'inline-flex items-center gap-1.5 rounded-full border border-emerald-500/45 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:text-emerald-200',
+    dot: 'bg-emerald-500 dark:bg-emerald-400',
+    accent: 'border-l-emerald-500',
+  },
+  cancelada: {
+    label: 'Cancelada',
+    pill: 'inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-200',
+    dot: 'bg-red-500 dark:bg-red-400',
+    accent: 'border-l-red-400',
+  },
+  completada: {
+    label: 'Completada',
+    pill: 'inline-flex items-center gap-1.5 rounded-full border border-sky-500/45 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-800 dark:border-red-900/35 dark:bg-red-950/10 dark:text-red-200',
+    dot: 'bg-sky-500 dark:bg-red-700/80',
+    accent: 'border-l-sky-500 dark:border-l-red-800/90',
+  },
+}
+
+function StatusPill({ cfg }) {
+  return (
+    <span className={cfg.pill}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${cfg.dot}`} aria-hidden />
+      {cfg.label}
+    </span>
+  )
 }
 
 const EMAIL_STATUS = {
@@ -453,17 +478,17 @@ export default function ReservasPage() {
 
   return (
     <div className="space-y-5 pb-8">
-      <div className="bg-gradient-to-r from-cyan-700 via-cyan-800 to-blue-900 rounded-xl p-5 text-white shadow-lg">
+      <div className="bg-gradient-to-r from-cyan-700 via-cyan-800 to-blue-900 rounded-xl p-5 text-white shadow-lg border border-white/10 dark:from-zinc-950 dark:via-zinc-900 dark:to-zinc-950 dark:border-red-950/25">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2.5">
-              <CalendarDaysIcon className="w-8 h-8 text-cyan-200" />
+              <CalendarDaysIcon className="w-8 h-8 text-cyan-200 dark:text-red-800/85" />
               Reservas
             </h1>
-            <p className="text-cyan-200 text-sm mt-1">Gestion de reservaciones del restaurante</p>
+            <p className="text-cyan-200 text-sm mt-1 dark:text-zinc-400">Gestion de reservaciones del restaurante</p>
           </div>
-          <button onClick={openCreateModal} className="flex items-center gap-2 px-5 py-2.5 bg-white/15 hover:bg-white/25 backdrop-blur text-white font-medium rounded-xl transition-all border border-white/20">
-            <PlusIcon className="w-5 h-5" />
+          <button onClick={openCreateModal} className="flex items-center gap-2 px-5 py-2.5 bg-white/15 hover:bg-white/25 backdrop-blur text-white font-medium rounded-xl transition-all border border-white/20 dark:border-red-900/35">
+            <PlusIcon className="w-5 h-5 text-white dark:text-red-200/90" />
             Nueva Reserva
           </button>
         </div>
@@ -471,26 +496,26 @@ export default function ReservasPage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-5 pt-4 border-t border-white/15">
           <div className="flex items-center gap-1">
             <button onClick={() => goDay(-1)} className="p-2 hover:bg-white/10 rounded-lg transition">
-              <ChevronLeftIcon className="w-5 h-5" />
+              <ChevronLeftIcon className="w-5 h-5 text-cyan-200/90 dark:text-red-800/70" />
             </button>
             <input
               type="date"
               value={selectedDate}
               onChange={e => setSelectedDate(e.target.value)}
-              className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-300"
+              className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-300 dark:focus:ring-red-900/50"
             />
             <button onClick={() => goDay(1)} className="p-2 hover:bg-white/10 rounded-lg transition">
-              <ChevronRightIcon className="w-5 h-5" />
+              <ChevronRightIcon className="w-5 h-5 text-cyan-200/90 dark:text-red-800/70" />
             </button>
           </div>
           <div className="flex items-center gap-3">
             <div className="text-center leading-tight">
               <div className="text-3xl font-bold">{dateInfo.dayNum}</div>
-              <div className="text-xs text-cyan-200 uppercase tracking-wider">{dateInfo.monthName.slice(0, 3)}</div>
+              <div className="text-xs text-cyan-200/80 uppercase tracking-wider dark:text-zinc-500">{dateInfo.monthName.slice(0, 3)}</div>
             </div>
             <div>
               <div className="font-semibold">{dateInfo.dayName}</div>
-              <div className="text-xs text-cyan-200">{dateInfo.monthName} {dateInfo.year}</div>
+              <div className="text-xs text-cyan-100 dark:text-zinc-400">{dateInfo.monthName} {dateInfo.year}</div>
             </div>
             {!isToday && (
               <button onClick={() => setSelectedDate(today)} className="ml-2 text-xs bg-white/10 hover:bg-white/20 px-3 py-1 rounded-full transition border border-white/20">
@@ -498,15 +523,15 @@ export default function ReservasPage() {
               </button>
             )}
             {isToday && (
-              <span className="ml-2 text-xs bg-cyan-500/30 px-3 py-1 rounded-full border border-cyan-400/30">Hoy</span>
+              <span className="ml-2 text-xs bg-cyan-500/30 px-3 py-1 rounded-full border border-cyan-400/30 dark:bg-red-950/50 dark:border-red-900/40">Hoy</span>
             )}
           </div>
           <button
             onClick={handleRefreshAll}
             disabled={refreshing}
-            className="sm:ml-auto inline-flex items-center gap-2 px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg border border-white/20 transition disabled:opacity-60"
+            className="sm:ml-auto inline-flex items-center gap-2 px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg border border-white/20 transition disabled:opacity-60 dark:border-red-900/30"
           >
-            <ArrowPathIcon className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <ArrowPathIcon className={`w-4 h-4 text-cyan-200 dark:text-red-800/75 ${refreshing ? 'animate-spin' : ''}`} />
             {refreshing ? 'Actualizando...' : 'Refrescar'}
           </button>
         </div>
@@ -515,36 +540,36 @@ export default function ReservasPage() {
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setViewMode('dia')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'dia' ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'dia' ? 'bg-cyan-600 text-white shadow dark:bg-red-950 dark:border dark:border-red-900/50' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'}`}
         >
           Vista del dia
         </button>
         <button
           onClick={() => setViewMode('proximas')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'proximas' ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${viewMode === 'proximas' ? 'bg-cyan-600 text-white shadow dark:bg-red-950 dark:border dark:border-red-900/50' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'}`}
         >
           Proximas reservas
         </button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
           <div className="flex items-center justify-between mb-3">
             <button
               onClick={() => setCalendarCursor(new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() - 1, 1))}
               className="p-1.5 rounded-lg hover:bg-gray-100 transition"
             >
-              <ChevronLeftIcon className="w-4 h-4 text-gray-600" />
+              <ChevronLeftIcon className="w-4 h-4 text-gray-600 dark:text-red-900/55" />
             </button>
-            <p className="text-sm font-semibold text-gray-700 capitalize">{calendarMonthLabel}</p>
+            <p className="text-sm font-semibold text-gray-700 capitalize dark:text-zinc-200">{calendarMonthLabel}</p>
             <button
               onClick={() => setCalendarCursor(new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + 1, 1))}
               className="p-1.5 rounded-lg hover:bg-gray-100 transition"
             >
-              <ChevronRightIcon className="w-4 h-4 text-gray-600" />
+              <ChevronRightIcon className="w-4 h-4 text-gray-600 dark:text-red-900/55" />
             </button>
           </div>
-          <div className="grid grid-cols-7 gap-1 text-[11px] text-center text-gray-400 mb-1">
+          <div className="grid grid-cols-7 gap-1 text-[11px] text-center text-gray-400 mb-1 dark:text-zinc-500">
             {['D', 'L', 'M', 'X', 'J', 'V', 'S'].map(day => <span key={day}>{day}</span>)}
           </div>
           <div className="grid grid-cols-7 gap-1">
@@ -559,47 +584,47 @@ export default function ReservasPage() {
                     setViewMode('dia')
                     setCalendarCursor(new Date(`${cell.dateStr}T12:00:00`))
                   }}
-                  className={`h-9 rounded-md text-xs relative transition ${selected ? 'bg-cyan-600 text-white font-semibold' : cell.currentMonth ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-300 hover:bg-gray-50'}`}
+                  className={`h-9 rounded-md text-xs relative transition ${selected ? 'bg-cyan-600 font-semibold text-white dark:bg-red-950' : cell.currentMonth ? 'text-gray-700 hover:bg-gray-100 dark:text-zinc-200 dark:hover:bg-zinc-800' : 'text-gray-300 hover:bg-gray-50 dark:text-zinc-600 dark:hover:bg-zinc-800/50'}`}
                 >
                   {cell.day}
                   {count > 0 && (
-                    <span className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : 'bg-cyan-500'}`} />
+                    <span className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : 'bg-cyan-500 dark:bg-red-700/85'}`} />
                   )}
                 </button>
               )
             })}
           </div>
-          <p className="text-[11px] text-gray-400 mt-2">
-            {loadingCalendar ? 'Actualizando calendario...' : 'Punto azul = dia con reservas'}
+          <p className="text-[11px] text-gray-400 mt-2 dark:text-zinc-500">
+            {loadingCalendar ? 'Actualizando calendario...' : 'Punto = dia con reservas'}
           </p>
         </div>
 
         <div className="xl:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <button onClick={() => setFilterEstado('todas')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'todas' ? 'border-gray-400 shadow-md bg-white' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-            <CalendarDaysIcon className="w-6 h-6 mx-auto text-gray-500 mb-1" />
-            <div className="text-2xl font-bold text-gray-800">{stats.total}</div>
-            <div className="text-[11px] text-gray-500 font-medium uppercase tracking-wide">Total</div>
+          <button onClick={() => setFilterEstado('todas')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'todas' ? 'border-gray-400 shadow-md bg-white dark:border-zinc-600 dark:bg-zinc-900/50' : 'border-gray-200 bg-white hover:border-gray-300 dark:border-zinc-700 dark:bg-zinc-900/30 dark:hover:border-zinc-600'}`}>
+            <CalendarDaysIcon className="w-6 h-6 mx-auto text-gray-500 mb-1 dark:text-zinc-400" />
+            <div className="text-2xl font-bold text-gray-800 dark:text-zinc-100">{stats.total}</div>
+            <div className="text-[11px] text-gray-500 font-medium uppercase tracking-wide dark:text-zinc-500">Total</div>
           </button>
-          <button onClick={() => setFilterEstado('confirmada')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'confirmada' ? 'border-emerald-400 shadow-md bg-emerald-50' : 'border-emerald-200 bg-emerald-50/50 hover:border-emerald-300'}`}>
+          <button onClick={() => setFilterEstado('confirmada')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'confirmada' ? 'border-emerald-400 shadow-md bg-emerald-50 dark:bg-emerald-950/30' : 'border-emerald-200 bg-emerald-50/50 hover:border-emerald-300 dark:border-emerald-900/40 dark:bg-emerald-950/20'}`}>
             <CheckCircleIcon className="w-6 h-6 mx-auto text-emerald-500 mb-1" />
-            <div className="text-2xl font-bold text-emerald-700">{stats.confirmadas}</div>
-            <div className="text-[11px] text-emerald-600 font-medium uppercase tracking-wide">Confirmadas</div>
+            <div className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{stats.confirmadas}</div>
+            <div className="text-[11px] text-emerald-600 font-medium uppercase tracking-wide dark:text-emerald-500/90">Confirmadas</div>
           </button>
-          <button onClick={() => setFilterEstado('completada')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'completada' ? 'border-sky-400 shadow-md bg-sky-50' : 'border-sky-200 bg-sky-50/50 hover:border-sky-300'}`}>
-            <CheckCircleIcon className="w-6 h-6 mx-auto text-sky-500 mb-1" />
-            <div className="text-2xl font-bold text-sky-700">{stats.completadas}</div>
-            <div className="text-[11px] text-sky-600 font-medium uppercase tracking-wide">Completadas</div>
+          <button onClick={() => setFilterEstado('completada')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'completada' ? 'border-sky-400 shadow-md bg-sky-50 dark:border-red-800/70 dark:bg-zinc-50' : 'border-sky-200 bg-sky-50/50 hover:border-sky-300 dark:border-zinc-200 dark:bg-zinc-50/50 dark:hover:border-red-900/30'}`}>
+            <CheckCircleIcon className="w-6 h-6 mx-auto text-sky-500 mb-1 dark:text-red-800/75" />
+            <div className="text-2xl font-bold text-sky-700 dark:text-zinc-800">{stats.completadas}</div>
+            <div className="text-[11px] text-sky-600 font-medium uppercase tracking-wide dark:text-zinc-600">Completadas</div>
           </button>
-          <button onClick={() => setFilterEstado('cancelada')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'cancelada' ? 'border-red-400 shadow-md bg-red-50' : 'border-red-200 bg-red-50/50 hover:border-red-300'}`}>
+          <button onClick={() => setFilterEstado('cancelada')} className={`rounded-xl p-3.5 text-center transition-all border-2 ${filterEstado === 'cancelada' ? 'border-red-400 shadow-md bg-red-50 dark:bg-red-950/40' : 'border-red-200 bg-red-50/50 hover:border-red-300 dark:border-red-900/50 dark:bg-red-950/25'}`}>
             <XCircleIcon className="w-6 h-6 mx-auto text-red-400 mb-1" />
-            <div className="text-2xl font-bold text-red-600">{stats.canceladas}</div>
-            <div className="text-[11px] text-red-500 font-medium uppercase tracking-wide">Canceladas</div>
+            <div className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.canceladas}</div>
+            <div className="text-[11px] text-red-500 font-medium uppercase tracking-wide dark:text-red-400/90">Canceladas</div>
           </button>
         </div>
       </div>
 
       {actionError && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
           <ExclamationTriangleIcon className="w-5 h-5 flex-shrink-0" />
           {actionError}
         </div>
@@ -607,19 +632,19 @@ export default function ReservasPage() {
 
       {isCurrentListLoading ? (
         <div className="text-center py-16">
-          <ArrowPathIcon className="w-10 h-10 mx-auto text-cyan-400 animate-spin mb-3" />
-          <p className="text-gray-500">Cargando reservas...</p>
+          <ArrowPathIcon className="w-10 h-10 mx-auto animate-spin mb-3 text-cyan-500 dark:text-red-800/70" />
+          <p className="text-gray-500 dark:text-zinc-400">Cargando reservas...</p>
         </div>
       ) : currentList.length === 0 ? (
-        <div className="text-center py-16 bg-gray-50/50 rounded-xl border-2 border-dashed border-gray-200">
-          <CalendarDaysIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-          <p className="text-lg font-semibold text-gray-500">Sin reservas</p>
-          <p className="text-sm text-gray-400 mt-1 mb-4">
+        <div className="text-center py-16 bg-gray-50/50 rounded-xl border-2 border-dashed border-gray-200 dark:border-zinc-700 dark:bg-zinc-900/30">
+          <CalendarDaysIcon className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-zinc-600" />
+          <p className="text-lg font-semibold text-gray-500 dark:text-zinc-400">Sin reservas</p>
+          <p className="text-sm text-gray-400 mt-1 mb-4 dark:text-zinc-500">
             {viewMode === 'dia'
               ? `No hay reservas ${filterEstado !== 'todas' ? ESTADO_CONFIG[filterEstado]?.label.toLowerCase() + 's' : ''} para esta fecha`
               : `No hay proximas reservas ${filterEstado !== 'todas' ? ESTADO_CONFIG[filterEstado]?.label.toLowerCase() + 's' : ''}`}
           </p>
-          <button onClick={openCreateModal} className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium rounded-lg transition">
+          <button onClick={openCreateModal} className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-600 text-sm font-medium text-white rounded-lg transition hover:bg-cyan-700 dark:border dark:border-red-900/40 dark:bg-red-950 dark:hover:bg-red-900">
             <PlusIcon className="w-4 h-4" />
             Crear reserva
           </button>
@@ -628,7 +653,6 @@ export default function ReservasPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {currentList.map(r => {
             const cfg = ESTADO_CONFIG[r.estado] || ESTADO_CONFIG.confirmada
-            const StatusIcon = cfg.icon
             const deliveryState = r.emailQueueId ? emailDeliveryMap[r.emailQueueId] : null
             const emailInfo = resolveEmailInfo(r, deliveryState)
             const publicCode = getPublicReservaCode(r)
@@ -636,40 +660,37 @@ export default function ReservasPage() {
               <div
                 key={r.id}
                 onClick={() => setDetailReserva(r)}
-                className={`bg-white rounded-xl border border-gray-200 hover:shadow-lg transition-all cursor-pointer border-l-4 ${cfg.accent} group`}
+                className={`group cursor-pointer rounded-xl border border-gray-200 bg-white transition-all hover:shadow-lg dark:border-zinc-700 dark:bg-zinc-900/50 border-l-4 ${cfg.accent}`}
               >
                 <div className="p-4">
                   {viewMode === 'proximas' && (
-                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-cyan-50 border border-cyan-200 text-cyan-700 rounded-md text-[11px] font-medium mb-2">
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-cyan-50 border border-cyan-200 text-cyan-700 rounded-md text-[11px] font-medium mb-2 dark:border-red-900/20 dark:bg-zinc-100 dark:text-red-900/90">
                       <CalendarDaysIcon className="w-3 h-3" />
                       {r.fecha === today ? 'Hoy' : formatShortDate(r.fecha)}
                     </div>
                   )}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="bg-gray-900 text-white rounded-lg px-3 py-1.5 text-center min-w-[60px]">
-                        <ClockIcon className="w-3.5 h-3.5 mx-auto mb-0.5 text-gray-400" />
+                      <div className="min-w-[60px] rounded-lg bg-gray-900 px-3 py-1.5 text-center text-white ring-1 ring-black/10 dark:ring-red-950/35">
+                        <ClockIcon className="mx-auto mb-0.5 w-3.5 h-3.5 text-gray-400 dark:text-red-800/70" />
                         <div className="text-sm font-bold tracking-wide">{r.hora}</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-gray-900 group-hover:text-cyan-700 transition">{r.clienteNombre}</div>
+                        <div className="font-semibold text-gray-900 transition group-hover:text-cyan-700 dark:group-hover:text-red-300 dark:text-zinc-100">{r.clienteNombre}</div>
                         <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
                           <UserGroupIcon className="w-3.5 h-3.5" />
                           {r.cantidadPersonas} persona{r.cantidadPersonas > 1 ? 's' : ''}
                         </div>
                       </div>
                     </div>
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold ${cfg.bg} ${cfg.text} border ${cfg.border}`}>
-                      <StatusIcon className="w-3.5 h-3.5" />
-                      {cfg.label}
-                    </span>
+                    <StatusPill cfg={cfg} />
                   </div>
 
                   <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
                     <div className="flex items-center gap-1.5">
                       <TableCellsIcon className="w-3.5 h-3.5 text-gray-400" />
                       <span>Mesa</span>
-                      <span className="bg-cyan-100 text-cyan-800 font-bold px-1.5 py-0.5 rounded text-[11px]">{r.mesaNumero}</span>
+                      <span className="rounded bg-cyan-100 px-1.5 py-0.5 text-[11px] font-bold text-cyan-800 dark:border dark:border-red-900/25 dark:bg-red-950/10 dark:text-red-200">{formatMesaLabel(r.mesaNumero)}</span>
                     </div>
                     {r.clienteEmail && (
                       <div className="flex items-center gap-1 truncate">
@@ -707,14 +728,14 @@ export default function ReservasPage() {
                   <div className="border-t border-gray-100 px-4 py-2.5 flex gap-2">
                     <button
                       onClick={e => { e.stopPropagation(); handleComplete(r.id) }}
-                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium text-sky-600 hover:bg-sky-50 py-1.5 rounded-lg transition"
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium text-sky-600 transition hover:bg-sky-50 dark:text-red-900/85 dark:hover:bg-red-950/10"
                     >
                       <CheckCircleIcon className="w-4 h-4" />
                       Cliente llego
                     </button>
                     <button
                       onClick={e => { e.stopPropagation(); setConfirmCancelId(r.id) }}
-                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium text-red-500 hover:bg-red-50 py-1.5 rounded-lg transition"
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
                     >
                       <XCircleIcon className="w-4 h-4" />
                       Cancelar
@@ -729,13 +750,13 @@ export default function ReservasPage() {
 
       {detailReserva && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl overflow-hidden">
-            <div className="bg-gradient-to-r from-cyan-700 to-blue-800 text-white p-5">
+          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl overflow-hidden dark:bg-zinc-900">
+            <div className="bg-gradient-to-r from-cyan-700 to-blue-800 p-5 text-white dark:from-zinc-950 dark:to-zinc-900 dark:border-b dark:border-red-950/25">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-cyan-200 text-xs uppercase tracking-wider font-medium">Detalle de reserva</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-cyan-200 dark:text-zinc-500">Detalle de reserva</p>
                   <h3 className="font-bold text-xl mt-1">{detailReserva.clienteNombre}</h3>
-                  <p className="text-xs text-cyan-100 mt-1">
+                  <p className="mt-1 text-xs text-cyan-100 dark:text-zinc-400">
                     Codigo: <span className="font-mono">{getPublicReservaCode(detailReserva)}</span>
                   </p>
                 </div>
@@ -743,27 +764,27 @@ export default function ReservasPage() {
                   <XMarkIcon className="w-5 h-5" />
                 </button>
               </div>
-              <div className="flex items-center gap-4 mt-3 text-sm text-cyan-100">
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-cyan-100 dark:text-zinc-300">
                 <div className="flex items-center gap-1.5">
-                  <CalendarDaysIcon className="w-4 h-4" />
+                  <CalendarDaysIcon className="h-4 w-4 text-cyan-200 dark:text-red-800/75" />
                   {formatShortDate(detailReserva.fecha)}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <ClockIcon className="w-4 h-4" />
+                  <ClockIcon className="h-4 w-4 text-cyan-200 dark:text-red-800/75" />
                   {detailReserva.hora}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <UserGroupIcon className="w-4 h-4" />
+                  <UserGroupIcon className="h-4 w-4 text-cyan-200 dark:text-red-800/75" />
                   {detailReserva.cantidadPersonas} persona{detailReserva.cantidadPersonas > 1 ? 's' : ''}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <TableCellsIcon className="w-4 h-4" />
-                  Mesa {detailReserva.mesaNumero}
+                  <TableCellsIcon className="h-4 w-4 text-cyan-200 dark:text-red-800/75" />
+                  {formatMesaLabel(detailReserva.mesaNumero)}
                 </div>
               </div>
             </div>
 
-            <div className="p-5 space-y-3">
+            <div className="space-y-3 p-5 dark:text-zinc-200">
               {detailReserva.clienteEmail && (
                 <>
                   <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -790,8 +811,8 @@ export default function ReservasPage() {
                 </div>
               )}
               {detailReserva.observaciones && (
-                <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-600">
-                  <p className="text-xs font-medium text-gray-500 mb-1">Observaciones</p>
+                <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  <p className="mb-1 text-xs font-medium text-gray-500 dark:text-zinc-400">Observaciones</p>
                   {detailReserva.observaciones}
                 </div>
               )}
@@ -799,23 +820,23 @@ export default function ReservasPage() {
                 <span className="text-xs text-gray-500">Estado:</span>
                 {(() => {
                   const c = ESTADO_CONFIG[detailReserva.estado] || ESTADO_CONFIG.confirmada
-                  return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold ${c.bg} ${c.text} border ${c.border}`}>{c.label}</span>
+                  return <StatusPill cfg={c} />
                 })()}
               </div>
             </div>
 
             {detailReserva.estado === 'confirmada' && (
-              <div className="border-t border-gray-200 p-4 flex gap-2">
+              <div className="flex gap-2 border-t border-gray-200 p-4 dark:border-zinc-700">
                 <button
                   onClick={() => handleComplete(detailReserva.id)}
-                  className="flex-1 flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-700 text-white font-medium py-2.5 rounded-lg transition text-sm"
+                  className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-transparent bg-sky-600 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 dark:border-red-900/40 dark:bg-red-950 dark:hover:bg-red-900"
                 >
                   <CheckCircleIcon className="w-4 h-4" />
                   Cliente llego
                 </button>
                 <button
                   onClick={() => { setConfirmCancelId(detailReserva.id) }}
-                  className="flex-1 flex items-center justify-center gap-2 border border-red-200 hover:bg-red-50 text-red-600 font-medium py-2.5 rounded-lg transition text-sm"
+                  className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-200 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
                 >
                   <XCircleIcon className="w-4 h-4" />
                   Cancelar
@@ -824,8 +845,8 @@ export default function ReservasPage() {
             )}
 
             {detailReserva.estado !== 'confirmada' && (
-              <div className="border-t border-gray-200 p-4">
-                <button onClick={() => setDetailReserva(null)} className="w-full py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-medium text-sm transition">
+              <div className="border-t border-gray-200 p-4 dark:border-zinc-700">
+                <button onClick={() => setDetailReserva(null)} className="w-full rounded-lg py-2 text-sm font-medium text-gray-500 transition hover:bg-gray-100 dark:text-zinc-400 dark:hover:bg-zinc-800">
                   Cerrar
                 </button>
               </div>
@@ -836,12 +857,12 @@ export default function ReservasPage() {
 
       {showCreateModal && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="bg-gradient-to-r from-cyan-700 to-blue-800 text-white p-5">
+          <div className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-zinc-900">
+            <div className="bg-gradient-to-r from-cyan-700 to-blue-800 p-5 text-white dark:from-zinc-950 dark:to-zinc-900 dark:border-b dark:border-red-950/25">
               <div className="flex justify-between items-center">
                 <div>
-                  <p className="text-cyan-200 text-xs uppercase tracking-wider font-medium">Formulario</p>
-                  <h3 className="font-bold text-xl mt-0.5">Nueva Reserva</h3>
+                  <p className="text-xs font-medium uppercase tracking-wider text-cyan-200 dark:text-zinc-500">Formulario</p>
+                  <h3 className="mt-0.5 text-xl font-bold">Nueva Reserva</h3>
                 </div>
                 <button onClick={() => setShowCreateModal(false)} className="hover:bg-white/20 p-1 rounded-lg transition">
                   <XMarkIcon className="w-5 h-5" />
@@ -849,36 +870,36 @@ export default function ReservasPage() {
               </div>
             </div>
 
-            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+            <div className="flex-1 space-y-4 overflow-y-auto p-5 dark:text-zinc-200">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre del cliente *</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Nombre del cliente *</label>
                 <input
                   type="text"
                   value={formData.clienteNombre}
                   onChange={e => setFormData(p => ({ ...p, clienteNombre: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-red-900/45 dark:focus:ring-red-900/35"
                   placeholder="Ej: Carlos Gonzalez"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Telefono</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Telefono</label>
                   <input
                     type="tel"
                     value={formData.clienteTelefono}
                     onChange={e => setFormData(p => ({ ...p, clienteTelefono: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 dark:focus:border-red-900/45 dark:focus:ring-red-900/35 dark:border-zinc-600 dark:bg-zinc-950"
                     placeholder="+506 8888-8888"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Correo</label>
                   <input
                     type="email"
                     value={formData.clienteEmail}
                     onChange={e => setFormData(p => ({ ...p, clienteEmail: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 dark:focus:border-red-900/45 dark:focus:ring-red-900/35 dark:border-zinc-600 dark:bg-zinc-950"
                     placeholder="cliente@correo.com"
                   />
                 </div>
@@ -890,36 +911,36 @@ export default function ReservasPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Fecha *</label>
                   <input
                     type="date"
                     value={formData.fecha}
                     onChange={e => setFormData(p => ({ ...p, fecha: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 dark:focus:border-red-900/45 dark:focus:ring-red-900/35 dark:border-zinc-600 dark:bg-zinc-950"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Personas *</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Personas *</label>
                   <input
                     type="number"
                     min="1"
                     max="50"
                     value={formData.cantidadPersonas}
                     onChange={e => setFormData(p => ({ ...p, cantidadPersonas: Math.max(1, Number(e.target.value)) }))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 dark:focus:border-red-900/45 dark:focus:ring-red-900/35 dark:border-zinc-600 dark:bg-zinc-950"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Hora *</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-zinc-300">Hora *</label>
 
                 {!formData.hora ? (
                   <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-2">
                     Selecciona una hora para continuar
                   </div>
                 ) : (
-                  <div className="inline-flex items-center gap-2 text-xs bg-cyan-50 border border-cyan-200 text-cyan-700 rounded-lg px-3 py-1.5 mb-2">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs text-cyan-700 dark:border-red-900/25 dark:bg-zinc-100 dark:text-red-900/90">
                     Hora seleccionada:
                     <span className="font-semibold">{formData.hora}</span>
                   </div>
@@ -936,8 +957,8 @@ export default function ReservasPage() {
                           onClick={() => setFormData(p => ({ ...p, hora }))}
                           className={`px-2.5 py-1.5 rounded-md text-xs font-medium border transition ${
                             formData.hora === hora
-                              ? 'bg-cyan-600 text-white border-cyan-600'
-                              : 'bg-white text-gray-700 border-gray-200 hover:border-cyan-300 hover:bg-cyan-50'
+                              ? 'border-cyan-600 bg-cyan-600 text-white dark:border-red-950 dark:bg-red-950'
+                              : 'border-gray-200 bg-white text-gray-700 hover:border-cyan-300 hover:bg-cyan-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-red-900/35 dark:hover:bg-red-950/5'
                           }`}
                         >
                           {hora}
@@ -955,8 +976,8 @@ export default function ReservasPage() {
                           onClick={() => setFormData(p => ({ ...p, hora }))}
                           className={`px-2.5 py-1.5 rounded-md text-xs font-medium border transition ${
                             formData.hora === hora
-                              ? 'bg-cyan-600 text-white border-cyan-600'
-                              : 'bg-white text-gray-700 border-gray-200 hover:border-cyan-300 hover:bg-cyan-50'
+                              ? 'border-cyan-600 bg-cyan-600 text-white dark:border-red-950 dark:bg-red-950'
+                              : 'border-gray-200 bg-white text-gray-700 hover:border-cyan-300 hover:bg-cyan-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-red-900/35 dark:hover:bg-red-950/5'
                           }`}
                         >
                           {hora}
@@ -968,10 +989,10 @@ export default function ReservasPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mesa disponible *</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Mesa disponible *</label>
                 {loadingMesas ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
-                    <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                    <ArrowPathIcon className="h-4 w-4 animate-spin text-cyan-500 dark:text-red-800/70" />
                     Buscando mesas...
                   </div>
                 ) : !formData.hora ? (
@@ -986,11 +1007,11 @@ export default function ReservasPage() {
                         onClick={() => setFormData(p => ({ ...p, mesaId: m.id, mesaNumero: m.numero }))}
                         className={`p-2.5 rounded-xl border-2 text-center transition-all ${
                           formData.mesaId === m.id
-                            ? 'border-cyan-500 bg-cyan-50 shadow-md ring-2 ring-cyan-200'
-                            : 'border-gray-200 bg-white hover:border-cyan-300 hover:bg-cyan-50/50'
+                            ? 'border-cyan-500 bg-cyan-50 shadow-md ring-2 ring-cyan-200 dark:border-red-800 dark:bg-red-950/10 dark:ring-red-900/20'
+                            : 'border-gray-200 bg-white hover:border-cyan-300 hover:bg-cyan-50/50 dark:hover:border-red-900/30 dark:hover:bg-red-950/5'
                         }`}
                       >
-                        <div className={`text-lg font-bold ${formData.mesaId === m.id ? 'text-cyan-700' : 'text-gray-700'}`}>{m.numero}</div>
+                        <div className={`text-lg font-bold ${formData.mesaId === m.id ? 'text-cyan-700 dark:text-red-200' : 'text-gray-700 dark:text-zinc-300'}`}>{formatMesaLabel(m.numero)}</div>
                         <div className="text-[10px] text-gray-500">{m.capacidad} pers.</div>
                         <div className="text-[10px] text-gray-400">{m.zona || 'General'}</div>
                       </button>
@@ -1003,14 +1024,14 @@ export default function ReservasPage() {
                       <span>{noMesasMsg}</span>
                     </div>
                     {alternatives.length > 0 && (
-                      <div className="bg-sky-50 border border-sky-200 rounded-lg p-3">
-                        <p className="text-sm font-medium text-sky-800 mb-2">Horarios alternativos:</p>
+                      <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 dark:border-zinc-200 dark:bg-zinc-100">
+                        <p className="mb-2 text-sm font-medium text-sky-800 dark:text-zinc-800">Horarios alternativos:</p>
                         <div className="flex flex-wrap gap-2">
                           {alternatives.map(alt => (
                             <button
                               key={alt.hora}
                               onClick={() => setFormData(p => ({ ...p, hora: alt.hora }))}
-                              className="px-3 py-1.5 bg-white border border-sky-300 text-sky-700 rounded-lg text-sm hover:bg-sky-100 transition font-medium"
+                              className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-sm font-medium text-sky-700 transition hover:bg-sky-100 dark:border-red-900/30 dark:text-red-200 dark:hover:bg-red-950/10"
                             >
                               {alt.hora} ({alt.mesasDisponibles} mesa{alt.mesasDisponibles > 1 ? 's' : ''})
                             </button>
@@ -1023,11 +1044,11 @@ export default function ReservasPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">Observaciones</label>
                 <textarea
                   value={formData.observaciones}
                   onChange={e => setFormData(p => ({ ...p, observaciones: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition resize-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 dark:focus:border-red-900/45 dark:focus:ring-red-900/35 dark:border-zinc-600 dark:bg-zinc-950 resize-none"
                   rows={2}
                   placeholder="Ej: Cumpleanos, silla para bebe, etc."
                 />
@@ -1041,17 +1062,17 @@ export default function ReservasPage() {
               )}
             </div>
 
-            <div className="p-4 border-t border-gray-200 flex justify-end gap-2 bg-gray-50/50">
+            <div className="flex justify-end gap-2 border-t border-gray-200 bg-gray-50/50 p-4 dark:border-zinc-700 dark:bg-zinc-900/80">
               <button
                 onClick={() => setShowCreateModal(false)}
-                className="px-5 py-2.5 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition text-sm"
+                className="rounded-lg px-5 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleCreate}
                 disabled={creating}
-                className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 hover:to-cyan-800 text-white font-medium rounded-lg transition text-sm disabled:opacity-50 shadow-sm"
+                className="rounded-lg border border-transparent bg-gradient-to-r from-cyan-600 to-cyan-700 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:from-cyan-700 hover:to-cyan-800 disabled:opacity-50 dark:border-red-900/40 dark:from-red-950 dark:to-red-900 dark:hover:from-red-900 dark:hover:to-red-950"
               >
                 {creating ? 'Creando...' : 'Confirmar Reserva'}
               </button>
@@ -1071,7 +1092,7 @@ export default function ReservasPage() {
                 <div>
                   <h3 className="font-bold text-gray-900 text-lg">Posible duplicado</h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    Ya existe una reserva para <strong>{duplicateWarning.clienteNombre}</strong> a las <strong>{duplicateWarning.hora}</strong> en Mesa <strong>{duplicateWarning.mesaNumero}</strong>.
+                    Ya existe una reserva para <strong>{duplicateWarning.clienteNombre}</strong> a las <strong>{duplicateWarning.hora}</strong> en <strong>{formatMesaLabel(duplicateWarning.mesaNumero)}</strong>.
                   </p>
                 </div>
               </div>
@@ -1093,25 +1114,31 @@ export default function ReservasPage() {
 
       {confirmCancelId && (
         <ModalPortal overlayClassName="flex items-center justify-center">
-          <div className="bg-white rounded-xl max-w-sm w-full shadow-2xl overflow-hidden">
-            <div className="bg-red-50 p-5 border-b border-red-100">
+          <div className="w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-zinc-900 dark:shadow-black/50">
+            <div className="border-b border-red-100 bg-red-50 p-5 dark:border-red-950/30 dark:bg-red-950/30">
               <div className="flex items-start gap-3">
-                <div className="bg-red-100 rounded-full p-2">
-                  <XCircleIcon className="w-6 h-6 text-red-500" />
+                <div className="rounded-full bg-red-100 p-2 dark:bg-red-950/40">
+                  <XCircleIcon className="h-6 w-6 text-red-500 dark:text-red-300" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900 text-lg">Cancelar reserva</h3>
-                  <p className="text-sm text-gray-600 mt-1">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-zinc-100">Cancelar reserva</h3>
+                  <p className="mt-1 text-sm text-gray-600 dark:text-zinc-400">
                     La mesa quedara libre para este horario.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="p-5 flex justify-end gap-2">
-              <button onClick={() => setConfirmCancelId(null)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium text-sm transition">
+            <div className="flex justify-end gap-2 bg-white p-5 dark:bg-zinc-900">
+              <button
+                onClick={() => setConfirmCancelId(null)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
                 Volver
               </button>
-              <button onClick={doCancel} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg text-sm transition">
+              <button
+                onClick={doCancel}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700"
+              >
                 Si, cancelar
               </button>
             </div>

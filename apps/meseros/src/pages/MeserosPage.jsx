@@ -16,12 +16,14 @@ import {
   ArrowRightCircleIcon,
   PencilSquareIcon,
   XMarkIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline'
 import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore'
 
 import { db } from '@shared/firebase/firebase'
 import { useAuth } from '@shared/firebase/AuthContext'
 import ModalPortal from '@shared/layout/ModalPortal'
+import { formatMesaLabel, formatMesaFromDoc } from '@shared/utils/mesaDisplay'
 import {
   addCuentaItemConCantidad,
   anularCuentaItem,
@@ -44,6 +46,9 @@ function normalizeMesaStatus(rawStatus) {
   if (value === 'esperandocuenta' || value === 'esperando_cuenta' || value === 'esperandocobro') {
     return 'esperandoCuenta'
   }
+  if (value === 'porlimpiar' || value === 'por_limpiar' || value === 'por limpiar') {
+    return 'porLimpiar'
+  }
   return 'libre'
 }
 
@@ -51,25 +56,62 @@ function getStatusUI(status) {
   if (status === 'ocupada') {
     return {
       label: 'Ocupada',
-      cardClass: 'bg-blue-50 border-blue-300',
-      textClass: 'text-blue-700',
+      cardClass:
+        'bg-blue-50/90 border border-blue-300/90 dark:bg-zinc-900/95 dark:border-blue-500/45',
+      textClass: 'text-blue-700 dark:text-blue-300',
+      tagClass:
+        'inline-flex items-center gap-1.5 rounded-full border border-sky-500/55 bg-sky-500/[0.1] px-2.5 py-1 text-xs font-semibold text-sky-800 dark:border-sky-400/45 dark:bg-sky-500/15 dark:text-sky-200',
+      tagDotClass: 'bg-sky-500 dark:bg-sky-400',
+      iconClass: 'text-blue-600 dark:text-blue-400',
       icon: UserGroupIcon,
     }
   }
   if (status === 'esperandoCuenta') {
     return {
       label: 'Lista para pagar',
-      cardClass: 'bg-amber-50 border-amber-300',
-      textClass: 'text-amber-700',
+      cardClass:
+        'bg-amber-50/90 border border-amber-300/90 dark:bg-zinc-900/95 dark:border-amber-500/45',
+      textClass: 'text-amber-800 dark:text-amber-200',
+      tagClass:
+        'inline-flex items-center gap-1.5 rounded-full border border-amber-500/60 bg-amber-500/[0.1] px-2.5 py-1 text-xs font-semibold text-amber-900 dark:border-amber-400/45 dark:bg-amber-500/15 dark:text-amber-200',
+      tagDotClass: 'bg-amber-500 dark:bg-amber-400',
+      iconClass: 'text-amber-600 dark:text-amber-400',
       icon: ClockIcon,
+    }
+  }
+  if (status === 'porLimpiar') {
+    return {
+      label: 'Por limpiar',
+      cardClass:
+        'bg-violet-50/90 border border-violet-300/90 dark:bg-zinc-900/95 dark:border-violet-500/45',
+      textClass: 'text-violet-800 dark:text-violet-200',
+      tagClass:
+        'inline-flex items-center gap-1.5 rounded-full border border-violet-500/60 bg-violet-500/[0.1] px-2.5 py-1 text-xs font-semibold text-violet-900 dark:border-violet-400/45 dark:bg-violet-500/15 dark:text-violet-200',
+      tagDotClass: 'bg-violet-500 dark:bg-violet-400',
+      iconClass: 'text-violet-600 dark:text-violet-400',
+      icon: SparklesIcon,
     }
   }
   return {
     label: 'Libre',
-    cardClass: 'bg-green-50 border-green-300',
-    textClass: 'text-green-700',
+    cardClass:
+      'bg-emerald-50/90 border border-emerald-400/80 dark:bg-zinc-900/95 dark:border-emerald-500/40',
+    textClass: 'text-emerald-800 dark:text-emerald-200',
+    tagClass:
+      'inline-flex items-center gap-1.5 rounded-full border border-emerald-500/60 bg-emerald-500/[0.1] px-2.5 py-1 text-xs font-semibold text-emerald-900 dark:border-emerald-400/45 dark:bg-emerald-500/15 dark:text-emerald-200',
+    tagDotClass: 'bg-emerald-500 dark:bg-emerald-400',
+    iconClass: 'text-emerald-600 dark:text-emerald-400',
     icon: CheckCircleIcon,
   }
+}
+
+function StatusTag({ ui }) {
+  return (
+    <span className={ui.tagClass}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ui.tagDotClass}`} aria-hidden />
+      {ui.label}
+    </span>
+  )
 }
 
 function MesaCard({ mesa, selected, onSelect }) {
@@ -77,22 +119,29 @@ function MesaCard({ mesa, selected, onSelect }) {
   const StatusIcon = ui.icon
   return (
     <button
+      type="button"
       onClick={() => onSelect(mesa)}
-      className={`border-2 rounded-xl p-4 text-left transition min-h-[138px] ${
+      className={`min-h-[138px] rounded-xl border p-4 text-left transition ${
         ui.cardClass
-      } ${selected ? 'ring-4 ring-cyan-500 shadow-lg' : 'hover:shadow-md'}`}
+      } ${
+        selected
+          ? 'ring-2 ring-cyan-500 shadow-lg dark:ring-red-800/70 dark:shadow-black/40'
+          : 'hover:shadow-md dark:hover:border-zinc-600'
+      }`}
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-lg font-bold text-gray-900">Mesa {mesa.numero ?? mesa.id}</div>
-          <div className="text-xs text-gray-600 mt-1">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-lg font-bold text-gray-900 dark:text-zinc-100">{formatMesaFromDoc(mesa)}</div>
+          <div className="mt-1 text-xs text-gray-600 dark:text-zinc-500">
             Capacidad: {Number(mesa.capacidad || 0) || 'N/D'} | Zona: {mesa.zona || 'General'}
           </div>
         </div>
-        <StatusIcon className={`w-6 h-6 ${ui.textClass}`} />
+        <StatusIcon className={`h-6 w-6 flex-shrink-0 ${ui.iconClass || ui.textClass}`} />
       </div>
-      <div className={`text-xs font-semibold mt-3 ${ui.textClass}`}>{ui.label}</div>
-      <div className="text-xs text-gray-600 mt-2">Tocar para ver detalle</div>
+      <div className="mt-3">
+        <StatusTag ui={ui} />
+      </div>
+      <div className="mt-2 text-xs text-gray-500 dark:text-zinc-500">Tocar para ver detalle</div>
     </button>
   )
 }
@@ -144,12 +193,12 @@ function toMillis(rawDate) {
 }
 
 function getPedidoMesaLabel(pedido, mesas) {
-  if (pedido.mesaNumero != null && Number(pedido.mesaNumero) > 0) return String(Number(pedido.mesaNumero))
+  if (pedido.mesaNumero != null && Number(pedido.mesaNumero) > 0) return formatMesaLabel(pedido.mesaNumero)
   const mesaId = String(pedido.mesaId || '').trim()
   if (!mesaId) return 'S/N'
   const mesa = (mesas || []).find((m) => String(m.id) === mesaId)
   if (!mesa) return mesaId
-  if (mesa.numero != null && Number(mesa.numero) > 0) return String(Number(mesa.numero))
+  if (mesa.numero != null && Number(mesa.numero) > 0) return formatMesaLabel(mesa.numero)
   return String(mesa.alias || mesa.id || 'S/N')
 }
 
@@ -339,6 +388,11 @@ export default function MeserosPage() {
     [mesas, selectedMesaId]
   )
 
+  const selectedMesaStatusUi = useMemo(
+    () => (selectedMesa ? getStatusUI(selectedMesa.estadoMesa) : null),
+    [selectedMesa]
+  )
+
   const categorias = useMemo(() => {
     const unique = new Set((productos || []).map((p) => p.categoria || 'General'))
     return ['Todos', ...unique]
@@ -382,26 +436,44 @@ export default function MeserosPage() {
     }
   }, [comensalesPedido, selectedComensalLocalId])
 
-  async function toggleSolicitarCuenta(mesa) {
+  async function aplicarEstadoMesa(mesa, nextEstado) {
     if (!mesa?.id || updatingMesaId) return
-    const estadoActual = mesa.estadoMesa
-    const tienePedidoActivo = Boolean(mesa.cuentaActivaId)
-    const puedeMarcarListaPagar = estadoActual === 'ocupada' && tienePedidoActivo
-    const puedeQuitarListaPagar = estadoActual === 'esperandoCuenta'
+    const cuentaActiva = Boolean(mesa.cuentaActivaId)
+    const estado = mesa.estadoMesa
 
-    if (!puedeMarcarListaPagar && !puedeQuitarListaPagar) {
-      setError('Solo puedes marcar lista para pagar en mesas ocupadas con pedido activo.')
-      return
+    if (nextEstado === 'esperandoCuenta') {
+      if (!cuentaActiva) {
+        setError('Se requiere cuenta activa para marcar lista para pagar.')
+        return
+      }
+      if (estado !== 'ocupada' && estado !== 'porLimpiar') {
+        setError('Solo puedes pasar a lista para pagar desde mesa ocupada o por limpiar.')
+        return
+      }
+    }
+    if (nextEstado === 'porLimpiar') {
+      if (!cuentaActiva || estado !== 'ocupada') {
+        setError('Solo puedes marcar por limpiar en mesas ocupadas con pedido activo.')
+        return
+      }
+    }
+    if (nextEstado === 'ocupada') {
+      if (estado !== 'esperandoCuenta' && estado !== 'porLimpiar') {
+        setError('No se puede volver a ocupada desde este estado.')
+        return
+      }
     }
 
+    setError('')
     setUpdatingMesaId(mesa.id)
     try {
-      const nextEstado = mesa.estadoMesa === 'esperandoCuenta' ? 'ocupada' : 'esperandoCuenta'
       await updateDoc(doc(db, 'mesas', mesa.id), {
         estadoMesa: nextEstado,
-        estado: nextEstado, // compatibilidad con datos antiguos
+        estado: nextEstado,
         updatedAt: new Date(),
       })
+      setSuccess('Estado de mesa actualizado.')
+      setTimeout(() => setSuccess(''), 2800)
     } catch (e) {
       setError(e?.message || 'No se pudo actualizar el estado de la mesa.')
     } finally {
@@ -897,7 +969,7 @@ export default function MeserosPage() {
         })),
       })
 
-      setSuccess(`Pedido enviado a cocina para Mesa ${orderingMesa.numero ?? orderingMesa.id}.`)
+      setSuccess(`Pedido enviado a cocina para ${formatMesaFromDoc(orderingMesa)}.`)
       setCart([])
       setComensalesPedido([createLocalComensal('Comensal 1')])
       setSelectedComensalLocalId(null)
@@ -918,12 +990,12 @@ export default function MeserosPage() {
   }
 
   if (authLoading) {
-    return <div className="text-sm text-gray-600">Cargando permisos...</div>
+    return <div className="text-sm text-gray-600 dark:text-zinc-400">Cargando permisos...</div>
   }
 
   if (!isMesero && !isAdmin) {
     return (
-      <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">
+      <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
         No tienes permisos para acceder al estado de mesas.
       </div>
     )
@@ -931,58 +1003,71 @@ export default function MeserosPage() {
 
   return (
     <div className="space-y-6 pb-4">
-      <div className="bg-gradient-to-r from-blue-900 to-cyan-900 text-white rounded-lg p-6 shadow-lg">
-        <h1 className="text-3xl font-bold flex items-center gap-3">
-          <TableCellsIcon className="w-8 h-8" />
+      <div className="rounded-lg bg-gradient-to-r from-blue-900 to-cyan-900 p-6 text-white shadow-lg dark:from-zinc-950 dark:to-zinc-900 dark:shadow-black/40">
+        <h1 className="flex items-center gap-3 text-3xl font-bold">
+          <TableCellsIcon className="h-8 w-8" />
           Estado de mesas
         </h1>
-        <p className="text-blue-200 mt-2">Visualizacion en tiempo real para organizacion de atencion</p>
+        <p className="mt-2 text-blue-200 dark:text-zinc-400">
+          Visualizacion en tiempo real para organizacion de atencion
+        </p>
       </div>
 
-      <div className="flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-lg p-3">
-        <div className="text-sm text-gray-700">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-zinc-800/80 dark:bg-zinc-900/60">
+        <div className="text-sm text-gray-700 dark:text-zinc-300">
           Total mesas: <span className="font-bold">{mesas.length}</span>
         </div>
         <div className="flex items-center gap-2">
-          <FunnelIcon className="w-4 h-4 text-gray-500" />
+          <FunnelIcon className="h-4 w-4 text-gray-500 dark:text-zinc-500" />
           <select
             value={filterEstado}
             onChange={(e) => setFilterEstado(e.target.value)}
-            className="select select-bordered select-sm"
+            className="select select-bordered select-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
           >
             <option value="todos">Todos</option>
             <option value="libre">Libres</option>
             <option value="ocupada">Ocupadas</option>
             <option value="esperandoCuenta">Lista para pagar</option>
+            <option value="porLimpiar">Por limpiar</option>
           </select>
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-bold text-gray-900">Pedidos listos para entregar</h2>
-          <span className="badge badge-info badge-sm">{readyOrders.length}</span>
+      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-zinc-800/80 dark:bg-zinc-900/60">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-base font-bold text-gray-900 dark:text-zinc-100">Pedidos listos para entregar</h2>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-cyan-800 dark:border-cyan-400/40 dark:bg-cyan-500/15 dark:text-cyan-200">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500 dark:bg-cyan-400" aria-hidden />
+            {readyOrders.length}
+          </span>
         </div>
 
         {loadingReadyOrders ? (
-          <div className="text-sm text-gray-500">Cargando pedidos listos...</div>
+          <div className="text-sm text-gray-500 dark:text-zinc-500">Cargando pedidos listos...</div>
         ) : readyOrders.length === 0 ? (
-          <div className="text-sm text-gray-500">No hay pedidos listos por entregar.</div>
+          <div className="text-sm text-gray-500 dark:text-zinc-500">No hay pedidos listos por entregar.</div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {readyOrders.map((order) => (
-              <div key={order.id} className="border border-green-200 bg-green-50 rounded-lg p-3 space-y-2">
+              <div
+                key={order.id}
+                className="space-y-2 rounded-lg border border-emerald-400/70 bg-emerald-50/80 p-3 dark:border-emerald-500/40 dark:bg-zinc-900/90"
+              >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="font-semibold text-gray-900 truncate">Pedido {order.displayId}</div>
-                  <span className="px-2 py-1 rounded text-xs font-semibold bg-green-50 text-green-700 border border-green-200">
+                  <div className="truncate font-semibold text-gray-900 dark:text-zinc-100">Pedido {order.displayId}</div>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/70 bg-emerald-500/[0.1] px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:border-emerald-400/55 dark:bg-emerald-500/15 dark:text-emerald-300">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400" aria-hidden />
                     Listo
                   </span>
                 </div>
-                <div className="text-sm text-gray-700">Mesa {order.mesaLabel}</div>
-                <div className="text-xs text-gray-600">{order.items.length} item(s) pendientes de entrega</div>
+                <div className="text-sm text-gray-700 dark:text-zinc-300">{order.mesaLabel}</div>
+                <div className="text-xs text-gray-600 dark:text-zinc-500">
+                  {order.items.length} item(s) pendientes de entrega
+                </div>
                 <button
+                  type="button"
                   onClick={() => openDeliveryModal(order)}
-                  className="w-full btn btn-sm bg-emerald-600 hover:bg-emerald-700 text-white border-0"
+                  className="btn btn-sm w-full border-0 bg-emerald-600 text-white hover:bg-emerald-700"
                 >
                   Entregar
                 </button>
@@ -993,12 +1078,12 @@ export default function MeserosPage() {
       </div>
 
       {error && !deliveryModalOrder && !orderingMesa && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg p-3 text-sm">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/35 dark:text-emerald-200">
           {success}
         </div>
       )}
@@ -1006,10 +1091,10 @@ export default function MeserosPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           {loadingMesas ? (
-            <div className="text-sm text-gray-600">Cargando mesas...</div>
+            <div className="text-sm text-gray-600 dark:text-zinc-400">Cargando mesas...</div>
           ) : filteredMesas.length === 0 ? (
-            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg p-4 text-sm flex items-center gap-2">
-              <ExclamationTriangleIcon className="w-5 h-5" />
+            <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+              <ExclamationTriangleIcon className="h-5 w-5 flex-shrink-0" />
               No hay mesas para el filtro seleccionado.
             </div>
           ) : (
@@ -1026,57 +1111,103 @@ export default function MeserosPage() {
           )}
         </div>
 
-        <aside className="bg-white border border-gray-200 rounded-lg shadow-lg h-fit sticky top-4">
-          <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-cyan-50">
-            <h2 className="font-bold text-gray-900 text-lg">Detalle de mesa</h2>
+        <aside className="sticky top-4 h-fit rounded-lg border border-gray-200 bg-white shadow-lg dark:border-zinc-800/80 dark:bg-zinc-900/60 dark:shadow-black/40">
+          <div className="border-b border-gray-100 bg-gradient-to-r from-blue-50 to-cyan-50 p-4 dark:border-zinc-800/80 dark:from-zinc-900 dark:to-zinc-950">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-zinc-100">Detalle de mesa</h2>
           </div>
 
           {!selectedMesa ? (
-            <div className="p-5 text-sm text-gray-500">Selecciona una mesa para ver su detalle y ordenar.</div>
+            <div className="p-5 text-sm text-gray-500 dark:text-zinc-500">
+              Selecciona una mesa para ver su detalle y ordenar.
+            </div>
           ) : (
-            <div className="p-5 space-y-4">
+            <div className="space-y-4 p-5">
               <div>
-                <div className="text-2xl font-bold text-gray-900">Mesa {selectedMesa.numero ?? selectedMesa.id}</div>
-                <div className="text-sm text-gray-600 mt-1">Zona: {selectedMesa.zona || 'General'}</div>
-              </div>
-
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Estado</span>
-                  <span className="font-semibold">{getStatusUI(selectedMesa.estadoMesa).label}</span>
+                <div className="text-2xl font-bold text-gray-900 dark:text-zinc-100">
+                  {formatMesaFromDoc(selectedMesa)}
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Capacidad</span>
-                  <span className="font-semibold">{selectedMesa.capacidad || 'N/D'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Cuenta activa</span>
-                  <span className="font-semibold">{selectedMesa.cuentaActivaId ? 'Si' : 'No'}</span>
+                <div className="mt-1 text-sm text-gray-600 dark:text-zinc-500">
+                  Zona: {selectedMesa.zona || 'General'}
                 </div>
               </div>
 
-              {(selectedMesa.estadoMesa === 'esperandoCuenta' ||
-                (selectedMesa.estadoMesa === 'ocupada' && selectedMesa.cuentaActivaId)) && (
+              <div className="divide-y divide-gray-100 text-sm dark:divide-zinc-800/80">
+                <div className="flex items-center justify-between gap-3 py-2.5 first:pt-0">
+                  <span className="text-gray-500 dark:text-zinc-500">Estado</span>
+                  <StatusTag ui={selectedMesaStatusUi} />
+                </div>
+                <div className="flex justify-between gap-3 py-2.5">
+                  <span className="text-gray-500 dark:text-zinc-500">Capacidad</span>
+                  <span className="font-semibold text-gray-900 dark:text-zinc-100">{selectedMesa.capacidad || 'N/D'}</span>
+                </div>
+                <div className="flex justify-between gap-3 py-2.5 last:pb-0">
+                  <span className="text-gray-500 dark:text-zinc-500">Cuenta activa</span>
+                  <span className="font-semibold text-gray-900 dark:text-zinc-100">
+                    {selectedMesa.cuentaActivaId ? 'Si' : 'No'}
+                  </span>
+                </div>
+              </div>
+
+              {selectedMesa.estadoMesa === 'ocupada' && selectedMesa.cuentaActivaId && (
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => aplicarEstadoMesa(selectedMesa, 'esperandoCuenta')}
+                    disabled={updatingMesaId === selectedMesa.id}
+                    className="w-full btn btn-lg border-0 bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    <ArrowRightCircleIcon className="w-5 h-5" />
+                    {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Pasar a lista para pagar'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => aplicarEstadoMesa(selectedMesa, 'porLimpiar')}
+                    disabled={updatingMesaId === selectedMesa.id}
+                    className="w-full btn btn-lg border-0 bg-violet-600 hover:bg-violet-700 text-white"
+                  >
+                    <SparklesIcon className="w-5 h-5" />
+                    {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Por limpiar'}
+                  </button>
+                </div>
+              )}
+
+              {selectedMesa.estadoMesa === 'porLimpiar' && selectedMesa.cuentaActivaId && (
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => aplicarEstadoMesa(selectedMesa, 'esperandoCuenta')}
+                    disabled={updatingMesaId === selectedMesa.id}
+                    className="w-full btn btn-lg border-0 bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    <ArrowRightCircleIcon className="w-5 h-5" />
+                    {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Pasar a lista para pagar'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => aplicarEstadoMesa(selectedMesa, 'ocupada')}
+                    disabled={updatingMesaId === selectedMesa.id}
+                    className="w-full btn btn-lg border-0 bg-slate-600 hover:bg-slate-700 text-white"
+                  >
+                    <ArrowRightCircleIcon className="w-5 h-5" />
+                    {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Volver a ocupada'}
+                  </button>
+                </div>
+              )}
+
+              {selectedMesa.estadoMesa === 'esperandoCuenta' && (
                 <button
-                  onClick={() => toggleSolicitarCuenta(selectedMesa)}
+                  type="button"
+                  onClick={() => aplicarEstadoMesa(selectedMesa, 'ocupada')}
                   disabled={updatingMesaId === selectedMesa.id}
-                  className={`w-full btn btn-lg border-0 text-white ${
-                    selectedMesa.estadoMesa === 'esperandoCuenta'
-                      ? 'bg-slate-600 hover:bg-slate-700'
-                      : 'bg-amber-600 hover:bg-amber-700'
-                  }`}
+                  className="w-full btn btn-lg border-0 bg-slate-600 hover:bg-slate-700 text-white"
                 >
                   <ArrowRightCircleIcon className="w-5 h-5" />
-                  {updatingMesaId === selectedMesa.id
-                    ? 'Actualizando...'
-                    : selectedMesa.estadoMesa === 'esperandoCuenta'
-                      ? 'Volver a ocupada'
-                      : 'Pasar a lista para pagar'}
+                  {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Volver a ocupada'}
                 </button>
               )}
 
               {selectedMesa.estadoMesa === 'ocupada' && !selectedMesa.cuentaActivaId && (
-                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
                   Esta mesa no tiene pedido activo aun. La opcion "Lista para pagar" se habilita cuando exista una cuenta activa.
                 </div>
               )}
@@ -1095,35 +1226,36 @@ export default function MeserosPage() {
 
       {deliveryModalOrder && (
         <ModalPortal overlayClassName="p-4 md:p-6">
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
-            <div className="px-4 py-3 border-b border-gray-200 bg-emerald-700 text-white flex items-center justify-between">
+          <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-zinc-900 dark:shadow-black/50">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-emerald-700 px-4 py-3 text-white dark:border-zinc-800 dark:bg-emerald-900/90">
               <div>
-                <div className="font-bold text-lg">Entregar pedido {deliveryModalOrder.displayId}</div>
-                <div className="text-sm text-emerald-100">Mesa {deliveryModalOrder.mesaLabel}</div>
+                <div className="text-lg font-bold">Entregar pedido {deliveryModalOrder.displayId}</div>
+                <div className="text-sm text-emerald-100 dark:text-emerald-200/90">{deliveryModalOrder.mesaLabel}</div>
               </div>
               <button
+                type="button"
                 onClick={closeDeliveryModal}
                 disabled={deliveringOrderId === deliveryModalOrder.id}
                 className="btn btn-sm btn-ghost text-white"
               >
-                <XMarkIcon className="w-5 h-5" />
+                <XMarkIcon className="h-5 w-5" />
                 Cerrar
               </button>
             </div>
 
             {error && (
-              <div className="mx-4 mt-3 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+              <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
                 {error}
               </div>
             )}
 
-            <div className="p-4 overflow-y-auto space-y-3">
+            <div className="space-y-3 overflow-y-auto p-4">
               {deliveryLines.length === 0 ? (
-                <div className="text-sm text-gray-500">Sin items listos para entregar.</div>
+                <div className="text-sm text-gray-500 dark:text-zinc-500">Sin items listos para entregar.</div>
               ) : (
                 <>
                   <div className="flex items-center justify-between">
-                    <div className="text-sm text-gray-600">
+                    <div className="text-sm text-gray-600 dark:text-zinc-400">
                       Seleccionados: <span className="font-semibold">{selectedDeliveryLineIds.length}</span> de{' '}
                       <span className="font-semibold">{deliveryLines.length}</span>
                     </div>
@@ -1152,18 +1284,18 @@ export default function MeserosPage() {
                         key={line.id}
                         type="button"
                         onClick={() => toggleDeliveryLine(line.id)}
-                        className={`w-full text-left border rounded-lg p-3 transition ${
+                        className={`w-full rounded-lg border p-3 text-left transition ${
                           isSelected
-                            ? 'border-emerald-300 bg-emerald-50'
-                            : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                            ? 'border-emerald-400/80 bg-emerald-50 dark:border-emerald-500/45 dark:bg-emerald-950/35'
+                            : 'border-gray-200 bg-gray-50 hover:bg-gray-100 dark:border-zinc-800 dark:bg-zinc-950/50 dark:hover:bg-zinc-900'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="font-semibold text-gray-900">{line.name}</div>
-                            <div className="text-sm text-gray-600">Cantidad: x{line.qty}</div>
+                            <div className="font-semibold text-gray-900 dark:text-zinc-100">{line.name}</div>
+                            <div className="text-sm text-gray-600 dark:text-zinc-500">Cantidad: x{line.qty}</div>
                             {line.note && (
-                              <div className="mt-1 text-xs text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-1">
+                              <div className="mt-1 rounded border border-amber-200/90 bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-200">
                                 {line.note}
                               </div>
                             )}
@@ -1182,13 +1314,14 @@ export default function MeserosPage() {
               )}
             </div>
 
-            <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
+            <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/80">
               <button
+                type="button"
                 onClick={confirmDelivery}
                 disabled={deliveringOrderId === deliveryModalOrder.id}
-                className="w-full btn btn-lg bg-emerald-600 hover:bg-emerald-700 text-white border-0"
+                className="btn btn-lg w-full border-0 bg-emerald-600 text-white hover:bg-emerald-700"
               >
-                <CheckCircleIcon className="w-5 h-5" />
+                <CheckCircleIcon className="h-5 w-5" />
                 {deliveringOrderId === deliveryModalOrder.id ? 'Guardando...' : 'Confirmar entrega'}
               </button>
             </div>
@@ -1198,18 +1331,18 @@ export default function MeserosPage() {
 
       {pendingRemovalItem && (
         <ModalPortal overlayClassName="p-4 md:p-6">
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-rose-700 text-white">
-              <div className="font-bold text-lg">Motivo de anulación</div>
+          <div className="w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-zinc-900 dark:shadow-black/50">
+            <div className="border-b border-gray-200 bg-rose-700 px-4 py-3 text-white dark:border-zinc-800 dark:bg-rose-900/90">
+              <div className="text-lg font-bold">Motivo de anulación</div>
               <div className="text-sm text-rose-100">Este ítem está en preparación</div>
             </div>
-            <div className="p-4 space-y-3">
+            <div className="space-y-3 p-4">
               {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
                   {error}
                 </div>
               )}
-              <div className="text-sm text-gray-700">
+              <div className="text-sm text-gray-700 dark:text-zinc-300">
                 Ingresa el motivo para anular: <span className="font-semibold">{pendingRemovalItem.name}</span>
               </div>
               <textarea
@@ -1243,49 +1376,51 @@ export default function MeserosPage() {
 
       {orderingMesa && (
         <ModalPortal overlayClassName="p-4 md:p-6">
-          <div className="bg-white rounded-lg shadow-2xl w-full h-full overflow-hidden flex flex-col">
-            <div className="px-4 md:px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-blue-900 to-cyan-900 text-white">
+          <div className="flex h-full w-full flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-zinc-900 dark:shadow-black/50">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-blue-900 to-cyan-900 px-4 py-4 text-white md:px-6 dark:border-zinc-800 dark:from-zinc-950 dark:to-zinc-900">
               <div>
-                <div className="text-xl font-bold">Ordenar - Mesa {orderingMesa.numero ?? orderingMesa.id}</div>
-                <div className="text-sm text-cyan-200">Zona: {orderingMesa.zona || 'General'}</div>
+                <div className="text-xl font-bold">Ordenar - {formatMesaFromDoc(orderingMesa)}</div>
+                <div className="text-sm text-cyan-200 dark:text-zinc-400">Zona: {orderingMesa.zona || 'General'}</div>
               </div>
               <button
+                type="button"
                 onClick={() => setOrderingMesa(null)}
                 className="btn btn-sm btn-ghost text-white"
               >
-                <XMarkIcon className="w-5 h-5" />
+                <XMarkIcon className="h-5 w-5" />
                 Cerrar
               </button>
             </div>
 
             {error && (
-              <div className="mx-4 md:mx-6 mt-3 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
+              <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 md:mx-6 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
                 {error}
               </div>
             )}
 
-            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-0">
-              <div className="lg:col-span-2 p-4 md:p-6 border-r border-gray-200 flex flex-col min-h-0">
+            <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 lg:grid-cols-3">
+              <div className="flex min-h-0 flex-col border-r border-gray-200 p-4 md:p-6 dark:border-zinc-800 lg:col-span-2">
                 <div className="relative mb-3">
-                  <MagnifyingGlassIcon className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                  <MagnifyingGlassIcon className="absolute left-3 top-3 h-5 w-5 text-gray-400 dark:text-zinc-500" />
                   <input
                     type="text"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Buscar producto..."
-                    className="input input-bordered w-full pl-10"
+                    className="input input-bordered w-full pl-10 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
                 </div>
 
-                <div className="flex gap-2 flex-wrap mb-3">
+                <div className="mb-3 flex flex-wrap gap-2">
                   {categorias.map((cat) => (
                     <button
                       key={cat}
+                      type="button"
                       onClick={() => setSelectedCategoria(cat)}
-                      className={`px-3 py-1.5 rounded text-sm font-semibold transition ${
+                      className={`rounded px-3 py-1.5 text-sm font-semibold transition ${
                         selectedCategoria === cat
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          ? 'bg-cyan-600 text-white dark:bg-cyan-500'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
                       }`}
                     >
                       {cat}
@@ -1293,30 +1428,36 @@ export default function MeserosPage() {
                   ))}
                 </div>
 
-                <div className="mb-3 text-sm text-cyan-800 bg-cyan-50 border border-cyan-200 rounded-lg p-2">
+                <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 p-2 text-sm text-cyan-800 dark:border-cyan-800/50 dark:bg-cyan-950/30 dark:text-cyan-200">
                   Agregando platos para:{' '}
                   <span className="font-semibold">
                     {comensalesPedido.find((c) => c.localId === selectedComensalLocalId)?.alias || 'Comensal 1'}
                   </span>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
                   {loadingProductos ? (
-                    <div className="text-sm text-gray-500">Cargando productos...</div>
+                    <div className="text-sm text-gray-500 dark:text-zinc-500">Cargando productos...</div>
                   ) : productosFiltrados.length === 0 ? (
-                    <div className="text-sm text-gray-500">No hay productos para el filtro actual.</div>
+                    <div className="text-sm text-gray-500 dark:text-zinc-500">No hay productos para el filtro actual.</div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {productosFiltrados.map((item) => (
-                        <div key={item.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                          <div className="font-semibold text-gray-800">{item.name}</div>
-                          <div className="text-xs text-gray-500 mt-1">{item.categoria}</div>
-                          <div className="text-lg font-bold text-cyan-700 mt-2">₡{item.price.toLocaleString()}</div>
+                        <div
+                          key={item.id}
+                          className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/60"
+                        >
+                          <div className="font-semibold text-gray-800 dark:text-zinc-100">{item.name}</div>
+                          <div className="mt-1 text-xs text-gray-500 dark:text-zinc-500">{item.categoria}</div>
+                          <div className="mt-2 text-lg font-bold text-cyan-700 dark:text-cyan-400">
+                            ₡{item.price.toLocaleString()}
+                          </div>
                           <button
+                            type="button"
                             onClick={() => addToCart(item)}
-                            className="mt-3 w-full btn btn-sm bg-cyan-600 hover:bg-cyan-700 text-white border-0"
+                            className="btn btn-sm mt-3 w-full border-0 bg-cyan-600 text-white hover:bg-cyan-700"
                           >
-                            <PlusIcon className="w-4 h-4" />
+                            <PlusIcon className="h-4 w-4" />
                             Agregar
                           </button>
                         </div>
@@ -1326,16 +1467,17 @@ export default function MeserosPage() {
                 </div>
               </div>
 
-              <aside className="bg-gray-50 flex flex-col min-h-0 overflow-hidden">
-                <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-5 space-y-4">
+              <aside className="flex min-h-0 flex-col overflow-hidden bg-gray-50 dark:bg-zinc-950/80">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 md:p-5">
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm font-semibold text-gray-700 uppercase">Comensales</div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-sm font-semibold uppercase text-gray-700 dark:text-zinc-400">Comensales</div>
                       <button
+                        type="button"
                         onClick={addComensalPedido}
-                        className="btn btn-md bg-blue-600 hover:bg-blue-700 border-0 text-white"
+                        className="btn btn-md border-0 bg-blue-600 text-white hover:bg-blue-700"
                       >
-                        <UserPlusIcon className="w-4 h-4" />
+                        <UserPlusIcon className="h-4 w-4" />
                         Agregar
                       </button>
                     </div>
@@ -1343,17 +1485,20 @@ export default function MeserosPage() {
                       {comensalesPedido.map((c, idx) => (
                         <div
                           key={c.localId}
-                          className={`bg-white border-2 rounded-lg p-2.5 ${
-                            selectedComensalLocalId === c.localId ? 'border-cyan-400 bg-cyan-50' : 'border-gray-200'
+                          className={`rounded-lg border p-2.5 ${
+                            selectedComensalLocalId === c.localId
+                              ? 'border-cyan-400 bg-cyan-50 dark:border-cyan-500/50 dark:bg-cyan-950/40'
+                              : 'border-gray-200 dark:border-zinc-800 dark:bg-zinc-900/50'
                           }`}
                         >
                           <div className="flex items-center gap-2">
                             <button
+                              type="button"
                               onClick={() => setSelectedComensalLocalId(c.localId)}
                               className={`btn btn-sm min-h-9 h-9 w-9 px-0 ${
                                 selectedComensalLocalId === c.localId
-                                  ? 'bg-cyan-600 hover:bg-cyan-700 text-white border-0'
-                                  : 'btn-ghost border border-gray-200'
+                                  ? 'border-0 bg-cyan-600 text-white hover:bg-cyan-700'
+                                  : 'btn-ghost border border-gray-200 dark:border-zinc-700'
                               }`}
                             >
                               {idx + 1}
@@ -1362,16 +1507,17 @@ export default function MeserosPage() {
                               type="text"
                               value={c.alias}
                               onChange={(e) => updateComensalAlias(c.localId, e.target.value)}
-                              className="input input-bordered input-sm flex-1 min-h-9 h-9"
+                              className="input input-bordered input-sm min-h-9 h-9 flex-1 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                               placeholder={`Comensal ${idx + 1}`}
                             />
                             {comensalesPedido.length > 1 && (
                               <button
+                                type="button"
                                 onClick={() => removeComensalPedido(c.localId)}
-                                className="btn btn-sm btn-ghost text-red-600 min-h-9 h-9 w-9 px-0"
+                                className="btn btn-ghost btn-sm h-9 min-h-9 w-9 px-0 text-red-600 dark:text-red-400"
                                 title="Quitar comensal"
                               >
-                                <TrashIcon className="w-4 h-4" />
+                                <TrashIcon className="h-4 w-4" />
                               </button>
                             )}
                           </div>
@@ -1380,20 +1526,20 @@ export default function MeserosPage() {
                     </div>
                   </div>
 
-                  <div className="bg-gray-100 border-2 border-gray-300 rounded-lg overflow-hidden">
-                    <div className="px-3 py-2.5 bg-gray-200 border-b border-gray-300">
-                      <div className="text-sm font-bold text-gray-900 uppercase tracking-wide">
+                  <div className="overflow-hidden rounded-lg border border-gray-300 bg-gray-100 dark:border-zinc-800 dark:bg-zinc-900/60">
+                    <div className="border-b border-gray-300 bg-gray-200 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900">
+                      <div className="text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-zinc-200">
                         Pedido actual ({existingItems.length})
                       </div>
                     </div>
-                    <div className="p-3 space-y-3">
+                    <div className="space-y-3 p-3">
                       {loadingCuentaData ? (
-                        <div className="text-sm text-gray-500 py-3 flex items-center gap-2">
+                        <div className="flex items-center gap-2 py-3 text-sm text-gray-500 dark:text-zinc-500">
                           <span className="loading loading-spinner loading-sm" />
                           Cargando pedido...
                         </div>
                       ) : existingItems.length === 0 ? (
-                        <div className="text-sm text-gray-500 py-2">Sin items pendientes en la cuenta.</div>
+                        <div className="py-2 text-sm text-gray-500 dark:text-zinc-500">Sin items pendientes en la cuenta.</div>
                       ) : (
                         <>
                           {comensalesPedido.map((c, cidx) => {
@@ -1401,15 +1547,18 @@ export default function MeserosPage() {
                             if (items.length === 0) return null
                             return (
                               <div key={`existing_${c.localId}`}>
-                                <div className="text-xs font-bold text-gray-700 uppercase mb-2 pb-1 border-b border-gray-200">
+                                <div className="mb-2 border-b border-gray-200 pb-1 text-xs font-bold uppercase text-gray-700 dark:border-zinc-800 dark:text-zinc-400">
                                   {c.alias || `Comensal ${cidx + 1}`}
                                 </div>
                                 <div className="space-y-2">
                                   {items.map((item) => (
-                                    <div key={item.id} className="bg-white border border-gray-200 rounded-lg p-3 flex items-start gap-3">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-base font-semibold text-gray-900">{item.name}</div>
-                                        <div className="text-sm text-gray-600 mt-0.5">
+                                    <div
+                                      key={item.id}
+                                      className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/80"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-base font-semibold text-gray-900 dark:text-zinc-100">{item.name}</div>
+                                        <div className="mt-0.5 text-sm text-gray-600 dark:text-zinc-500">
                                           x{item.qty} · ₡{Number(item.price || 0).toLocaleString()} c/u
                                         </div>
                                         {editingExistingNoteId === item.cuentaItemId ? (
@@ -1487,15 +1636,18 @@ export default function MeserosPage() {
                           })}
                           {(existingItemsByComensal.__sin_comensal__ || []).length > 0 && (
                             <div>
-                              <div className="text-xs font-bold text-gray-600 uppercase mb-2 pb-1 border-b border-gray-200">
+                              <div className="mb-2 border-b border-gray-200 pb-1 text-xs font-bold uppercase text-gray-600 dark:border-zinc-800 dark:text-zinc-500">
                                 Sin asignar
                               </div>
                               <div className="space-y-2">
                                 {(existingItemsByComensal.__sin_comensal__ || []).map((item) => (
-                                  <div key={item.id} className="bg-white border border-gray-200 rounded-lg p-3 flex items-start gap-3">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-base font-semibold text-gray-900">{item.name}</div>
-                                      <div className="text-sm text-gray-600 mt-0.5">
+                                  <div
+                                    key={item.id}
+                                    className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/80"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-base font-semibold text-gray-900 dark:text-zinc-100">{item.name}</div>
+                                      <div className="mt-0.5 text-sm text-gray-600 dark:text-zinc-500">
                                         x{item.qty} · ₡{Number(item.price || 0).toLocaleString()} c/u
                                       </div>
                                       {editingExistingNoteId === item.cuentaItemId ? (
@@ -1574,8 +1726,8 @@ export default function MeserosPage() {
                       )}
                     </div>
                     {existingOrderNotes && (
-                      <div className="px-3 py-2 bg-amber-50 border-t border-amber-200">
-                        <div className="text-sm text-amber-800">
+                      <div className="border-t border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/35">
+                        <div className="text-sm text-amber-800 dark:text-amber-200">
                           <span className="font-semibold">Nota general:</span> {existingOrderNotes}
                         </div>
                       </div>
@@ -1583,17 +1735,24 @@ export default function MeserosPage() {
                   </div>
 
                   <div>
-                    <div className="text-sm font-semibold text-gray-700 uppercase mb-2">Nuevos items ({cart.length})</div>
+                    <div className="mb-2 text-sm font-semibold uppercase text-gray-700 dark:text-zinc-400">
+                      Nuevos items ({cart.length})
+                    </div>
                     <div className="space-y-2">
                       {cart.length === 0 ? (
-                        <div className="text-sm text-gray-500">Sin items nuevos.</div>
+                        <div className="text-sm text-gray-500 dark:text-zinc-500">Sin items nuevos.</div>
                       ) : (
                         cart.map((item) => (
-                          <div key={item.lineId} className="bg-white border border-gray-200 rounded-lg p-3">
+                          <div
+                            key={item.lineId}
+                            className="rounded-lg border border-gray-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/80"
+                          >
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="text-base font-medium text-gray-800">{item.name}</div>
-                                <div className="text-sm text-gray-500">₡{Number(item.price || 0).toLocaleString()} c/u</div>
+                                <div className="text-base font-medium text-gray-800 dark:text-zinc-100">{item.name}</div>
+                                <div className="text-sm text-gray-500 dark:text-zinc-500">
+                                  ₡{Number(item.price || 0).toLocaleString()} c/u
+                                </div>
                               </div>
                               <div className="flex items-center gap-1">
                                 <button onClick={() => updateQty(item.lineId, -1)} className="btn btn-sm btn-ghost min-h-10 h-10 w-10 px-0">
@@ -1611,7 +1770,7 @@ export default function MeserosPage() {
                             <select
                               value={item.comensalLocalId || ''}
                               onChange={(e) => updateItemComensal(item.lineId, e.target.value)}
-                              className="select select-bordered select-sm w-full mt-2 min-h-9 h-9"
+                              className="select select-bordered select-sm mt-2 h-9 min-h-9 w-full dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                             >
                               {comensalesPedido.map((c, idx) => (
                                 <option key={c.localId} value={c.localId}>
@@ -1624,7 +1783,7 @@ export default function MeserosPage() {
                               value={item.notaEspecial || ''}
                               onChange={(e) => updateNotaItem(item.lineId, e.target.value)}
                               placeholder="Nota especial para cocina (opcional)"
-                              className="input input-bordered input-sm w-full mt-2 min-h-9 h-9"
+                              className="input input-bordered input-sm mt-2 h-9 min-h-9 w-full dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                             />
                           </div>
                         ))
@@ -1632,36 +1791,37 @@ export default function MeserosPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-1.5 border-t border-gray-200 pt-3">
-                    <div className="text-sm text-gray-700 flex justify-between">
+                  <div className="space-y-1.5 border-t border-gray-200 pt-3 dark:border-zinc-800">
+                    <div className="flex justify-between text-sm text-gray-700 dark:text-zinc-400">
                       <span>Subtotal</span>
-                      <span className="font-semibold">₡{subtotal.toLocaleString()}</span>
+                      <span className="font-semibold text-zinc-900 dark:text-zinc-100">₡{subtotal.toLocaleString()}</span>
                     </div>
-                    <div className="text-sm text-gray-700 flex justify-between">
+                    <div className="flex justify-between text-sm text-gray-700 dark:text-zinc-400">
                       <span>IVA (13%)</span>
-                      <span className="font-semibold">₡{tax.toLocaleString()}</span>
+                      <span className="font-semibold text-zinc-900 dark:text-zinc-100">₡{tax.toLocaleString()}</span>
                     </div>
-                    <div className="text-base font-bold text-gray-900 flex justify-between bg-white border border-gray-200 rounded p-2.5">
+                    <div className="flex justify-between rounded border border-gray-200 bg-white p-2.5 text-base font-bold text-gray-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100">
                       <span>Total</span>
-                      <span className="text-cyan-700">₡{total.toLocaleString()}</span>
+                      <span className="text-cyan-700 dark:text-cyan-400">₡{total.toLocaleString()}</span>
                     </div>
                     <textarea
                       value={notasPedido}
                       onChange={(e) => setNotasPedido(e.target.value)}
-                      className="textarea textarea-bordered w-full min-h-[48px]"
+                      className="textarea textarea-bordered min-h-[48px] w-full dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                       placeholder="Notas generales del pedido (opcional)"
                       rows={2}
                     />
                   </div>
                 </div>
 
-                <div className="shrink-0 px-4 md:px-5 py-3 border-t border-gray-200 bg-gray-50">
+                <div className="shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/90 md:px-5">
                   <button
+                    type="button"
                     onClick={enviarPedidoCocina}
                     disabled={sendingPedido || cart.length === 0}
-                    className="w-full btn btn-lg bg-cyan-600 hover:bg-cyan-700 border-0 text-white text-base"
+                    className="btn btn-lg w-full border-0 bg-cyan-600 text-base text-white hover:bg-cyan-700"
                   >
-                    <PaperAirplaneIcon className="w-5 h-5" />
+                    <PaperAirplaneIcon className="h-5 w-5" />
                     {sendingPedido ? 'Enviando...' : 'Enviar a cocina'}
                   </button>
                 </div>

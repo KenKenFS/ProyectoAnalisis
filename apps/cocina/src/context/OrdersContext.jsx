@@ -1,5 +1,6 @@
 import { createContext, useEffect, useMemo, useRef, useState } from 'react'
 import { getMesas, onPedidosChange, updatePedido } from '@shared/firebase/firestore'
+import { formatMesaLabel } from '@shared/utils/mesaDisplay'
 
 export const OrdersContext = createContext()
 
@@ -108,7 +109,7 @@ function getTableLabel(pedido, mesasById, mesasByCuentaId) {
   if (isVentaDirecta) return 'LV'
 
   if (pedido.mesaNumero != null && Number(pedido.mesaNumero) > 0) {
-    return String(Number(pedido.mesaNumero))
+    return formatMesaLabel(pedido.mesaNumero)
   }
   if (pedido.table != null) return String(pedido.table)
   if (pedido.numeroMesa != null) return String(pedido.numeroMesa)
@@ -117,13 +118,16 @@ function getTableLabel(pedido, mesasById, mesasByCuentaId) {
 
   const mesaId = String(pedido.mesaId || pedido.tableId || pedido.mesaRefId || '').trim()
   if (mesaId && mesasById[mesaId]) {
-    return String(mesasById[mesaId].numero || mesasById[mesaId].nombre || mesasById[mesaId].alias || 'S/N')
+    const m = mesasById[mesaId]
+    if (m.numero != null && Number(m.numero) > 0) return formatMesaLabel(m.numero)
+    return String(m.nombre || m.alias || 'S/N')
   }
 
   const cuentaId = String(pedido.cuentaId || pedido.accountId || '').trim()
   if (cuentaId && mesasByCuentaId[cuentaId]) {
     const mesa = mesasByCuentaId[cuentaId]
-    return String(mesa.numero || mesa.nombre || mesa.alias || 'S/N')
+    if (mesa.numero != null && Number(mesa.numero) > 0) return formatMesaLabel(mesa.numero)
+    return String(mesa.nombre || mesa.alias || 'S/N')
   }
 
   return 'S/N'
@@ -142,7 +146,11 @@ function mapPedidoToOrder(pedido, mesasById, mesasByCuentaId) {
     || String(pedido.tipoPedido || '').trim().toLowerCase() === 'para_llevar'
   const mesaMeta = isDirectSaleOrder
     ? 'Para llevar'
-    : (mesaLabel !== 'S/N' ? `Mesa ${mesaLabel}` : 'Mesa')
+    : mesaLabel === 'S/N'
+      ? 'Mesa'
+      : String(mesaLabel).startsWith('Mesa ')
+        ? mesaLabel
+        : `Mesa ${mesaLabel}`
   const listoAtMs = toMillis(pedido.listoAt || pedido.readyAt || pedido.updatedAt || pedido.timestamp)
   const finalizedAtMs = pedido.finalizedAt ? toMillis(pedido.finalizedAt) : null
   const lastUpdateMs = toMillis(pedido.ultimaActualizacionPedidoAt || pedido.updatedAt || pedido.timestamp)

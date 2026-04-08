@@ -21,8 +21,7 @@ function App() {
         <Route
           element={
             <InternalLayout
-              navbarTitle="Meseros"
-              navbarSubtitle="Tablet de Ordenes"
+              navbarTitle="Ceviche del Rey - Meseros"
               sidebarLinks={sidebarLinks}
               appName="Meseros"
               showNotifications={false}

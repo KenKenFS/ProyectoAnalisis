@@ -7,6 +7,18 @@
     <title>Sistema POS - Caja</title>
   </head>
   <body>
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('ceviche-ui-theme') === 'dark') {
+            document.documentElement.classList.add('dark')
+            document.documentElement.setAttribute('data-theme', 'cevicheDark')
+          } else {
+            document.documentElement.setAttribute('data-theme', 'ceviche')
+          }
+        } catch (e) {}
+      })()
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

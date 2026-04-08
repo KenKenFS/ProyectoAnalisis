@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@shared/firebase/AuthContext'
 import ModalPortal from '@shared/layout/ModalPortal'
+import { formatMesaFromDoc } from '@shared/utils/mesaDisplay'
 import {
   getCuentasCerradas,
   getMesa,
@@ -226,7 +227,9 @@ export default function CuentasCerradasPage() {
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="font-semibold text-gray-900">Mesa {mesa?.numero ?? '—'}</div>
+                        <div className="font-semibold text-gray-900">
+                          {mesa ? formatMesaFromDoc(mesa) : '—'}
+                        </div>
                         <span className="text-xs text-gray-500">
                           {tiempo ?? 'cerrada'}
                         </span>
@@ -348,7 +351,8 @@ export default function CuentasCerradasPage() {
             <div className="p-5 space-y-4">
               <p className="text-gray-700">
                 {(() => { const i = cuentas.findIndex(c => c.id === modalCuenta.id); return i >= 0 ? cuentaLabel(i) : 'Cuenta'; })()}
-                {' '}(Mesa {mesasMap[modalCuenta.mesaId]?.numero ?? '—'}).
+                {' '}
+                ({mesasMap[modalCuenta.mesaId] ? formatMesaFromDoc(mesasMap[modalCuenta.mesaId]) : '—'}).
               </p>
               <div>
                 <label className="block font-semibold text-gray-800 mb-1">Motivo de reapertura *</label>

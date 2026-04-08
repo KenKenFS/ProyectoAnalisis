@@ -5,10 +5,8 @@ import {
   PencilSquareIcon,
   TrashIcon,
   FunnelIcon,
-  CheckCircleIcon,
-  UserGroupIcon,
-  ClockIcon,
   XMarkIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import ModalPortal from '@shared/layout/ModalPortal'
 import { collection, onSnapshot } from 'firebase/firestore'
@@ -20,8 +18,9 @@ import {
   updateMesaEstado,
 } from '@shared/firebase/firestore'
 import { db } from '@shared/firebase/firebase'
+import { formatMesaLabel } from '@shared/utils/mesaDisplay'
 
-const ESTADOS = ['libre', 'ocupada', 'esperandoCuenta']
+const ESTADOS = ['libre', 'ocupada', 'esperandoCuenta', 'porLimpiar']
 
 function normalizeEstado(raw) {
   const value = String(raw || '').toLowerCase().trim()
@@ -29,17 +28,41 @@ function normalizeEstado(raw) {
   if (value === 'esperandocuenta' || value === 'esperando_cuenta' || value === 'esperandocobro') {
     return 'esperandoCuenta'
   }
+  if (value === 'porlimpiar' || value === 'por_limpiar') return 'porLimpiar'
   return 'libre'
 }
 
 function getEstadoUI(estado) {
   if (estado === 'ocupada') {
-    return { label: 'Ocupada', cls: 'bg-sky-100 text-sky-800 border-sky-200', icon: UserGroupIcon }
+    return {
+      label: 'Ocupada',
+      pill:
+        'inline-flex items-center gap-1.5 rounded-full border border-sky-500/55 bg-sky-500/[0.1] px-2.5 py-1 text-xs font-semibold text-sky-800 dark:border-sky-400/45 dark:bg-sky-500/15 dark:text-sky-200',
+      dot: 'bg-sky-500 dark:bg-sky-400',
+    }
   }
   if (estado === 'esperandoCuenta') {
-    return { label: 'Lista para pagar', cls: 'bg-amber-100 text-amber-800 border-amber-200', icon: ClockIcon }
+    return {
+      label: 'Lista para pagar',
+      pill:
+        'inline-flex items-center gap-1.5 rounded-full border border-amber-500/55 bg-amber-500/[0.1] px-2.5 py-1 text-xs font-semibold text-amber-900 dark:border-amber-400/45 dark:bg-amber-500/15 dark:text-amber-200',
+      dot: 'bg-amber-500 dark:bg-amber-400',
+    }
   }
-  return { label: 'Libre', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: CheckCircleIcon }
+  if (estado === 'porLimpiar') {
+    return {
+      label: 'Por limpiar',
+      pill:
+        'inline-flex items-center gap-1.5 rounded-full border border-violet-500/55 bg-violet-500/[0.1] px-2.5 py-1 text-xs font-semibold text-violet-900 dark:border-violet-400/45 dark:bg-violet-500/15 dark:text-violet-200',
+      dot: 'bg-violet-500 dark:bg-violet-400',
+    }
+  }
+  return {
+    label: 'Libre',
+    pill:
+      'inline-flex items-center gap-1.5 rounded-full border border-emerald-500/55 bg-emerald-500/[0.1] px-2.5 py-1 text-xs font-semibold text-emerald-900 dark:border-emerald-400/45 dark:bg-emerald-500/15 dark:text-emerald-200',
+    dot: 'bg-emerald-500 dark:bg-emerald-400',
+  }
 }
 
 export default function Orders() {
@@ -57,6 +80,8 @@ export default function Orders() {
     zona: 'General',
     estadoMesa: 'libre',
   })
+  const [mesaToDelete, setMesaToDelete] = useState(null)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -151,14 +176,17 @@ export default function Orders() {
     }
   }
 
-  async function onDelete(mesa) {
-    const ok = window.confirm(`Eliminar Mesa ${mesa.numero || mesa.id}?`)
-    if (!ok) return
+  async function confirmDeleteMesa() {
+    if (!mesaToDelete?.id || deleteSubmitting) return
     try {
+      setDeleteSubmitting(true)
       setError('')
-      await deleteMesa(mesa.id)
+      await deleteMesa(mesaToDelete.id)
+      setMesaToDelete(null)
     } catch (e) {
       setError(e?.message || 'No se pudo eliminar la mesa.')
+    } finally {
+      setDeleteSubmitting(false)
     }
   }
 
@@ -193,6 +221,7 @@ export default function Orders() {
             <option value="libre">Libres</option>
             <option value="ocupada">Ocupadas</option>
             <option value="esperandoCuenta">Lista para pagar</option>
+            <option value="porLimpiar">Por limpiar</option>
           </select>
           <button onClick={openCreate} className="btn btn-sm bg-cyan-600 hover:bg-cyan-700 text-white border-0">
             <PlusIcon className="w-4 h-4" />
@@ -237,9 +266,8 @@ export default function Orders() {
               ) : (
                 mesasFiltradas.map((m) => {
                   const ui = getEstadoUI(m.estadoMesa)
-                  const Icon = ui.icon
                   return (
-                    <tr key={m.id} className="hover:bg-gray-50 align-top">
+                    <tr key={m.id} className="align-top hover:bg-gray-50/80 dark:hover:bg-zinc-800/40">
                       <td>
                         <div
                           title={m.id}
@@ -248,13 +276,15 @@ export default function Orders() {
                           {m.id}
                         </div>
                       </td>
-                      <td className="font-bold whitespace-nowrap">{m.numero ?? '-'}</td>
+                      <td className="font-bold whitespace-nowrap">
+                        {m.numero != null && Number(m.numero) > 0 ? formatMesaLabel(m.numero) : '-'}
+                      </td>
                       <td className="whitespace-nowrap">{m.capacidad ?? '-'}</td>
                       <td className="whitespace-nowrap">{m.zona || 'General'}</td>
                       <td>
                         <div className="flex flex-col items-start gap-2">
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md border ${ui.cls}`}>
-                            <Icon className="w-3 h-3" />
+                          <span className={ui.pill}>
+                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ui.dot}`} aria-hidden />
                             {ui.label}
                           </span>
                           <select
@@ -275,7 +305,11 @@ export default function Orders() {
                             <PencilSquareIcon className="w-4 h-4" />
                             Editar
                           </button>
-                          <button onClick={() => onDelete(m)} className="btn btn-ghost btn-xs text-red-600">
+                          <button
+                            type="button"
+                            onClick={() => setMesaToDelete(m)}
+                            className="btn btn-ghost btn-xs text-red-600 dark:text-red-400"
+                          >
                             <TrashIcon className="w-4 h-4" />
                             Eliminar
                           </button>
@@ -289,6 +323,68 @@ export default function Orders() {
           </table>
         </div>
       </div>
+
+      {mesaToDelete && (
+        <ModalPortal overlayClassName="flex items-center justify-center p-4">
+          <div className="card w-full max-w-md border border-gray-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-start gap-3 border-b border-gray-200 p-5 dark:border-zinc-700">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/50">
+                <ExclamationTriangleIcon className="h-6 w-6 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-bold text-lg text-gray-900 dark:text-zinc-100">Eliminar mesa</h3>
+                <p className="mt-2 text-sm text-gray-600 dark:text-zinc-400">
+                  Esta acción no se puede deshacer. Se eliminará la mesa{' '}
+                  <span className="font-semibold text-gray-900 dark:text-zinc-200">
+                    {mesaToDelete.numero != null && Number(mesaToDelete.numero) > 0
+                      ? formatMesaLabel(mesaToDelete.numero)
+                      : mesaToDelete.id}
+                  </span>
+                  {mesaToDelete.zona ? ` (${mesaToDelete.zona})` : ''}.
+                </p>
+                {mesaToDelete.cuentaActivaId && (
+                  <p className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200">
+                    Esta mesa tiene cuenta activa: no podrás eliminarla hasta que se libere.
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => !deleteSubmitting && setMesaToDelete(null)}
+                className="btn btn-ghost btn-sm btn-circle shrink-0"
+                aria-label="Cerrar"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 p-5 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => !deleteSubmitting && setMesaToDelete(null)}
+                className="btn btn-ghost"
+                disabled={deleteSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteMesa}
+                className="btn border-0 bg-red-600 text-white hover:bg-red-700"
+                disabled={deleteSubmitting || !!mesaToDelete.cuentaActivaId}
+              >
+                {deleteSubmitting ? (
+                  <>
+                    <span className="loading loading-spinner loading-sm" />
+                    Eliminando...
+                  </>
+                ) : (
+                  'Confirmar eliminación'
+                )}
+              </button>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
 
       {openForm && (
         <ModalPortal overlayClassName="flex items-center justify-center">
@@ -351,6 +447,7 @@ export default function Orders() {
                   <option value="libre">libre</option>
                   <option value="ocupada">ocupada</option>
                   <option value="esperandoCuenta">lista para pagar</option>
+                  <option value="porLimpiar">por limpiar</option>
                 </select>
               </div>
 
