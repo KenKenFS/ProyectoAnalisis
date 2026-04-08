@@ -18,7 +18,8 @@
     "preview": "vite preview",
     "lint": "eslint . --ext .js,.jsx",
     "seed:promociones": "node scripts/seed-promociones.js",
-    "seed:mesas": "node scripts/seed-mesas.mjs"
+    "seed:mesas": "node scripts/seed-mesas.mjs",
+    "seed:dashboard-ventas": "node scripts/seed-dashboard-ventas.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.0.18",

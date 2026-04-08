@@ -963,20 +963,44 @@ export async function getTransaccionesPorFecha(fechaInicio, fechaFin) {
   }
 }
 
-function toDateStrCR(dateValue) {
+/**
+ * Fecha calendario (YYYY-MM-DD) en zona America/Costa_Rica (operacion del negocio).
+ */
+export function toDateStrCR(dateValue) {
   const d = dateValue instanceof Date ? dateValue : new Date(dateValue);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  if (!Number.isFinite(d.getTime())) return '1970-01-01';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Costa_Rica',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year').value;
+  const m = parts.find((p) => p.type === 'month').value;
+  const day = parts.find((p) => p.type === 'day').value;
   return `${y}-${m}-${day}`;
 }
 
-function rangeForDateStr(fecha) {
-  const base = new Date(`${fecha}T00:00:00`);
-  const start = new Date(base);
-  const end = new Date(base);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
+/**
+ * Rango [start, end] para consultas Firestore del dia `fecha` (YYYY-MM-DD) en Costa Rica.
+ * CR es UTC-6 fijo: inicio 00:00 CR = 06:00 UTC; fin 23:59:59.999 CR = 05:59:59.999 UTC del dia siguiente.
+ */
+export function rangeForDateStr(fecha) {
+  const s = String(fecha || '').trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!match) {
+    const base = new Date(`${s}T00:00:00`);
+    const start = new Date(base);
+    const end = new Date(base);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+  const y = Number(match[1]);
+  const mo = Number(match[2]);
+  const d = Number(match[3]);
+  const startMs = Date.UTC(y, mo - 1, d, 6, 0, 0, 0);
+  const endMs = Date.UTC(y, mo - 1, d + 1, 5, 59, 59, 999);
+  return { start: new Date(startMs), end: new Date(endMs) };
 }
 
 const FORMAL_EXPENSE_MIN_AMOUNT = 50000;
@@ -2649,6 +2673,10 @@ export async function getResumenDiarioCaja(fecha = null) {
 
   const manualActivos = manualActual.filter(m => !isMovimientoAnulado(m));
   const cantidadTransacciones = manualActivos.length + pagosActual.length;
+  const manualVentasCount = manualActivos.filter(
+    (m) => String(m.tipo || '').toLowerCase() === 'venta'
+  ).length;
+  const cantidadVentas = pagosActual.length + manualVentasCount;
 
   const cuentaIds = [...new Set(
     pagosActual
@@ -2691,6 +2719,7 @@ export async function getResumenDiarioCaja(fecha = null) {
     resumenActual,
     resumenAnterior,
     cantidadTransacciones,
+    cantidadVentas,
     metodosPago: resumenActual.metodosPago || {},
     ventasPorTipo,
     comparacion: {
@@ -2699,6 +2728,149 @@ export async function getResumenDiarioCaja(fecha = null) {
       deltaGastos,
     },
   };
+}
+
+const CR_TZ = 'America/Costa_Rica';
+
+function hourInCostaRica(ts) {
+  const d = ts?.toDate ? ts.toDate() : new Date(ts);
+  if (!Number.isFinite(d.getTime())) return -1;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: CR_TZ,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const h = parts.find((p) => p.type === 'hour');
+  return h ? Number(h.value) : -1;
+}
+
+function tsMsDashboard(v) {
+  if (!v) return 0;
+  if (typeof v.toMillis === 'function') return v.toMillis();
+  if (typeof v.toDate === 'function') return v.toDate().getTime();
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * RA-001: Ventas POS + ventas directas del día, agrupadas por hora (Costa Rica).
+ */
+export async function getVentasPorHoraDia(fechaStr) {
+  const fecha = String(fechaStr || '').trim();
+  if (!fecha) {
+    return { horas: Array.from({ length: 24 }, () => 0), max: 0 };
+  }
+  const ventas = await getVentasPOSByDate(fecha);
+  const horas = Array.from({ length: 24 }, () => 0);
+  for (const v of ventas) {
+    const h = hourInCostaRica(v.createdAt);
+    if (h < 0 || h > 23) continue;
+    horas[h] += Math.abs(Number(v.montoAbsoluto ?? v.monto ?? 0));
+  }
+  const max = horas.reduce((m, x) => Math.max(m, x), 0);
+  return { horas, max };
+}
+
+/**
+ * RA-001: Top productos cobrados en el día (pagos con itemIds + cuentas venta directa).
+ */
+export async function getTopProductosVendidosDia(fechaStr, limite = 5) {
+  const fecha = String(fechaStr || '').trim();
+  if (!fecha) return [];
+  const { start, end } = rangeForDateStr(fecha);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  const agg = new Map();
+
+  const addLine = (productoId, nombre, qty, monto) => {
+    const key = String(productoId || nombre || 'sin_id').trim() || 'sin_id';
+    const cur = agg.get(key) || {
+      productoId: productoId || key,
+      nombre: String(nombre || key).trim() || key,
+      cantidad: 0,
+      monto: 0,
+    };
+    cur.cantidad += qty;
+    cur.monto += monto;
+    agg.set(key, cur);
+  };
+
+  const pagosSnap = await getDocs(
+    query(
+      collection(db, 'pagos'),
+      where('createdAt', '>=', start),
+      where('createdAt', '<=', end)
+    )
+  );
+
+  for (const d of pagosSnap.docs) {
+    const p = d.data() || {};
+    const itemIds = Array.isArray(p.itemIds) ? p.itemIds : [];
+    const cuentaId = String(p.cuentaId || '').trim();
+    if (!cuentaId || itemIds.length === 0) continue;
+    const snaps = await Promise.all(
+      itemIds.map((itemId) => getDoc(doc(db, 'cuentas', cuentaId, 'items', itemId)))
+    );
+    for (const snap of snaps) {
+      if (!snap.exists()) continue;
+      const it = snap.data() || {};
+      const qty = Number(it.cantidad || 1);
+      const unit = Number(it.precioUnitSnapshot || 0);
+      addLine(it.productoId, it.nombreSnapshot, qty, Math.round(qty * unit));
+    }
+  }
+
+  const cuentasSnap = await getDocs(
+    query(
+      collection(db, 'cuentas'),
+      where('cobradoAt', '>=', start),
+      where('cobradoAt', '<=', end)
+    )
+  );
+
+  for (const d of cuentasSnap.docs) {
+    const c = d.data() || {};
+    if (String(c.tipoVenta || '').trim().toLowerCase() !== 'directa_para_llevar') continue;
+    const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+    const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+    if (estado !== 'cobrada' && estado !== 'cerrada' && estadoPago !== 'pagado') continue;
+    const items = await getCuentaItems(d.id);
+    for (const it of items) {
+      if (String(it.estadoItem || '').trim().toLowerCase() !== 'pagado') continue;
+      const paidMs = tsMsDashboard(it.paidAt);
+      if (paidMs < startMs || paidMs > endMs) continue;
+      const qty = Number(it.cantidad || 1);
+      const unit = Number(it.precioUnitSnapshot || 0);
+      addLine(it.productoId, it.nombreSnapshot, qty, Math.round(qty * unit));
+    }
+  }
+
+  return [...agg.values()]
+    .sort((a, b) => b.monto - a.monto)
+    .slice(0, Math.max(1, Number(limite) || 5));
+}
+
+/**
+ * RA-001: Suscripcion a cambios en mesas.
+ */
+export function onMesasDashboardSnapshot(callback) {
+  return onSnapshot(collection(db, 'mesas'), (snapshot) => {
+    const mesas = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data() || {};
+      return { id: docSnap.id, ...data };
+    });
+    callback(mesas);
+  });
+}
+
+/**
+ * RA-001: Suscripcion a turnos POS (lista completa; filtrar en cliente).
+ */
+export function onTurnosPosSnapshot(callback) {
+  return onSnapshot(collection(db, 'turnos_pos'), (snapshot) => {
+    const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    callback(list);
+  });
 }
 
 /**
