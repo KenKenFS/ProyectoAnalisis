@@ -10,6 +10,9 @@ import {
   ChevronRightIcon,
   PresentationChartLineIcon,
 } from '@heroicons/react/24/outline'
+import { jsPDF } from 'jspdf'
+import { autoTable } from 'jspdf-autotable'
+import { utils as xlsxUtils, writeFileXLSX } from 'xlsx'
 import {
   getCategorias,
   getVentasPorProductoRango,
@@ -30,6 +33,123 @@ function moneyCompactCRC(n) {
   if (x >= 1_000_000) return `₡${(x / 1_000_000).toFixed(1)}M`
   if (x >= 1000) return `₡${Math.round(x / 1000)}k`
   return `₡${x}`
+}
+
+function buildReportFilename(prefix, inicio, fin, ext) {
+  const a = String(inicio || '').trim() || toDateStrCR(new Date())
+  const b = String(fin || '').trim() || a
+  return `${prefix}_${a}_${b}.${ext}`
+}
+
+function exportProductosXlsx(rows, desde, hasta, totalMonto) {
+  const wb = xlsxUtils.book_new()
+  const ws = xlsxUtils.json_to_sheet(
+    (rows || []).map((r) => {
+      const pct = totalMonto > 0 ? (100 * r.monto) / totalMonto : 0
+      return {
+        producto: r.nombre,
+        categoria: r.categoria || '',
+        cantidad: r.cantidad,
+        monto: r.monto,
+        porcentajeTotal: Number(pct.toFixed(2)),
+      }
+    })
+  )
+  xlsxUtils.book_append_sheet(wb, ws, 'VentasProducto')
+  writeFileXLSX(wb, buildReportFilename('Ventas_por_producto', desde, hasta, 'xlsx'))
+}
+
+function exportProductosPdf(rows, desde, hasta, totalMonto) {
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  doc.setFontSize(14)
+  doc.text('Ceviche del Rey — Ventas por producto', 14, 16)
+  doc.setFontSize(10)
+  doc.text(`Período: ${desde} a ${hasta}`, 14, 22)
+  autoTable(doc, {
+    startY: 26,
+    head: [['Producto', 'Categoría', 'Cantidad', 'Monto', '%']],
+    body: (rows || []).slice(0, 60).map((r) => {
+      const pct = totalMonto > 0 ? ((100 * r.monto) / totalMonto).toFixed(1) : '0.0'
+      return [r.nombre, r.categoria || '', String(r.cantidad), moneyCRC(r.monto), `${pct}%`]
+    }),
+    theme: 'striped',
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [30, 41, 59] },
+  })
+  doc.save(buildReportFilename('Ventas_por_producto', desde, hasta, 'pdf'))
+}
+
+function exportCajaXlsx(rows, desde, hasta, totalCobrosMonto) {
+  const wb = xlsxUtils.book_new()
+  const ws = xlsxUtils.json_to_sheet(
+    (rows || []).map((r) => {
+      const pct = totalCobrosMonto > 0 ? (100 * r.montoTotal) / totalCobrosMonto : 0
+      return {
+        usuario: r.nombre,
+        operaciones: r.operaciones,
+        montoTotal: Math.round(r.montoTotal || 0),
+        porcentajeTotal: Number(pct.toFixed(2)),
+      }
+    })
+  )
+  xlsxUtils.book_append_sheet(wb, ws, 'CobrosUsuario')
+  writeFileXLSX(wb, buildReportFilename('Cobros_por_usuario', desde, hasta, 'xlsx'))
+}
+
+function exportCajaPdf(rows, desde, hasta, totalCobrosMonto) {
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  doc.setFontSize(14)
+  doc.text('Ceviche del Rey — Cobros por usuario', 14, 16)
+  doc.setFontSize(10)
+  doc.text(`Período: ${desde} a ${hasta}`, 14, 22)
+  autoTable(doc, {
+    startY: 26,
+    head: [['Usuario', 'Operaciones', 'Monto', '%']],
+    body: (rows || []).slice(0, 80).map((r) => {
+      const pct = totalCobrosMonto > 0 ? ((100 * r.montoTotal) / totalCobrosMonto).toFixed(1) : '0.0'
+      return [r.nombre, String(r.operaciones), moneyCRC(r.montoTotal), `${pct}%`]
+    }),
+    theme: 'striped',
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [30, 41, 59] },
+  })
+  doc.save(buildReportFilename('Cobros_por_usuario', desde, hasta, 'pdf'))
+}
+
+function exportPeriodoXlsx(periodoData, desde, hasta) {
+  const wb = xlsxUtils.book_new()
+  const ws = xlsxUtils.json_to_sheet(
+    (periodoData?.series || []).map((s) => ({
+      etiqueta: s.etiqueta,
+      etiquetaCorta: s.etiquetaCorta || '',
+      monto: s.monto,
+    }))
+  )
+  xlsxUtils.book_append_sheet(wb, ws, 'VentasPeriodo')
+  if (periodoData?.totalesPorMetodo) {
+    const wsMet = xlsxUtils.json_to_sheet(
+      Object.entries(periodoData.totalesPorMetodo).map(([metodo, monto]) => ({ metodo, monto }))
+    )
+    xlsxUtils.book_append_sheet(wb, wsMet, 'Metodos')
+  }
+  writeFileXLSX(wb, buildReportFilename('Ventas_por_periodo', desde, hasta, 'xlsx'))
+}
+
+function exportPeriodoPdf(periodoData, desde, hasta) {
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  doc.setFontSize(14)
+  doc.text('Ceviche del Rey — Ventas por período', 14, 16)
+  doc.setFontSize(10)
+  doc.text(`Período: ${desde} a ${hasta}`, 14, 22)
+  autoTable(doc, {
+    startY: 26,
+    head: [['Período', 'Monto']],
+    body: (periodoData?.series || []).map((s) => [s.etiquetaCorta || s.etiqueta, moneyCRC(s.monto)]),
+    theme: 'striped',
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [30, 41, 59] },
+  })
+  doc.save(buildReportFilename('Ventas_por_periodo', desde, hasta, 'pdf'))
 }
 
 const BAR_AREA_PX = 140
@@ -279,7 +399,7 @@ function LineChartVentas({ series }) {
   const padL = 52
   const padR = 20
   const padT = 20
-  const padB = 56
+  const padB = 72
   const innerW = LINE_CHART_W - padL - padR
   const innerH = LINE_CHART_H - padT - padB
 
@@ -296,15 +416,42 @@ function LineChartVentas({ series }) {
       : ''
 
   const labels = len > 0 ? series : []
+  const [hover, setHover] = useState(null)
+
+  const labelOf = (s) => String(s?.etiquetaCorta || s?.etiqueta || '').trim()
 
   return (
     <div className="w-full overflow-x-auto">
-      <svg
-        viewBox={`0 0 ${LINE_CHART_W} ${LINE_CHART_H}`}
-        className="h-auto w-full min-w-[280px] max-w-full"
-        role="img"
-        aria-label="Tendencia de ventas"
-      >
+      <div className="relative">
+        {hover && (
+          <div
+            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+            style={{ left: hover.leftPx, top: hover.topPx }}
+          >
+            <div className="font-semibold text-gray-900 dark:text-zinc-100">{hover.label}</div>
+            <div className="text-gray-600 dark:text-zinc-300">{moneyCRC(hover.monto)}</div>
+            {hover.porMetodo && (
+              <div className="mt-1 space-y-0.5 text-gray-600 dark:text-zinc-400">
+                {Object.entries(hover.porMetodo)
+                  .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+                  .slice(0, 6)
+                  .map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-3">
+                      <span className="capitalize">{k}</span>
+                      <span className="font-medium text-gray-800 dark:text-zinc-200">{moneyCRC(v)}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+        <svg
+          viewBox={`0 0 ${LINE_CHART_W} ${LINE_CHART_H}`}
+          className="h-auto w-full min-w-[320px] max-w-full"
+          role="img"
+          aria-label="Tendencia de ventas"
+          onMouseLeave={() => setHover(null)}
+        >
         <line
           x1={padL}
           y1={padT + innerH}
@@ -323,26 +470,57 @@ function LineChartVentas({ series }) {
             strokeLinejoin="round"
           />
         ) : null}
-        {vals.map((v, i) => (
-          <circle key={`a-${i}`} cx={xAt(i)} cy={yAt(v)} r={4} className="fill-cyan-600 dark:fill-red-500" />
-        ))}
+        {vals.map((v, i) => {
+          const s = series?.[i]
+          const label = labelOf(s)
+          const porMetodo = s?.porMetodo && typeof s.porMetodo === 'object' ? s.porMetodo : null
+          return (
+            <g
+              key={`a-${i}`}
+              onMouseMove={(e) => {
+                const svg = e.currentTarget.ownerSVGElement
+                const rect = svg?.getBoundingClientRect?.()
+                if (!rect) return
+                setHover({
+                  i,
+                  label: label || `Punto ${i + 1}`,
+                  monto: v,
+                  porMetodo,
+                  leftPx: e.clientX - rect.left,
+                  topPx: e.clientY - rect.top,
+                })
+              }}
+            >
+              <circle cx={xAt(i)} cy={yAt(v)} r={9} className="fill-transparent" />
+              <circle
+                cx={xAt(i)}
+                cy={yAt(v)}
+                r={hover?.i === i ? 6 : 4}
+                className="fill-cyan-600 dark:fill-red-500"
+              />
+            </g>
+          )
+        })}
         {labels.map((s, i) => {
-          const show = len <= 12 || i % Math.ceil(len / 10) === 0 || i === len - 1
+          const step = len <= 10 ? 1 : Math.ceil(len / 8)
+          const show = i % step === 0 || i === len - 1
           if (!show) return null
+          const label = labelOf(s)
           return (
             <text
               key={`lbl-${s.etiqueta}-${i}`}
               x={xAt(i)}
               y={LINE_CHART_H - 10}
-              textAnchor="end"
+              textAnchor="middle"
               className="fill-gray-600 text-[9px] dark:fill-zinc-400"
-              transform={`rotate(-40 ${xAt(i)} ${LINE_CHART_H - 10})`}
+              transform={`rotate(-28 ${xAt(i)} ${LINE_CHART_H - 10})`}
             >
-              {s.etiquetaCorta || s.etiqueta}
+              {label}
             </text>
           )
         })}
-      </svg>
+        </svg>
+      </div>
     </div>
   )
 }
@@ -365,6 +543,7 @@ export default function ReportesPage() {
   const [expandedCajaKey, setExpandedCajaKey] = useState(null)
   const [detalleCaja, setDetalleCaja] = useState({})
   const [detalleLoading, setDetalleLoading] = useState(null)
+  const [exportFormat, setExportFormat] = useState('csv') // csv | xlsx | pdf
 
   const loadCategorias = useCallback(async () => {
     try {
@@ -606,6 +785,27 @@ export default function ReportesPage() {
     URL.revokeObjectURL(url)
   }
 
+  const exportCurrent = () => {
+    if (tab === 'productos') {
+      if (rows.length === 0) return
+      if (exportFormat === 'csv') return downloadCsvProductos()
+      if (exportFormat === 'xlsx') return exportProductosXlsx(rows, desde, hasta, totalMonto)
+      if (exportFormat === 'pdf') return exportProductosPdf(rows, desde, hasta, totalMonto)
+      return
+    }
+    if (tab === 'caja') {
+      if (cobrosRows.length === 0) return
+      if (exportFormat === 'csv') return downloadCsvCaja()
+      if (exportFormat === 'xlsx') return exportCajaXlsx(cobrosRows, desde, hasta, totalCobrosMonto)
+      if (exportFormat === 'pdf') return exportCajaPdf(cobrosRows, desde, hasta, totalCobrosMonto)
+      return
+    }
+    if (!periodoData?.series?.length) return
+    if (exportFormat === 'csv') return downloadCsvPeriodo()
+    if (exportFormat === 'xlsx') return exportPeriodoXlsx(periodoData, desde, hasta)
+    if (exportFormat === 'pdf') return exportPeriodoPdf(periodoData, desde, hasta)
+  }
+
   const toggleDetalleCaja = async (row) => {
     const key = rowKeyCobro(row)
     if (expandedCajaKey === key) {
@@ -774,37 +974,26 @@ export default function ReportesPage() {
             <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Actualizar
           </button>
-          {tab === 'productos' ? (
-            <button
-              type="button"
-              onClick={downloadCsvProductos}
-              disabled={rows.length === 0}
-              className="btn btn-outline btn-sm gap-2 border-gray-300 dark:border-zinc-600"
-            >
-              <DocumentArrowDownIcon className="h-4 w-4" />
-              Descargar CSV
-            </button>
-          ) : tab === 'caja' ? (
-            <button
-              type="button"
-              onClick={downloadCsvCaja}
-              disabled={cobrosRows.length === 0}
-              className="btn btn-outline btn-sm gap-2 border-gray-300 dark:border-zinc-600"
-            >
-              <DocumentArrowDownIcon className="h-4 w-4" />
-              Descargar CSV
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={downloadCsvPeriodo}
-              disabled={!periodoData?.series?.length}
-              className="btn btn-outline btn-sm gap-2 border-gray-300 dark:border-zinc-600"
-            >
-              <DocumentArrowDownIcon className="h-4 w-4" />
-              Descargar CSV
-            </button>
-          )}
+          <select
+            className="select select-bordered select-sm"
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value)}
+            disabled={loading}
+            title="Formato de exportación"
+          >
+            <option value="csv">CSV</option>
+            <option value="xlsx">XLS</option>
+            <option value="pdf">PDF</option>
+          </select>
+          <button
+            type="button"
+            onClick={exportCurrent}
+            disabled={tab === 'productos' ? rows.length === 0 : tab === 'caja' ? cobrosRows.length === 0 : !periodoData?.series?.length}
+            className="btn btn-outline btn-sm gap-2 border-gray-300 dark:border-zinc-600"
+          >
+            <DocumentArrowDownIcon className="h-4 w-4" />
+            Exportar
+          </button>
         </div>
 
         {error && (

@@ -633,6 +633,150 @@ export async function getReporteInventarioTendenciaInsumo(insumoId, fechaInicio,
   };
 }
 
+/** Umbral HU RA-006: pedido "lento" si supera estos minutos (preparación). */
+export const RA006_UMBRAL_LENTO_MINUTOS = 15;
+
+function ra006HourCRFromMs(ms) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Costa_Rica',
+    hour: 'numeric',
+    hour12: false,
+  }).formatToParts(new Date(ms));
+  return Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+}
+
+function ra006MesaEtiquetaPedido(p) {
+  const origen = String(p.origenPedido || '').trim().toLowerCase();
+  const tipo = String(p.tipoPedido || '').trim().toLowerCase();
+  if (origen === 'venta_directa' || tipo === 'para_llevar') return 'Para llevar';
+  const n = p.mesaNumero;
+  if (n != null && Number(n) > 0) return formatMesaLabel(Number(n));
+  const mid = String(p.mesaId || '').trim();
+  if (mid) return `Mesa (${mid.slice(0, 6)}…)`;
+  return '—';
+}
+
+/**
+ * RA-006: tiempos de cocina por rango (listoAt en CR).
+ * Tiempo de preparación = listoAt − (startedAt || createdAt || timestamp), en minutos.
+ * Pedidos sin listoAt quedan fuera (no se estima por updatedAt).
+ */
+export async function getReporteTiemposCocinaRango(fechaInicio, fechaFin) {
+  const fi = String(fechaInicio || '').trim();
+  const ff = String(fechaFin || '').trim();
+  const { start, end } = rangeForDateStrInclusive(fi, ff);
+
+  const [pedidosSnap, productosSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, 'pedidos'),
+        where('listoAt', '>=', start),
+        where('listoAt', '<=', end),
+        orderBy('listoAt', 'asc')
+      )
+    ),
+    getDocs(collection(db, 'productos')),
+  ]);
+
+  const categoriaPorProductoId = {};
+  productosSnap.docs.forEach((d) => {
+    const x = d.data();
+    categoriaPorProductoId[d.id] = String(x.categoria || '').trim() || 'Sin categoría';
+  });
+
+  const porHora = Array.from({ length: 24 }, (_, h) => ({ hora: h, cantidad: 0 }));
+  const catSum = {};
+  const catPeso = {};
+  const prepMinutos = [];
+  const lentos = [];
+
+  for (const d of pedidosSnap.docs) {
+    const p = { id: d.id, ...d.data() };
+    const listoMs = toMillisSafe(p.listoAt || p.readyAt);
+    if (!listoMs) continue;
+    const inicioMs = toMillisSafe(p.startedAt || p.createdAt || p.timestamp);
+    if (!inicioMs || listoMs <= inicioMs) continue;
+    const mins = (listoMs - inicioMs) / 60000;
+    if (!Number.isFinite(mins) || mins < 0 || mins >= 480) continue;
+
+    prepMinutos.push(mins);
+
+    const h = ra006HourCRFromMs(listoMs);
+    if (h >= 0 && h < 24) porHora[h].cantidad += 1;
+
+    const items = Array.isArray(p.items) ? p.items : [];
+    if (items.length === 0) {
+      const k = 'Sin ítems';
+      catSum[k] = (catSum[k] || 0) + mins;
+      catPeso[k] = (catPeso[k] || 0) + 1;
+    } else {
+      items.forEach((it) => {
+        const pid = String(it.productoId || '').trim();
+        const cat = pid && categoriaPorProductoId[pid] ? categoriaPorProductoId[pid] : 'Sin categoría';
+        const w = Math.max(0, Number(it.cantidad || 1));
+        catSum[cat] = (catSum[cat] || 0) + mins * w;
+        catPeso[cat] = (catPeso[cat] || 0) + w;
+      });
+    }
+
+    if (mins > RA006_UMBRAL_LENTO_MINUTOS) {
+      const nombres = items
+        .slice(0, 6)
+        .map((it) => String(it.nombreSnapshot || it.productoId || 'Ítem').trim())
+        .filter(Boolean);
+      lentos.push({
+        pedidoId: p.id,
+        mesaEtiqueta: ra006MesaEtiquetaPedido(p),
+        minutos: Math.round(mins * 10) / 10,
+        listoAt: p.listoAt || p.readyAt || null,
+        itemsResumen: nombres.length ? nombres.join(', ') : '—',
+      });
+    }
+  }
+
+  lentos.sort((a, b) => b.minutos - a.minutos);
+
+  const sorted = [...prepMinutos].sort((a, b) => a - b);
+  let medianaMin = null;
+  if (sorted.length) {
+    const mid = Math.floor(sorted.length / 2);
+    medianaMin =
+      sorted.length % 2 === 1
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  const promedioMin =
+    prepMinutos.length > 0
+      ? prepMinutos.reduce((s, x) => s + x, 0) / prepMinutos.length
+      : null;
+
+  const porCategoria = Object.keys(catSum)
+    .map((categoria) => {
+      const w = catPeso[categoria] || 0;
+      return {
+        categoria,
+        promedioMin: w > 0 ? Math.round((catSum[categoria] / w) * 10) / 10 : 0,
+        muestrasPeso: w,
+      };
+    })
+    .sort((a, b) => b.promedioMin - a.promedioMin);
+
+  return {
+    fechaInicio: fi,
+    fechaFin: ff,
+    umbralLentoMinutos: RA006_UMBRAL_LENTO_MINUTOS,
+    totales: {
+      muestras: prepMinutos.length,
+      promedioMin: promedioMin != null ? Math.round(promedioMin * 10) / 10 : null,
+      medianaMin: medianaMin != null ? Math.round(medianaMin * 10) / 10 : null,
+      lentosCount: lentos.length,
+    },
+    porHora,
+    porCategoria,
+    lentos: lentos.slice(0, 80),
+  };
+}
+
 /**
  * Actualiza un insumo existente (nombre, unidad, minCantidad).
  * Valida nombre duplicado si cambia.

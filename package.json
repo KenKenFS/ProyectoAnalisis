@@ -20,17 +20,21 @@
     "seed:promociones": "node scripts/seed-promociones.js",
     "seed:mesas": "node scripts/seed-mesas.mjs",
     "seed:dashboard-ventas": "node scripts/seed-dashboard-ventas.mjs",
-    "seed:reporte-inventario": "node scripts/seed-reporte-inventario.mjs"
+    "seed:reporte-inventario": "node scripts/seed-reporte-inventario.mjs",
+    "seed:reporte-cocina": "node scripts/seed-reporte-cocina.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.0.18",
     "firebase": "^12.8.0",
     "firebase-admin": "^13.6.0",
     "framer-motion": "^12.27.5",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
     "react": "18.3.0",
     "react-dom": "18.3.0",
     "react-image-crop": "^11.0.10",
-    "react-router-dom": "^6.14.1"
+    "react-router-dom": "^6.14.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^18.2.37",
