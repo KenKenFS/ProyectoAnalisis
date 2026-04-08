@@ -1767,6 +1767,232 @@ export async function getVentasPOSByRange(fechaInicio, fechaFin) {
   return list;
 }
 
+/** Siguiente día calendario en CR (misma lógica que toDateStrCR sobre los cobros). */
+function ra004NextCalendarDayCR(dateStr) {
+  const { start } = rangeForDateStr(String(dateStr || '').trim());
+  const next = new Date(start.getTime() + 86400000);
+  return toDateStrCR(next);
+}
+
+function ra004PrevCalendarDayCR(dateStr) {
+  const { start } = rangeForDateStr(String(dateStr || '').trim());
+  const prev = new Date(start.getTime() - 86400000);
+  return toDateStrCR(prev);
+}
+
+function ra004EachDateInclusive(startStr, endStr) {
+  const out = [];
+  let cur = String(startStr || '').trim();
+  const end = String(endStr || '').trim();
+  while (cur <= end) {
+    out.push(cur);
+    if (cur === end) break;
+    cur = ra004NextCalendarDayCR(cur);
+  }
+  return out;
+}
+
+/** Lunes de la semana calendario CR que contiene `dateStr` (YYYY-MM-DD). */
+function ra004MondayKeyFromDateStr(dateStr) {
+  let cur = String(dateStr || '').trim();
+  for (let i = 0; i < 7; i += 1) {
+    const { start } = rangeForDateStr(cur);
+    const noon = new Date(start.getTime() + 12 * 3600000);
+    const w = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Costa_Rica',
+      weekday: 'long',
+    }).format(noon);
+    if (w === 'Monday') return cur;
+    cur = ra004PrevCalendarDayCR(cur);
+  }
+  return cur;
+}
+
+function ra004MergeMetodosMap(target, source) {
+  if (!source) return;
+  Object.keys(source).forEach((k) => {
+    target[k] = (target[k] || 0) + source[k];
+  });
+}
+
+const RA004_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function ra004EtiquetaCortaDia(dateStr) {
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  return `${d}/${m}`;
+}
+
+function ra004EtiquetaCortaSemana(mondayStr) {
+  const p = String(mondayStr).split('-').map(Number);
+  const m = p[1];
+  const d = p[2];
+  return `Sem. ${d}/${RA004_MESES[m - 1]}`;
+}
+
+function ra004EtiquetaCortaMes(ym) {
+  const [y, m] = String(ym).split('-').map(Number);
+  return `${RA004_MESES[m - 1]} ${y}`;
+}
+
+async function ra004FetchVentasPOSListCR(fechaInicio, fechaFin) {
+  const { start, end } = rangeForDateStrInclusive(fechaInicio, fechaFin);
+  const [pagosSnap, cuentasSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, 'pagos'),
+        where('createdAt', '>=', start),
+        where('createdAt', '<=', end)
+      )
+    ),
+    getDocs(
+      query(
+        collection(db, 'cuentas'),
+        where('cobradoAt', '>=', start),
+        where('cobradoAt', '<=', end)
+      )
+    ),
+  ]);
+
+  const pagosList = pagosSnap.docs.map((d) => {
+    const data = d.data() || {};
+    const amount = Number(data.montoTotal || 0);
+    const createdAt = data.createdAt || null;
+    const fecha = createdAt?.toDate ? toDateStrCR(createdAt.toDate()) : toDateStrCR(createdAt || new Date());
+    return {
+      monto: Math.abs(amount),
+      fecha,
+      metodo: normalizeMetodoPago(data.metodo),
+      createdAt,
+    };
+  });
+
+  const ventasDirectasList = cuentasSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((c) => String(c.tipoVenta || '').trim().toLowerCase() === 'directa_para_llevar')
+    .filter((c) => {
+      const estado = String(c.estadoCuenta || '').trim().toLowerCase();
+      const estadoPago = String(c.estadoPago || '').trim().toLowerCase();
+      return estado === 'cobrada' || estado === 'cerrada' || estadoPago === 'pagado';
+    })
+    .map((c) => {
+      const amount = Number(c.montoTotal || 0);
+      const createdAt = c.cobradoAt || c.updatedAt || null;
+      const fecha = createdAt?.toDate ? toDateStrCR(createdAt.toDate()) : toDateStrCR(createdAt || new Date());
+      return {
+        monto: Math.abs(amount),
+        fecha,
+        metodo: normalizeMetodoPago(c.metodoPago),
+        createdAt,
+      };
+    });
+
+  return [...pagosList, ...ventasDirectasList];
+}
+
+/**
+ * RA-004: Ventas POS agregadas por día / semana / mes en rango (fechas negocio CR). Opcional totales por método.
+ * @param {string} fechaInicio YYYY-MM-DD
+ * @param {string} fechaFin YYYY-MM-DD
+ * @param {{ agrupacion?: 'dia'|'semana'|'mes', desgloseMetodo?: boolean }} options
+ */
+export async function getReporteVentasPorPeriodo(fechaInicio, fechaFin, options = {}) {
+  const agrupacion = ['dia', 'semana', 'mes'].includes(options.agrupacion) ? options.agrupacion : 'dia';
+  const desgloseMetodo = !!options.desgloseMetodo;
+
+  const startStr = String(fechaInicio || '').trim();
+  const endStr = String(fechaFin || '').trim();
+  if (!startStr || !endStr) throw new Error('Indique fecha inicial y final.');
+  if (startStr > endStr) throw new Error('La fecha inicial no puede ser posterior a la final.');
+
+  const list = await ra004FetchVentasPOSListCR(startStr, endStr);
+  const days = ra004EachDateInclusive(startStr, endStr);
+  const porDia = new Map();
+  days.forEach((day) => porDia.set(day, { total: 0, metodos: {} }));
+
+  for (const v of list) {
+    const day = v.fecha;
+    if (!porDia.has(day)) continue;
+    const b = porDia.get(day);
+    b.total += v.monto;
+    const met = v.metodo || 'otro';
+    b.metodos[met] = (b.metodos[met] || 0) + v.monto;
+  }
+
+  let series = [];
+  if (agrupacion === 'dia') {
+    series = days.map((d) => {
+      const p = porDia.get(d);
+      return {
+        etiqueta: d,
+        etiquetaCorta: ra004EtiquetaCortaDia(d),
+        monto: Math.round(p.total),
+        porMetodo: { ...p.metodos },
+      };
+    });
+  } else if (agrupacion === 'semana') {
+    const weekMap = new Map();
+    for (const d of days) {
+      const wk = ra004MondayKeyFromDateStr(d);
+      if (!weekMap.has(wk)) weekMap.set(wk, { total: 0, metodos: {} });
+      const p = porDia.get(d);
+      const cur = weekMap.get(wk);
+      cur.total += p.total;
+      ra004MergeMetodosMap(cur.metodos, p.metodos);
+    }
+    series = [...weekMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([etiqueta, v]) => ({
+        etiqueta,
+        etiquetaCorta: ra004EtiquetaCortaSemana(etiqueta),
+        monto: Math.round(v.total),
+        porMetodo: Object.fromEntries(
+          Object.entries(v.metodos).map(([k, val]) => [k, Math.round(val)])
+        ),
+      }));
+  } else {
+    const monthMap = new Map();
+    for (const d of days) {
+      const mk = d.slice(0, 7);
+      if (!monthMap.has(mk)) monthMap.set(mk, { total: 0, metodos: {} });
+      const p = porDia.get(d);
+      const cur = monthMap.get(mk);
+      cur.total += p.total;
+      ra004MergeMetodosMap(cur.metodos, p.metodos);
+    }
+    series = [...monthMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([etiqueta, v]) => ({
+        etiqueta,
+        etiquetaCorta: ra004EtiquetaCortaMes(etiqueta),
+        monto: Math.round(v.total),
+        porMetodo: Object.fromEntries(
+          Object.entries(v.metodos).map(([k, val]) => [k, Math.round(val)])
+        ),
+      }));
+  }
+
+  let totalesPorMetodo = null;
+  if (desgloseMetodo) {
+    const acc = {};
+    for (const v of list) {
+      const met = v.metodo || 'otro';
+      acc[met] = (acc[met] || 0) + v.monto;
+    }
+    totalesPorMetodo = Object.fromEntries(
+      Object.entries(acc).map(([k, val]) => [k, Math.round(val)])
+    );
+  }
+
+  const totalPeriodo = series.reduce((s, x) => s + x.monto, 0);
+
+  return {
+    series,
+    totalesPorMetodo,
+    totalPeriodo: Math.round(totalPeriodo),
+    diasEnRango: days.length,
+  };
+}
+
 /**
  * CF-005: Reporte contable por período.
  */

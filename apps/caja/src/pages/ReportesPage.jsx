@@ -8,12 +8,14 @@ import {
   UsersIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  PresentationChartLineIcon,
 } from '@heroicons/react/24/outline'
 import {
   getCategorias,
   getVentasPorProductoRango,
   getCobrosPorUsuarioRango,
   getDetalleCobrosUsuarioRango,
+  getReporteVentasPorPeriodo,
   toDateStrCR,
 } from '@shared/firebase/firestore'
 
@@ -270,6 +272,81 @@ function rowKeyCobro(row) {
   return row.usuarioUid == null || row.usuarioUid === '' ? '__sin__' : row.usuarioUid
 }
 
+const LINE_CHART_W = 720
+const LINE_CHART_H = 240
+
+function LineChartVentas({ series }) {
+  const padL = 52
+  const padR = 20
+  const padT = 20
+  const padB = 56
+  const innerW = LINE_CHART_W - padL - padR
+  const innerH = LINE_CHART_H - padT - padB
+
+  const len = series?.length ?? 0
+  const vals = len > 0 ? series.map((s) => s.monto) : []
+  const maxVal = Math.max(1, ...vals)
+
+  const xAt = (i) => (len <= 1 ? padL + innerW / 2 : padL + (i / Math.max(len - 1, 1)) * innerW)
+  const yAt = (v) => padT + innerH - (v / maxVal) * innerH
+
+  const pathActual =
+    len > 0
+      ? vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(v)}`).join(' ')
+      : ''
+
+  const labels = len > 0 ? series : []
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${LINE_CHART_W} ${LINE_CHART_H}`}
+        className="h-auto w-full min-w-[280px] max-w-full"
+        role="img"
+        aria-label="Tendencia de ventas"
+      >
+        <line
+          x1={padL}
+          y1={padT + innerH}
+          x2={padL + innerW}
+          y2={padT + innerH}
+          className="stroke-gray-300 dark:stroke-zinc-600"
+          strokeWidth={1}
+        />
+        {pathActual ? (
+          <path
+            d={pathActual}
+            fill="none"
+            className="stroke-cyan-600 dark:stroke-red-500"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : null}
+        {vals.map((v, i) => (
+          <circle key={`a-${i}`} cx={xAt(i)} cy={yAt(v)} r={4} className="fill-cyan-600 dark:fill-red-500" />
+        ))}
+        {labels.map((s, i) => {
+          const show = len <= 12 || i % Math.ceil(len / 10) === 0 || i === len - 1
+          if (!show) return null
+          return (
+            <text
+              key={`lbl-${s.etiqueta}-${i}`}
+              x={xAt(i)}
+              y={LINE_CHART_H - 10}
+              textAnchor="end"
+              className="fill-gray-600 text-[9px] dark:fill-zinc-400"
+              transform={`rotate(-40 ${xAt(i)} ${LINE_CHART_H - 10})`}
+            >
+              {s.etiquetaCorta || s.etiqueta}
+            </text>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
 export default function ReportesPage() {
   const initial = useMemo(() => defaultDateRange(), [])
   const [desde, setDesde] = useState(initial.start)
@@ -277,9 +354,12 @@ export default function ReportesPage() {
   const [tab, setTab] = useState('productos')
   const [categoria, setCategoria] = useState('')
   const [chartType, setChartType] = useState('bars')
+  const [agrupacion, setAgrupacion] = useState('dia')
+  const [desgloseMetodo, setDesgloseMetodo] = useState(false)
   const [categorias, setCategorias] = useState([])
   const [rows, setRows] = useState([])
   const [cobrosRows, setCobrosRows] = useState([])
+  const [periodoData, setPeriodoData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [expandedCajaKey, setExpandedCajaKey] = useState(null)
@@ -326,14 +406,32 @@ export default function ReportesPage() {
     }
   }, [desde, hasta])
 
+  const fetchPeriodo = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await getReporteVentasPorPeriodo(desde, hasta, {
+        agrupacion,
+        desgloseMetodo,
+      })
+      setPeriodoData(data)
+    } catch (e) {
+      setError(e?.message || 'No se pudo cargar el reporte.')
+      setPeriodoData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [desde, hasta, agrupacion, desgloseMetodo])
+
   useEffect(() => {
     loadCategorias()
   }, [loadCategorias])
 
   useEffect(() => {
     if (tab === 'productos') fetchProductos()
-    else fetchCobros()
-  }, [tab, fetchProductos, fetchCobros])
+    else if (tab === 'caja') fetchCobros()
+    else fetchPeriodo()
+  }, [tab, fetchProductos, fetchCobros, fetchPeriodo])
 
   const totalMonto = useMemo(() => rows.reduce((s, r) => s + r.monto, 0), [rows])
   const totalUnidades = useMemo(() => rows.reduce((s, r) => s + r.cantidad, 0), [rows])
@@ -417,7 +515,46 @@ export default function ReportesPage() {
     },
   ]
 
-  const kpi = tab === 'productos' ? kpiProductos : kpiCaja
+  const kpiPeriodo = useMemo(() => {
+    const total = periodoData?.totalPeriodo ?? 0
+    const dias = periodoData?.diasEnRango ?? 0
+    const series = periodoData?.series ?? []
+    const max = series.length ? Math.max(...series.map((s) => s.monto), 0) : 0
+    const avg = dias > 0 ? total / dias : 0
+    const agrLabel = agrupacion === 'dia' ? 'Por día' : agrupacion === 'semana' ? 'Por semana' : 'Por mes'
+    return [
+      {
+        label: 'Total ventas',
+        value: moneyCRC(total),
+        trend: 'Suma en el rango',
+        icon: ArrowTrendingUpIcon,
+        color: 'green',
+      },
+      {
+        label: 'Promedio por día',
+        value: moneyCRC(avg),
+        trend: dias ? `${dias} días en el rango` : '—',
+        icon: ChartBarIcon,
+        color: 'blue',
+      },
+      {
+        label: 'Mayor bucket',
+        value: moneyCRC(max),
+        trend: 'Pico del período',
+        icon: ChartBarIcon,
+        color: 'cyan',
+      },
+      {
+        label: 'Puntos',
+        value: String(series.length),
+        trend: agrLabel,
+        icon: PresentationChartLineIcon,
+        color: 'purple',
+      },
+    ]
+  }, [periodoData, agrupacion])
+
+  const kpi = tab === 'productos' ? kpiProductos : tab === 'caja' ? kpiCaja : kpiPeriodo
 
   const downloadCsvProductos = () => {
     if (rows.length === 0) return
@@ -453,6 +590,22 @@ export default function ReportesPage() {
     URL.revokeObjectURL(url)
   }
 
+  const downloadCsvPeriodo = () => {
+    if (!periodoData?.series?.length) return
+    const header = ['Etiqueta', 'Monto']
+    const lines = periodoData.series.map((s) =>
+      [s.etiqueta, String(s.monto)].map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(';')
+    )
+    const csv = '\uFEFF' + [header.join(';'), ...lines].join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `ventas-por-periodo_${desde}_${hasta}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const toggleDetalleCaja = async (row) => {
     const key = rowKeyCobro(row)
     if (expandedCajaKey === key) {
@@ -476,7 +629,8 @@ export default function ReportesPage() {
 
   const refresh = () => {
     if (tab === 'productos') fetchProductos()
-    else fetchCobros()
+    else if (tab === 'caja') fetchCobros()
+    else fetchPeriodo()
   }
 
   return (
@@ -488,12 +642,14 @@ export default function ReportesPage() {
         </h1>
         <p className="mt-1 text-sm text-gray-600 dark:text-zinc-400">
           {tab === 'productos'
-            ? 'RA-002 · Ventas por producto'
-            : 'RA-003 · Cobros por usuario de caja (quien registró el pago)'}
+            ? 'Ventas por producto'
+            : tab === 'caja'
+              ? 'Cobros por usuario'
+              : 'Tendencia de ventas por día, semana o mes'}
         </p>
       </div>
 
-      <div role="tablist" className="tabs tabs-boxed w-full max-w-xl bg-gray-100 p-1 dark:bg-zinc-800">
+      <div role="tablist" className="tabs tabs-boxed w-full max-w-3xl flex-wrap bg-gray-100 p-1 dark:bg-zinc-800">
         <button
           type="button"
           role="tab"
@@ -512,6 +668,16 @@ export default function ReportesPage() {
         >
           <UsersIcon className="h-4 w-4" />
           Cobros por usuario
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'periodo'}
+          className={`tab flex-1 gap-1 ${tab === 'periodo' ? 'tab-active bg-white shadow dark:bg-zinc-700' : ''}`}
+          onClick={() => setTab('periodo')}
+        >
+          <PresentationChartLineIcon className="h-4 w-4" />
+          Por período
         </button>
       </div>
 
@@ -551,28 +717,56 @@ export default function ReportesPage() {
                 ))}
               </select>
             </div>
-          ) : (
+          ) : tab === 'caja' ? (
             <div className="hidden lg:block" aria-hidden="true" />
-          )}
-          <div className="flex flex-col justify-end gap-2">
-            <span className="text-xs text-gray-500 dark:text-zinc-500">Visualización</span>
-            <div className="join w-full">
-              <button
-                type="button"
-                className={`btn join-item btn-sm flex-1 border-gray-300 ${chartType === 'bars' ? 'btn-active bg-cyan-600 text-white hover:bg-cyan-700' : 'bg-white dark:bg-zinc-800'}`}
-                onClick={() => setChartType('bars')}
+          ) : (
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-gray-700 dark:text-zinc-300">Agrupar por</label>
+              <select
+                value={agrupacion}
+                onChange={(e) => setAgrupacion(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-gray-900 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-cyan-900/40"
               >
-                Barras
-              </button>
-              <button
-                type="button"
-                className={`btn join-item btn-sm flex-1 border-gray-300 ${chartType === 'pie' ? 'btn-active bg-cyan-600 text-white hover:bg-cyan-700' : 'bg-white dark:bg-zinc-800'}`}
-                onClick={() => setChartType('pie')}
-              >
-                Circular
-              </button>
+                <option value="dia">Día</option>
+                <option value="semana">Semana (lunes a domingo)</option>
+                <option value="mes">Mes</option>
+              </select>
             </div>
-          </div>
+          )}
+          {tab === 'periodo' ? (
+            <div className="flex flex-col justify-end gap-2">
+              <span className="text-xs text-gray-500 dark:text-zinc-500">Opciones</span>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-800 dark:text-zinc-200">
+                <input
+                  type="checkbox"
+                  className="checkbox checkbox-sm checkbox-primary"
+                  checked={desgloseMetodo}
+                  onChange={(e) => setDesgloseMetodo(e.target.checked)}
+                />
+                Ver totales por método de pago
+              </label>
+            </div>
+          ) : (
+            <div className="flex flex-col justify-end gap-2">
+              <span className="text-xs text-gray-500 dark:text-zinc-500">Visualización</span>
+              <div className="join w-full">
+                <button
+                  type="button"
+                  className={`btn join-item btn-sm flex-1 border-gray-300 ${chartType === 'bars' ? 'btn-active bg-cyan-600 text-white hover:bg-cyan-700' : 'bg-white dark:bg-zinc-800'}`}
+                  onClick={() => setChartType('bars')}
+                >
+                  Barras
+                </button>
+                <button
+                  type="button"
+                  className={`btn join-item btn-sm flex-1 border-gray-300 ${chartType === 'pie' ? 'btn-active bg-cyan-600 text-white hover:bg-cyan-700' : 'bg-white dark:bg-zinc-800'}`}
+                  onClick={() => setChartType('pie')}
+                >
+                  Circular
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -590,11 +784,21 @@ export default function ReportesPage() {
               <DocumentArrowDownIcon className="h-4 w-4" />
               Descargar CSV
             </button>
-          ) : (
+          ) : tab === 'caja' ? (
             <button
               type="button"
               onClick={downloadCsvCaja}
               disabled={cobrosRows.length === 0}
+              className="btn btn-outline btn-sm gap-2 border-gray-300 dark:border-zinc-600"
+            >
+              <DocumentArrowDownIcon className="h-4 w-4" />
+              Descargar CSV
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={downloadCsvPeriodo}
+              disabled={!periodoData?.series?.length}
               className="btn btn-outline btn-sm gap-2 border-gray-300 dark:border-zinc-600"
             >
               <DocumentArrowDownIcon className="h-4 w-4" />
@@ -825,6 +1029,86 @@ export default function ReportesPage() {
                       </Fragment>
                     )
                   })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === 'periodo' && (
+        <>
+          <div className="rounded-lg border border-gray-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900/40">
+            <h3 className="mb-4 font-semibold text-gray-900 dark:text-zinc-100">Tendencia</h3>
+            {loading && (
+              <div className="flex h-64 items-center justify-center text-gray-500 dark:text-zinc-400">
+                <span className="loading loading-spinner loading-lg text-cyan-600" />
+              </div>
+            )}
+            {!loading && (!periodoData?.series || periodoData.series.length === 0) && (
+              <div className="flex h-56 flex-col items-center justify-center rounded-lg border border-dashed border-gray-200 bg-gray-50/80 dark:border-zinc-600 dark:bg-zinc-800/40">
+                <PresentationChartLineIcon className="mb-2 h-12 w-12 text-gray-400" />
+                <p className="text-gray-600 dark:text-zinc-400">No hay ventas en este rango</p>
+              </div>
+            )}
+            {!loading && periodoData?.series?.length > 0 && (
+              <LineChartVentas series={periodoData.series} />
+            )}
+          </div>
+
+          {desgloseMetodo && periodoData?.totalesPorMetodo && (
+            <div className="rounded-lg border border-gray-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900/40">
+              <h3 className="mb-4 font-semibold text-gray-900 dark:text-zinc-100">Totales por método de pago</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-zinc-600">
+                      <th className="py-2 text-left font-semibold text-gray-700 dark:text-zinc-300">Método</th>
+                      <th className="py-2 text-right font-semibold text-gray-700 dark:text-zinc-300">Monto</th>
+                      <th className="py-2 text-right font-semibold text-gray-700 dark:text-zinc-300">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(periodoData.totalesPorMetodo)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([met, monto]) => {
+                        const tot = periodoData.totalPeriodo || 1
+                        const pct = tot > 0 ? (100 * monto) / tot : 0
+                        return (
+                          <tr key={met} className="border-b border-gray-100 dark:border-zinc-700/80">
+                            <td className="py-2 text-gray-900 dark:text-zinc-100">{met}</td>
+                            <td className="py-2 text-right font-medium text-cyan-700 dark:text-cyan-400">
+                              {moneyCRC(monto)}
+                            </td>
+                            <td className="py-2 text-right text-gray-700 dark:text-zinc-300">{pct.toFixed(1)}%</td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-gray-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900/40">
+            <h3 className="mb-4 font-semibold text-gray-900 dark:text-zinc-100">Detalle por bucket</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-zinc-600">
+                    <th className="py-3 text-left font-semibold text-gray-700 dark:text-zinc-300">Período</th>
+                    <th className="py-3 text-right font-semibold text-gray-700 dark:text-zinc-300">Ventas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(periodoData?.series ?? []).map((s) => (
+                    <tr key={s.etiqueta} className="border-b border-gray-100 dark:border-zinc-700/80">
+                      <td className="py-2 text-gray-900 dark:text-zinc-100">{s.etiquetaCorta || s.etiqueta}</td>
+                      <td className="py-2 text-right font-semibold text-cyan-700 dark:text-cyan-400">
+                        {moneyCRC(s.monto)}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
