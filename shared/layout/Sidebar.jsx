@@ -16,6 +16,7 @@ import {
   TableCellsIcon,
   LockClosedIcon,
   CalendarDaysIcon,
+  MapIcon,
 } from '@heroicons/react/24/outline'
 
 const iconMap = {
@@ -34,6 +35,7 @@ const iconMap = {
   TableCellsIcon,
   LockClosedIcon,
   CalendarDaysIcon,
+  MapIcon,
 }
 
 export default function Sidebar({ links = [], appName = 'Sistema', extraContent = null }) {
@@ -91,7 +93,7 @@ export default function Sidebar({ links = [], appName = 'Sistema', extraContent 
 
         <div className="p-4 border-t border-white/10 text-xs text-cyan-300/50 dark:border-zinc-800/90 dark:text-zinc-500">
           <div>Ceviche del Rey - 2026</div>
-          <div>SC-702 - Universidad Fidelitas</div>
+          <div>SC-803 - Universidad Fidelitas</div>
           <div className="mt-1">v1.0.0</div>
         </div>
       </aside>

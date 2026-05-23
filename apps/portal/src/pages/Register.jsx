@@ -79,26 +79,6 @@ function Register() {
     )
   }
 
-  const Field = ({ label, name, type = 'text', placeholder, required, extra }) => (
-    <div>
-      <label className="block text-xs font-semibold tracking-wider text-white/50 uppercase mb-2">
-        {label}{required && ' *'}
-      </label>
-      {extra || (
-        <input
-          type={type}
-          name={name}
-          value={formData[name]}
-          onChange={handleChange}
-          className="input-dark w-full"
-          placeholder={placeholder}
-          disabled={loading}
-          autoComplete="off"
-        />
-      )}
-    </div>
-  )
-
   return (
     <div className="min-h-screen flex">
       {/* Panel izquierdo */}
@@ -154,9 +134,51 @@ function Register() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Field label="Nombre completo" name="nombre" placeholder="Tu nombre" required />
-            <Field label="Correo electrónico" name="email" type="email" placeholder="tu@email.com" required />
-            <Field label="Teléfono" name="telefono" type="tel" placeholder="88888888" />
+            <div>
+              <label className="block text-xs font-semibold tracking-wider text-white/50 uppercase mb-2">
+                Nombre completo *
+              </label>
+              <input
+                type="text"
+                name="nombre"
+                value={formData.nombre}
+                onChange={handleChange}
+                className="input-dark w-full"
+                placeholder="Tu nombre"
+                disabled={loading}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wider text-white/50 uppercase mb-2">
+                Correo electrónico *
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleChange}
+                className="input-dark w-full"
+                placeholder="tu@email.com"
+                disabled={loading}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wider text-white/50 uppercase mb-2">
+                Teléfono
+              </label>
+              <input
+                type="tel"
+                name="telefono"
+                value={formData.telefono}
+                onChange={handleChange}
+                className="input-dark w-full"
+                placeholder="88888888"
+                disabled={loading}
+                autoComplete="off"
+              />
+            </div>
 
             <div>
               <label className="block text-xs font-semibold tracking-wider text-white/50 uppercase mb-2">

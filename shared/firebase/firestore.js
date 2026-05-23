@@ -13,6 +13,8 @@ import {
   orderBy,
   onSnapshot,
   writeBatch,
+  serverTimestamp,
+  deleteField,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { formatMesaLabel } from '../utils/mesaDisplay.js';
@@ -1296,8 +1298,8 @@ async function liberarMesaSiCorresponde({ mesaId, cuentaId, now = new Date() }) 
 
   await updateDoc(mesaRef, {
     cuentaActivaId: null,
-    estadoMesa: 'disponible',
-    estado: 'disponible',
+    estadoMesa: 'por_limpiar',
+    estado: 'por_limpiar',
     updatedAt: now,
   });
 }
@@ -1352,6 +1354,90 @@ export async function deleteMesa(mesaId) {
   }
 
   await deleteDoc(mesaRef);
+}
+
+// ==================== FLOOR PLAN (EDITOR DE PLANO) ====================
+
+const FLOOR_PLAN_DOC_ID = 'main';
+
+/**
+ * Documento único del plano (floorPlan/main).
+ * @returns {Promise<object|null>}
+ */
+export async function getFloorPlan() {
+  try {
+    const ref = doc(db, 'floorPlan', FLOOR_PLAN_DOC_ID);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() };
+  } catch (error) {
+    console.error('❌ Error al obtener floorPlan:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Suscripción en tiempo real al documento del plano.
+ * Devuelve la función de unsuscripción.
+ * @param {(plan: object|null) => void} callback
+ */
+export function onFloorPlanSnapshot(callback) {
+  const ref = doc(db, 'floorPlan', FLOOR_PLAN_DOC_ID);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        callback(null);
+        return;
+      }
+      callback({ id: snap.id, ...snap.data() });
+    },
+    (error) => {
+      console.error('❌ Error en snapshot floorPlan:', error.message);
+      callback(null);
+    }
+  );
+}
+
+/**
+ * Elimina recursivamente claves con valor null/undefined dentro de un objeto/array.
+ * Evita guardar nulls implícitos que ensucian la lectura del documento.
+ */
+function stripNulls(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => stripNulls(v));
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === null || v === undefined) continue;
+      out[k] = stripNulls(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Guarda el documento del plano (merge=false para reemplazar estructura completa).
+ * Solo admin debería invocar esto desde UI (las reglas lo enforcen igual).
+ *
+ * Esquema: cada sección es un plano independiente con su propio canvas/elements.
+ * @param {object} plan - { sections:[{id,name,color,canvasWidth,canvasHeight,elements:[...]}], activeSectionId }
+ * @param {string} userUid - uid del que guarda, para auditoría
+ */
+export async function saveFloorPlan(plan, userUid = null) {
+  const ref = doc(db, 'floorPlan', FLOOR_PLAN_DOC_ID);
+  const sections = Array.isArray(plan?.sections)
+    ? plan.sections.map((s) => stripNulls(s))
+    : [];
+  const payload = {
+    sections,
+    activeSectionId: plan?.activeSectionId || null,
+    updatedAt: new Date(),
+  };
+  if (userUid) payload.updatedByUid = userUid;
+  await setDoc(ref, payload, { merge: false });
 }
 
 // ==================== TRANSACCIONES (CONTABILIDAD) ====================
@@ -6805,6 +6891,43 @@ export async function completarReserva(reservaId, adminUid) {
  * Sugiere horarios alternativos cuando no hay mesas disponibles.
  * Devuelve hasta 5 horarios cercanos al solicitado con mesas libres.
  */
+// ==================== CLIENTES (Admin) ====================
+
+export async function getClientes() {
+  const snap = await getDocs(query(collection(db, 'clientes'), orderBy('createdAt', 'desc')));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function updateClienteAdmin(uid, { nombre, telefono }) {
+  await updateDoc(doc(db, 'clientes', uid), {
+    nombre,
+    telefono: telefono || '',
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function desactivarClienteAdmin(uid) {
+  await updateDoc(doc(db, 'clientes', uid), {
+    deletedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function reactivarClienteAdmin(uid) {
+  await updateDoc(doc(db, 'clientes', uid), {
+    deletedAt: deleteField(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function getReservasByClienteUidAdmin(clienteUid) {
+  const snap = await getDocs(
+    query(collection(db, 'reservas'), where('clienteUid', '==', clienteUid))
+  );
+  const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return docs.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+}
+
 export async function getAlternativasReserva(fecha, hora, cantidadPersonas) {
   const mesas = await getMesasOrThrow();
   const reservas = await getReservasByDate(fecha);

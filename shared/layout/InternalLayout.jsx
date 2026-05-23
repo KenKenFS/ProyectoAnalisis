@@ -8,13 +8,12 @@ export default function InternalLayout({
   sidebarLinks = [],
   sidebarExtra = null,
   appName = 'Sistema',
-  showNotifications = true,
   hideFooter = false,
   hideSidebar = false,
 }) {
   return (
     <div className="flex flex-col min-h-screen bg-base-100 dark:bg-zinc-950">
-      <Navbar title={navbarTitle} showNotifications={showNotifications} />
+      <Navbar title={navbarTitle} />
       <div className="flex flex-1 overflow-hidden">
         {!hideSidebar && (
           <Sidebar links={sidebarLinks} appName={appName} extraContent={sidebarExtra} />

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   TableCellsIcon,
   ShoppingCartIcon,
@@ -11,7 +12,6 @@ import {
   UserGroupIcon,
   UserPlusIcon,
   ClockIcon,
-  FunnelIcon,
   ExclamationTriangleIcon,
   ArrowRightCircleIcon,
   PencilSquareIcon,
@@ -24,6 +24,7 @@ import { db } from '@shared/firebase/firebase'
 import { useAuth } from '@shared/firebase/AuthContext'
 import ModalPortal from '@shared/layout/ModalPortal'
 import { formatMesaLabel, formatMesaFromDoc } from '@shared/utils/mesaDisplay'
+import MesasMapView from '../components/floorplan/MesasMapView'
 import {
   addCuentaItemConCantidad,
   anularCuentaItem,
@@ -111,38 +112,6 @@ function StatusTag({ ui }) {
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ui.tagDotClass}`} aria-hidden />
       {ui.label}
     </span>
-  )
-}
-
-function MesaCard({ mesa, selected, onSelect }) {
-  const ui = getStatusUI(mesa.estadoMesa)
-  const StatusIcon = ui.icon
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(mesa)}
-      className={`min-h-[138px] rounded-xl border p-4 text-left transition ${
-        ui.cardClass
-      } ${
-        selected
-          ? 'ring-2 ring-cyan-500 shadow-lg dark:ring-red-800/70 dark:shadow-black/40'
-          : 'hover:shadow-md dark:hover:border-zinc-600'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-lg font-bold text-gray-900 dark:text-zinc-100">{formatMesaFromDoc(mesa)}</div>
-          <div className="mt-1 text-xs text-gray-600 dark:text-zinc-500">
-            Capacidad: {Number(mesa.capacidad || 0) || 'N/D'} | Zona: {mesa.zona || 'General'}
-          </div>
-        </div>
-        <StatusIcon className={`h-6 w-6 flex-shrink-0 ${ui.iconClass || ui.textClass}`} />
-      </div>
-      <div className="mt-3">
-        <StatusTag ui={ui} />
-      </div>
-      <div className="mt-2 text-xs text-gray-500 dark:text-zinc-500">Tocar para ver detalle</div>
-    </button>
   )
 }
 
@@ -248,7 +217,6 @@ export default function MeserosPage() {
   const [mesas, setMesas] = useState([])
   const [selectedMesaId, setSelectedMesaId] = useState(null)
   const [orderingMesa, setOrderingMesa] = useState(null)
-  const [filterEstado, setFilterEstado] = useState('todos')
   const [loadingMesas, setLoadingMesas] = useState(true)
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
@@ -378,11 +346,6 @@ export default function MeserosPage() {
     return () => unsubscribe()
   }, [mesas])
 
-  const filteredMesas = useMemo(() => {
-    if (filterEstado === 'todos') return mesas
-    return mesas.filter((m) => m.estadoMesa === filterEstado)
-  }, [mesas, filterEstado])
-
   const selectedMesa = useMemo(
     () => mesas.find((m) => m.id === selectedMesaId) || null,
     [mesas, selectedMesaId]
@@ -460,6 +423,12 @@ export default function MeserosPage() {
     if (nextEstado === 'ocupada') {
       if (estado !== 'esperandoCuenta' && estado !== 'porLimpiar') {
         setError('No se puede volver a ocupada desde este estado.')
+        return
+      }
+    }
+    if (nextEstado === 'libre') {
+      if (estado !== 'porLimpiar') {
+        setError('Solo puedes marcar como libre una mesa que está por limpiar.')
         return
       }
     }
@@ -1002,38 +971,13 @@ export default function MeserosPage() {
   }
 
   return (
-    <div className="space-y-6 pb-4">
-      <div className="rounded-lg bg-gradient-to-r from-blue-900 to-cyan-900 p-6 text-white shadow-lg dark:from-zinc-950 dark:to-zinc-900 dark:shadow-black/40">
-        <h1 className="flex items-center gap-3 text-3xl font-bold">
-          <TableCellsIcon className="h-8 w-8" />
-          Estado de mesas
-        </h1>
-        <p className="mt-2 text-blue-200 dark:text-zinc-400">
-          Visualizacion en tiempo real para organizacion de atencion
-        </p>
-      </div>
+    <div className="space-y-4 pb-4">
+      <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-gray-900 dark:text-zinc-100">
+        <TableCellsIcon className="h-6 w-6 shrink-0 text-cyan-600 dark:text-cyan-400" aria-hidden />
+        Estado de mesas
+      </h1>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-zinc-800/80 dark:bg-zinc-900/60">
-        <div className="text-sm text-gray-700 dark:text-zinc-300">
-          Total mesas: <span className="font-bold">{mesas.length}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <FunnelIcon className="h-4 w-4 text-gray-500 dark:text-zinc-500" />
-          <select
-            value={filterEstado}
-            onChange={(e) => setFilterEstado(e.target.value)}
-            className="select select-bordered select-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-          >
-            <option value="todos">Todos</option>
-            <option value="libre">Libres</option>
-            <option value="ocupada">Ocupadas</option>
-            <option value="esperandoCuenta">Lista para pagar</option>
-            <option value="porLimpiar">Por limpiar</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-zinc-800/80 dark:bg-zinc-900/60">
+      <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-zinc-800/80 dark:bg-zinc-900/60">
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-base font-bold text-gray-900 dark:text-zinc-100">Pedidos listos para entregar</h2>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/50 bg-cyan-500/10 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-cyan-800 dark:border-cyan-400/40 dark:bg-cyan-500/15 dark:text-cyan-200">
@@ -1088,26 +1032,28 @@ export default function MeserosPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
+        <div className="min-h-0 lg:col-span-2">
           {loadingMesas ? (
-            <div className="text-sm text-gray-600 dark:text-zinc-400">Cargando mesas...</div>
-          ) : filteredMesas.length === 0 ? (
+            <div
+              className="flex items-center justify-center rounded-xl border border-gray-200 bg-white text-sm text-gray-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400"
+              style={{ height: 'clamp(520px, 78vh, 920px)' }}
+            >
+              Cargando mapa de mesas...
+            </div>
+          ) : mesas.length === 0 ? (
             <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
               <ExclamationTriangleIcon className="h-5 w-5 flex-shrink-0" />
-              No hay mesas para el filtro seleccionado.
+              Aún no hay mesas registradas. Crea mesas desde la app de administración.
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {filteredMesas.map((mesa) => (
-                <MesaCard
-                  key={mesa.id}
-                  mesa={mesa}
-                  selected={selectedMesaId === mesa.id}
-                  onSelect={(m) => setSelectedMesaId(m.id)}
-                />
-              ))}
-            </div>
+            <MesasMapView
+              mesas={mesas}
+              totalMesasCount={mesas.length}
+              showEditPlano={isAdmin}
+              selectedMesaId={selectedMesaId}
+              onSelectMesa={(mesa) => setSelectedMesaId(mesa ? mesa.id : null)}
+            />
           )}
         </div>
 
@@ -1190,6 +1136,23 @@ export default function MeserosPage() {
                   >
                     <ArrowRightCircleIcon className="w-5 h-5" />
                     {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Volver a ocupada'}
+                  </button>
+                </div>
+              )}
+
+              {selectedMesa.estadoMesa === 'porLimpiar' && !selectedMesa.cuentaActivaId && (
+                <div className="flex flex-col gap-2">
+                  <div className="rounded-lg border border-violet-200 bg-violet-50 dark:border-violet-900/50 dark:bg-violet-950/30 p-3 text-xs text-violet-800 dark:text-violet-200">
+                    Cuenta cobrada. Marca la mesa como libre cuando esté lista.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => aplicarEstadoMesa(selectedMesa, 'libre')}
+                    disabled={updatingMesaId === selectedMesa.id}
+                    className="w-full btn btn-lg border-0 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <CheckCircleIcon className="w-5 h-5" />
+                    {updatingMesaId === selectedMesa.id ? 'Actualizando...' : 'Marcar como libre'}
                   </button>
                 </div>
               )}

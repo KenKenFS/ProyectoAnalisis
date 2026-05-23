@@ -1,6 +1,5 @@
 import { LoginForm } from '@shared/login'
 
-// Usuarios de prueba para Meseros
 const testUsers = [
   { email: 'admin@ceviche.cr', password: 'admin123', role: 'Admin', name: 'Rosa Luz' },
   { email: 'mesero@ceviche.cr', password: 'mesero123', role: 'Mesero', name: 'Ana Maria' },

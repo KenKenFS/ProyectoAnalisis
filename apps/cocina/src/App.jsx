@@ -73,7 +73,6 @@ function AppContent() {
             sidebarLinks={sidebarLinks}
             sidebarExtra={<KitchenStatusCounter />}
             appName="Cocina"
-            showNotifications={false}
           />
         }
       >

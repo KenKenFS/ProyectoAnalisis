@@ -34,7 +34,6 @@ function App() {
               navbarTitle="Ceviche del Rey - Caja"
               sidebarLinks={sidebarLinks}
               appName="Caja"
-              showNotifications={false}
             />
           }
         >

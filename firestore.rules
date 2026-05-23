@@ -58,7 +58,7 @@ service cloud.firestore {
     match /mesas/{mesaId} {
       allow read: if signedIn() && (isAdmin() || isMesero() || isCajero() || isCocina());
       allow create: if isAdmin();
-      allow update: if signedIn() && (isAdmin() || isMesero());
+      allow update: if signedIn() && (isAdmin() || isMesero() || isCajero());
       allow delete: if isAdmin();
     }
 
@@ -196,6 +196,14 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAdmin();
       allow update: if isAdmin();
+    }
+
+    // floorPlan (editor visual del plano del restaurante)
+    // Lectura: cualquier staff puede leer el plano para visualizarlo.
+    // Escritura: solo Admin diseña el plano desde el editor.
+    match /floorPlan/{planId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isAdmin();
     }
 
     match /{document=**} {

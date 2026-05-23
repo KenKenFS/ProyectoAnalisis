@@ -16,8 +16,12 @@
         ],
         "cocina": [
           "cevichedelrey-cocina"
+        ],
+        "portal": [
+          "cevichedelrey-portal"
         ]
       }
     }
-  }
+  },
+  "etags": {}
 }

@@ -1,344 +1,379 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { db } from '@shared/firebase/firebase'
+import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore'
+import { getSolicitudesPortal } from '@shared/firebase/firestore'
 import {
-  ShoppingCartIcon,
+  GlobeAltIcon,
+  UserGroupIcon,
   CalendarDaysIcon,
-  PhoneIcon,
-  MapPinIcon,
+  ArrowTopRightOnSquareIcon,
   ClockIcon,
-  ArrowLeftIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  ArrowRightIcon,
+  PhoneIcon,
+  EnvelopeIcon,
+  UserCircleIcon,
 } from '@heroicons/react/24/outline'
 
-const menuItems = [
-  { id: 1, name: 'Ceviche Clásico', description: 'Pescado fresco, limón, cebolla, cilantro', price: 8500, category: 'Ceviches' },
-  { id: 2, name: 'Ceviche de Camarón', description: 'Camarones frescos con nuestro toque especial', price: 10500, category: 'Ceviches' },
-  { id: 3, name: 'Ceviche Mixto', description: 'Pescado, camarón, pulpo y cangrejo', price: 12500, category: 'Ceviches' },
-  { id: 4, name: 'Tiradito', description: 'Pescado crudo con salsa de ají amarillo', price: 9500, category: 'Entradas' },
-  { id: 5, name: 'Causas', description: 'Causa de papa amarilla con mariscos', price: 7500, category: 'Entradas' },
-  { id: 6, name: 'Arroz con Mariscos', description: 'Arroz cremoso con mezcla de mariscos', price: 11000, category: 'Platos' },
-  { id: 7, name: 'Escabeche', description: 'Pescado en caldo de cebolla marinada', price: 8500, category: 'Platos' },
-  { id: 8, name: 'Bebida Refrescante', description: 'Limonada fresca o jugo natural', price: 2500, category: 'Bebidas' },
-]
+const PORTAL_URL = 'https://cevichedelrey-portal.web.app'
 
-const activePromotions = [
-  { id: 1, title: 'Happy Hour', description: '30% en bebidas alcohólicas', discount: '30%' },
-  { id: 2, title: 'Menú del Día', description: 'Entrada + plato + bebida', discount: '20%' },
-]
-
-const schedule = [
-  { day: 'Lunes', hours: '11:00 - 23:00' },
-  { day: 'Martes', hours: '11:00 - 23:00' },
-  { day: 'Miércoles', hours: '11:00 - 23:00' },
-  { day: 'Jueves', hours: '11:00 - 23:00' },
-  { day: 'Viernes', hours: '11:00 - 00:00' },
-  { day: 'Sábado', hours: '12:00 - 00:00' },
-  { day: 'Domingo', hours: '12:00 - 22:00' },
-]
+function StatCard({ icon: Icon, label, value, sub, color = 'primary', onClick }) {
+  const colors = {
+    primary: 'bg-primary/10 text-primary',
+    warning: 'bg-warning/10 text-warning',
+    success: 'bg-success/10 text-success',
+    info: 'bg-info/10 text-info',
+  }
+  return (
+    <div
+      className={`card bg-base-100 border border-base-300 shadow-sm p-5 ${onClick ? 'cursor-pointer hover:border-primary/40 hover:shadow transition-all' : ''}`}
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colors[color]}`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        {onClick && <ArrowRightIcon className="w-4 h-4 text-base-content/30" />}
+      </div>
+      <div className="text-2xl font-bold text-base-content">{value ?? '—'}</div>
+      <div className="text-sm font-medium text-base-content/70 mt-0.5">{label}</div>
+      {sub && <div className="text-xs text-base-content/40 mt-1">{sub}</div>}
+    </div>
+  )
+}
 
 export default function Portal() {
   const navigate = useNavigate()
-  const [cartCount, setCartCount] = useState(0)
-  const [activeSection, setActiveSection] = useState('menu')
-  const [reservationData, setReservationData] = useState({ name: '', email: '', date: '', time: '', guests: '' })
-  const role = localStorage.getItem('role')
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({ clientes: 0, solicitudes: 0, confirmadas: 0, canceladas: 0 })
+  const [solicitudes, setSolicitudes] = useState([])
+  const [clientesRecientes, setClientesRecientes] = useState([])
 
-  const categories = [...new Set(menuItems.map(m => m.category))]
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [
+          clientesSnap,
+          solicitudesData,
+          confirmadasSnap,
+          canceladasSnap,
+          clientesRecSnap,
+        ] = await Promise.all([
+          getDocs(collection(db, 'clientes')),
+          getSolicitudesPortal(),
+          getDocs(query(collection(db, 'reservas'), where('estado', '==', 'confirmada'))),
+          getDocs(query(collection(db, 'reservas'), where('estado', '==', 'cancelada'))),
+          getDocs(query(collection(db, 'clientes'), orderBy('createdAt', 'desc'), limit(5))),
+        ])
 
-  const handleReservation = () => {
-    alert(`Reserva confirmada para ${reservationData.guests} personas`)
+        setStats({
+          clientes: clientesSnap.size,
+          solicitudes: solicitudesData.length,
+          confirmadas: confirmadasSnap.size,
+          canceladas: canceladasSnap.size,
+        })
+        setSolicitudes(solicitudesData.slice(0, 5))
+        setClientesRecientes(clientesRecSnap.docs.map(d => ({ id: d.id, ...d.data() })))
+      } catch (err) {
+        console.error('Error cargando datos del portal:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadData()
+  }, [])
+
+  function formatFecha(fecha) {
+    if (!fecha) return '—'
+    const [y, m, d] = fecha.split('-')
+    return `${d}/${m}/${y}`
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-cyan-50 via-white to-blue-50">
+    <div className="p-4 sm:p-6 space-y-6">
+
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-gradient-to-r from-blue-900 to-blue-800 text-white shadow-lg">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              {role && role !== 'Cliente' && (
-                <button
-                  onClick={() => navigate(-1)}
-                  className="btn btn-ghost btn-sm btn-circle text-white"
-                >
-                  <ArrowLeftIcon className="w-5 h-5" />
-                </button>
-              )}
-              <div>
-                <div className="font-bold text-lg">Ceviche del Rey</div>
-                <div className="text-xs text-cyan-200">Portal de Clientes</div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-base-content">Portal Web del Cliente</h1>
+          <p className="text-sm text-base-content/50 mt-1">
+            Gestión y métricas del portal público de clientes
+          </p>
+        </div>
+        <a
+          href={PORTAL_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-primary btn-sm gap-2 self-start sm:self-auto"
+        >
+          <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+          Abrir portal
+        </a>
+      </div>
+
+      {/* URL del portal */}
+      <div className="card bg-base-100 border border-base-300 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-success/10 flex items-center justify-center flex-shrink-0">
+            <GlobeAltIcon className="w-5 h-5 text-success" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-xs font-semibold text-base-content/50 uppercase tracking-wider">URL del portal</span>
+              <span className="badge badge-success badge-xs gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-success inline-block" />
+                En línea
+              </span>
+            </div>
+            <a
+              href={PORTAL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-primary hover:underline font-mono truncate block"
+            >
+              {PORTAL_URL}
+            </a>
+          </div>
+          <button
+            className="btn btn-ghost btn-xs gap-1 text-base-content/50"
+            onClick={() => navigator.clipboard?.writeText(PORTAL_URL)}
+          >
+            Copiar enlace
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      {loading ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="card bg-base-100 border border-base-300 p-5 animate-pulse">
+              <div className="w-10 h-10 rounded-xl bg-base-200 mb-3" />
+              <div className="h-7 w-12 bg-base-200 rounded mb-1" />
+              <div className="h-4 w-20 bg-base-200 rounded" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            icon={UserGroupIcon}
+            label="Clientes registrados"
+            value={stats.clientes}
+            sub="Cuentas en el portal"
+            color="primary"
+          />
+          <StatCard
+            icon={ExclamationCircleIcon}
+            label="Solicitudes pendientes"
+            value={stats.solicitudes}
+            sub="Esperan confirmación"
+            color="warning"
+            onClick={() => navigate('/reservas')}
+          />
+          <StatCard
+            icon={CheckCircleIcon}
+            label="Reservas confirmadas"
+            value={stats.confirmadas}
+            sub="Total historial"
+            color="success"
+          />
+          <StatCard
+            icon={CalendarDaysIcon}
+            label="Reservas canceladas"
+            value={stats.canceladas}
+            sub="Total historial"
+            color="info"
+          />
+        </div>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-6">
+
+        {/* Solicitudes recientes */}
+        <div className="card bg-base-100 border border-base-300 shadow-sm">
+          <div className="p-5 border-b border-base-200 flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-base-content">Solicitudes pendientes</h2>
+              <p className="text-xs text-base-content/40 mt-0.5">Reservas del portal esperando confirmación</p>
+            </div>
+            <button
+              className="btn btn-ghost btn-xs gap-1 text-primary"
+              onClick={() => navigate('/reservas')}
+            >
+              Ver todas
+              <ArrowRightIcon className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="p-4">
+            {loading ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex gap-3 animate-pulse">
+                    <div className="w-8 h-8 rounded-full bg-base-200" />
+                    <div className="flex-1">
+                      <div className="h-4 w-32 bg-base-200 rounded mb-1" />
+                      <div className="h-3 w-24 bg-base-200 rounded" />
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <button className="btn btn-ghost btn-sm text-white gap-1">
-                <PhoneIcon className="w-4 h-4" />
-                <span className="hidden sm:inline">+506 2234-5678</span>
-              </button>
-              {cartCount > 0 && (
-                <div className="relative">
-                  <ShoppingCartIcon className="w-6 h-6" />
-                  <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                    {cartCount}
-                  </span>
-                </div>
-              )}
-            </div>
+            ) : solicitudes.length === 0 ? (
+              <div className="text-center py-8 text-base-content/40">
+                <CheckCircleIcon className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">Sin solicitudes pendientes</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-base-200">
+                {solicitudes.map((s) => (
+                  <div key={s.id} className="py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-warning/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <ClockIcon className="w-4 h-4 text-warning" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-base-content truncate">
+                          {s.clienteNombre || 'Sin nombre'}
+                        </p>
+                        <p className="text-xs text-base-content/50">
+                          {formatFecha(s.fecha)} · {s.hora} · {s.cantidadPersonas} personas
+                        </p>
+                        {s.clienteEmail && (
+                          <p className="text-xs text-base-content/40 truncate">{s.clienteEmail}</p>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      className="btn btn-ghost btn-xs text-primary flex-shrink-0"
+                      onClick={() => navigate('/reservas')}
+                    >
+                      Gestionar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      </header>
 
-      {/* Hero Section */}
-      <section className="relative bg-gradient-to-r from-blue-900 via-blue-800 to-cyan-700 text-white py-16 md:py-24 overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute top-10 left-10 text-9xl">🐟</div>
-          <div className="absolute bottom-10 right-10 text-9xl">🦐</div>
-        </div>
-        <div className="max-w-6xl mx-auto px-4 text-center relative z-10">
-          <h1 className="text-4xl md:text-6xl font-bold mb-4 font-poppins">
-            Ceviche del Rey
-          </h1>
-          <p className="text-xl md:text-2xl text-cyan-100 mb-2">
-            Los mejores ceviches de la región
-          </p>
-          <p className="text-cyan-200 flex items-center justify-center gap-2 mb-6">
-            <MapPinIcon className="w-5 h-5" />
-            San José, Costa Rica
-          </p>
-          <div className="flex flex-wrap justify-center gap-3">
-            <button
-              onClick={() => setActiveSection('menu')}
-              className="btn btn-lg bg-white text-blue-900 hover:bg-cyan-100 border-0"
-            >
-              Ver Menú
-            </button>
-            <button
-              onClick={() => setActiveSection('reservation')}
-              className="btn btn-lg btn-outline text-white border-white hover:bg-white/20"
-            >
-              Reservar Mesa
-            </button>
+        {/* Clientes recientes */}
+        <div className="card bg-base-100 border border-base-300 shadow-sm">
+          <div className="p-5 border-b border-base-200 flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-base-content">Clientes recientes</h2>
+              <p className="text-xs text-base-content/40 mt-0.5">Últimos registros en el portal</p>
+            </div>
           </div>
-        </div>
-      </section>
-
-      {/* Navigation Tabs */}
-      <div className="sticky top-16 z-40 bg-white shadow-sm">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex gap-1 overflow-x-auto py-3">
-            {['menu', 'promos', 'reservation', 'schedule'].map(section => (
-              <button
-                key={section}
-                onClick={() => setActiveSection(section)}
-                className={`px-4 py-2 rounded-full font-medium transition-all whitespace-nowrap ${
-                  activeSection === section
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                {section === 'menu' && 'Menú'}
-                {section === 'promos' && 'Promociones'}
-                {section === 'reservation' && 'Reservar'}
-                {section === 'schedule' && 'Horarios'}
-              </button>
-            ))}
+          <div className="p-4">
+            {loading ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex gap-3 animate-pulse">
+                    <div className="w-8 h-8 rounded-full bg-base-200" />
+                    <div className="flex-1">
+                      <div className="h-4 w-32 bg-base-200 rounded mb-1" />
+                      <div className="h-3 w-24 bg-base-200 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : clientesRecientes.length === 0 ? (
+              <div className="text-center py-8 text-base-content/40">
+                <UserGroupIcon className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">Aún no hay clientes registrados</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-base-200">
+                {clientesRecientes.map((c) => (
+                  <div key={c.id} className="py-3 first:pt-0 last:pb-0 flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <UserCircleIcon className="w-4 h-4 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-base-content truncate">
+                        {c.nombre || 'Sin nombre'}
+                      </p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                        {c.email && (
+                          <span className="flex items-center gap-1 text-xs text-base-content/50 truncate">
+                            <EnvelopeIcon className="w-3 h-3 flex-shrink-0" />
+                            {c.email}
+                          </span>
+                        )}
+                        {c.telefono && (
+                          <span className="flex items-center gap-1 text-xs text-base-content/50">
+                            <PhoneIcon className="w-3 h-3 flex-shrink-0" />
+                            {c.telefono}
+                          </span>
+                        )}
+                      </div>
+                      {c.provider && (
+                        <span className="badge badge-ghost badge-xs mt-1">
+                          {c.provider === 'google' ? 'Google' : 'Email'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        {/* Menu Section */}
-        {activeSection === 'menu' && (
-          <section className="mb-12">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 font-poppins">Nuestro Menú</h2>
-
-            {categories.map(category => (
-              <div key={category} className="mb-8">
-                <h3 className="text-xl font-semibold text-gray-700 mb-4 border-b-2 border-blue-500 pb-2">
-                  {category}
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {menuItems.filter(m => m.category === category).map(item => (
-                    <div key={item.id} className="card bg-white border border-gray-100 hover:shadow-lg transition-shadow">
-                      <div className="p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-bold text-gray-800">{item.name}</h4>
-                          <span className="badge badge-primary">₡{item.price.toFixed(0)}</span>
-                        </div>
-                        <p className="text-sm text-gray-600 mb-4">{item.description}</p>
-                        <button 
-                          onClick={() => setCartCount(cartCount + 1)}
-                          className="btn btn-primary btn-sm w-full gap-1"
-                        >
-                          <ShoppingCartIcon className="w-4 h-4" />
-                          Agregar
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
-
-        {/* Promotions Section */}
-        {activeSection === 'promos' && (
-          <section className="mb-12">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 font-poppins">Promociones Especiales</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {activePromotions.map(p => (
-                <div key={p.id} className="card bg-gradient-to-br from-amber-100 to-orange-100 shadow-lg hover:shadow-xl transition-shadow">
-                  <div className="p-6">
-                    <div className="flex justify-between items-start mb-3">
-                      <h3 className="font-bold text-lg text-gray-800">{p.title}</h3>
-                      <span className="badge bg-gradient-to-r from-red-500 to-orange-500 text-white border-0 text-lg px-3 py-2">
-                        {p.discount}
-                      </span>
-                    </div>
-                    <p className="text-gray-600 mb-4">{p.description}</p>
-                    <button className="btn btn-primary btn-sm w-full">Aplicar Promoción</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Reservation Section */}
-        {activeSection === 'reservation' && (
-          <section className="mb-12 max-w-2xl">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 font-poppins">Reservar Mesa</h2>
-            <div className="card bg-white border border-gray-100 p-6">
-              <div className="space-y-4">
-                <div className="form-control">
-                  <label className="label"><span className="label-text">Nombre</span></label>
-                  <input 
-                    className="input input-bordered" 
-                    placeholder="Tu nombre completo"
-                    value={reservationData.name}
-                    onChange={(e) => setReservationData({...reservationData, name: e.target.value})}
-                  />
-                </div>
-                <div className="form-control">
-                  <label className="label"><span className="label-text">Correo</span></label>
-                  <input 
-                    className="input input-bordered" 
-                    type="email" 
-                    placeholder="tu@email.com"
-                    value={reservationData.email}
-                    onChange={(e) => setReservationData({...reservationData, email: e.target.value})}
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="form-control">
-                    <label className="label"><span className="label-text">Fecha</span></label>
-                    <input 
-                      className="input input-bordered" 
-                      type="date"
-                      value={reservationData.date}
-                      onChange={(e) => setReservationData({...reservationData, date: e.target.value})}
-                    />
-                  </div>
-                  <div className="form-control">
-                    <label className="label"><span className="label-text">Hora</span></label>
-                    <input 
-                      className="input input-bordered" 
-                      type="time"
-                      value={reservationData.time}
-                      onChange={(e) => setReservationData({...reservationData, time: e.target.value})}
-                    />
-                  </div>
-                </div>
-                <div className="form-control">
-                  <label className="label"><span className="label-text">Número de personas</span></label>
-                  <input 
-                    className="input input-bordered" 
-                    type="number" 
-                    placeholder="4"
-                    value={reservationData.guests}
-                    onChange={(e) => setReservationData({...reservationData, guests: e.target.value})}
-                  />
-                </div>
-                <button 
-                  onClick={handleReservation}
-                  className="btn btn-primary w-full gap-2"
-                >
-                  <CalendarDaysIcon className="w-5 h-5" />
-                  Reservar
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* Schedule Section */}
-        {activeSection === 'schedule' && (
-          <section className="mb-12">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 font-poppins">Nuestro Horario</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {schedule.map((item, idx) => (
-                <div key={idx} className="card bg-white border border-gray-100 p-4">
-                  <div className="flex items-center gap-3">
-                    <ClockIcon className="w-6 h-6 text-blue-600" />
-                    <div>
-                      <h4 className="font-bold text-gray-800">{item.day}</h4>
-                      <p className="text-sm text-gray-600">{item.hours}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            <div className="card bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-6 mt-8">
-              <div className="space-y-3">
-                <h3 className="font-bold text-lg">Contacto</h3>
-                <p className="flex items-center gap-2">
-                  <PhoneIcon className="w-5 h-5" />
-                  +506 2234-5678
-                </p>
-                <p className="flex items-center gap-2">
-                  <MapPinIcon className="w-5 h-5" />
-                  San José, Costa Rica
-                </p>
-              </div>
-            </div>
-          </section>
-        )}
-      </main>
-
-      {/* Footer */}
-      <footer className="bg-blue-900 text-white py-8 mt-12">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-6">
-            <div>
-              <h4 className="font-bold mb-2">Contacto</h4>
-              <div className="space-y-1 text-sm text-cyan-200">
-                <p>📍 San José, Costa Rica</p>
-                <p>📞 +506 2234-5678</p>
-                <p>✉️ info@cevichedelrey.com</p>
-              </div>
-            </div>
-            <div>
-              <h4 className="font-bold mb-2">Horario</h4>
-              <div className="space-y-1 text-sm text-cyan-200">
-                <p>Lunes - Viernes: 11:00 - 23:00</p>
-                <p>Sábados: 12:00 - 00:00</p>
-                <p>Domingos: 12:00 - 22:00</p>
-              </div>
-            </div>
-            <div>
-              <h4 className="font-bold mb-2">Síguenos</h4>
-              <div className="space-y-1 text-sm text-cyan-200">
-                <p>🔵 Facebook</p>
-                <p>📷 Instagram</p>
-                <p>🎵 TikTok</p>
-              </div>
-            </div>
-          </div>
-          <div className="border-t border-white/10 pt-6 text-center text-sm text-cyan-300">
-            <p>© 2025 Ceviche del Rey. Todos los derechos reservados.</p>
-          </div>
+      {/* Acciones rápidas */}
+      <div className="card bg-base-100 border border-base-300 shadow-sm">
+        <div className="p-5 border-b border-base-200">
+          <h2 className="font-semibold text-base-content">Acciones rápidas</h2>
+          <p className="text-xs text-base-content/40 mt-0.5">Navegación directa a secciones relacionadas con el portal</p>
         </div>
-      </footer>
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {[
+            {
+              icon: ExclamationCircleIcon,
+              label: 'Gestionar solicitudes',
+              sub: 'Confirmar o rechazar reservas del portal',
+              color: 'text-warning',
+              bg: 'bg-warning/10',
+              action: () => navigate('/reservas'),
+            },
+            {
+              icon: CalendarDaysIcon,
+              label: 'Todas las reservas',
+              sub: 'Ver el calendario y listado completo',
+              color: 'text-primary',
+              bg: 'bg-primary/10',
+              action: () => navigate('/reservas'),
+            },
+            {
+              icon: GlobeAltIcon,
+              label: 'Abrir portal',
+              sub: 'Ver el portal como lo ve el cliente',
+              color: 'text-success',
+              bg: 'bg-success/10',
+              action: () => window.open(PORTAL_URL, '_blank'),
+            },
+          ].map((item, i) => (
+            <button
+              key={i}
+              onClick={item.action}
+              className="flex items-center gap-3 p-4 rounded-xl border border-base-300 hover:border-primary/30 hover:bg-base-200/50 transition-all text-left group"
+            >
+              <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${item.bg}`}>
+                <item.icon className={`w-5 h-5 ${item.color}`} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-base-content group-hover:text-primary transition-colors">{item.label}</p>
+                <p className="text-xs text-base-content/40 leading-snug">{item.sub}</p>
+              </div>
+              <ArrowRightIcon className="w-4 h-4 text-base-content/20 group-hover:text-primary/60 ml-auto flex-shrink-0 transition-colors" />
+            </button>
+          ))}
+        </div>
+      </div>
+
     </div>
   )
 }

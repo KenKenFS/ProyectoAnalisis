@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChartBarIcon,
   ArrowTrendingUpIcon,
@@ -392,75 +392,148 @@ function rowKeyCobro(row) {
   return row.usuarioUid == null || row.usuarioUid === '' ? '__sin__' : row.usuarioUid
 }
 
-const LINE_CHART_W = 720
-const LINE_CHART_H = 240
+const LINE_CHART_W = 820
+const LINE_CHART_H = 260
+
+function niceYTicks(maxVal, count = 4) {
+  if (maxVal <= 0) return [0]
+  const raw = maxVal / count
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
+  const nice = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((f) => f >= raw) || mag * 10
+  const ticks = []
+  for (let i = 1; i <= count; i++) {
+    const v = Math.round(nice * i)
+    if (v <= maxVal * 1.15) ticks.push(v)
+  }
+  if (ticks.length === 0) ticks.push(Math.round(maxVal))
+  return ticks
+}
 
 function LineChartVentas({ series }) {
-  const padL = 52
-  const padR = 20
-  const padT = 20
-  const padB = 72
+  const padL = 80
+  const padR = 24
+  const padT = 16
+  const padB = 64
   const innerW = LINE_CHART_W - padL - padR
   const innerH = LINE_CHART_H - padT - padB
 
   const len = series?.length ?? 0
   const vals = len > 0 ? series.map((s) => s.monto) : []
   const maxVal = Math.max(1, ...vals)
+  const yTicks = niceYTicks(maxVal)
+  const yMax = Math.max(maxVal, yTicks[yTicks.length - 1] ?? maxVal) * 1.05
 
   const xAt = (i) => (len <= 1 ? padL + innerW / 2 : padL + (i / Math.max(len - 1, 1)) * innerW)
-  const yAt = (v) => padT + innerH - (v / maxVal) * innerH
+  const yAt = (v) => padT + innerH - (v / yMax) * innerH
 
   const pathActual =
     len > 0
-      ? vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(v)}`).join(' ')
+      ? vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(v).toFixed(1)}`).join(' ')
       : ''
 
   const labels = len > 0 ? series : []
   const [hover, setHover] = useState(null)
+  const containerRef = useRef(null)
 
   const labelOf = (s) => String(s?.etiquetaCorta || s?.etiqueta || '').trim()
 
+  const handleMouseMove = (e, i, v, label, porMetodo) => {
+    const container = containerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const rawLeft = e.clientX - rect.left
+    const rawTop = e.clientY - rect.top
+    setHover({ i, label, monto: v, porMetodo, rawLeft, rawTop, containerW: rect.width, containerH: rect.height })
+  }
+
+  const tooltipStyle = hover ? (() => {
+    const TOOLTIP_W = 180
+    const TOOLTIP_H = hover.porMetodo ? 120 : 60
+    let left = hover.rawLeft - TOOLTIP_W / 2
+    let top = hover.rawTop - TOOLTIP_H - 12
+    if (left < 4) left = 4
+    if (left + TOOLTIP_W > hover.containerW - 4) left = hover.containerW - TOOLTIP_W - 4
+    if (top < 4) top = hover.rawTop + 20
+    return { left, top }
+  })() : null
+
   return (
-    <div className="w-full overflow-x-auto">
-      <div className="relative">
-        {hover && (
-          <div
-            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-            style={{ left: hover.leftPx, top: hover.topPx }}
-          >
-            <div className="font-semibold text-gray-900 dark:text-zinc-100">{hover.label}</div>
-            <div className="text-gray-600 dark:text-zinc-300">{moneyCRC(hover.monto)}</div>
-            {hover.porMetodo && (
-              <div className="mt-1 space-y-0.5 text-gray-600 dark:text-zinc-400">
-                {Object.entries(hover.porMetodo)
-                  .sort((a, b) => (b[1] || 0) - (a[1] || 0))
-                  .slice(0, 6)
-                  .map(([k, v]) => (
-                    <div key={k} className="flex justify-between gap-3">
-                      <span className="capitalize">{k}</span>
-                      <span className="font-medium text-gray-800 dark:text-zinc-200">{moneyCRC(v)}</span>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        )}
-        <svg
-          viewBox={`0 0 ${LINE_CHART_W} ${LINE_CHART_H}`}
-          className="h-auto w-full min-w-[320px] max-w-full"
-          role="img"
-          aria-label="Tendencia de ventas"
-          onMouseLeave={() => setHover(null)}
+    <div ref={containerRef} className="relative w-full">
+      {hover && tooltipStyle && (
+        <div
+          className="pointer-events-none absolute z-20 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+          style={{ left: tooltipStyle.left, top: tooltipStyle.top, minWidth: 140 }}
         >
+          <div className="font-semibold text-gray-900 dark:text-zinc-100 mb-0.5">{hover.label}</div>
+          <div className="text-primary font-bold dark:text-red-400">{moneyCRC(hover.monto)}</div>
+          {hover.porMetodo && (
+            <div className="mt-1.5 space-y-0.5 border-t border-gray-100 dark:border-zinc-700 pt-1.5 text-gray-600 dark:text-zinc-400">
+              {Object.entries(hover.porMetodo)
+                .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+                .slice(0, 5)
+                .map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-3">
+                    <span className="capitalize">{k}</span>
+                    <span className="font-medium text-gray-800 dark:text-zinc-200">{moneyCRC(v)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <svg
+        viewBox={`0 0 ${LINE_CHART_W} ${LINE_CHART_H}`}
+        className="w-full"
+        style={{ maxHeight: 260, display: 'block' }}
+        role="img"
+        aria-label="Tendencia de ventas"
+        onMouseLeave={() => setHover(null)}
+      >
+        {/* Gridlines y etiquetas del eje Y */}
+        {yTicks.map((tick) => {
+          const y = yAt(tick)
+          const label = tick >= 1000
+            ? `₡${(tick / 1000).toLocaleString('es-CR', { maximumFractionDigits: 0 })}K`
+            : `₡${tick.toLocaleString('es-CR')}`
+          return (
+            <g key={`grid-${tick}`}>
+              <line
+                x1={padL} y1={y} x2={padL + innerW} y2={y}
+                stroke="currentColor"
+                className="text-gray-200 dark:text-zinc-700"
+                strokeWidth={1}
+                strokeDasharray="4 3"
+              />
+              <text
+                x={padL - 6} y={y + 4}
+                textAnchor="end"
+                className="fill-gray-400 dark:fill-zinc-500"
+                fontSize={9}
+              >
+                {label}
+              </text>
+            </g>
+          )
+        })}
+
+        {/* Línea base eje X */}
         <line
-          x1={padL}
-          y1={padT + innerH}
-          x2={padL + innerW}
-          y2={padT + innerH}
+          x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH}
           className="stroke-gray-300 dark:stroke-zinc-600"
           strokeWidth={1}
         />
-        {pathActual ? (
+
+        {/* Área bajo la línea */}
+        {pathActual && (
+          <path
+            d={`${pathActual} L ${xAt(len - 1).toFixed(1)} ${(padT + innerH).toFixed(1)} L ${xAt(0).toFixed(1)} ${(padT + innerH).toFixed(1)} Z`}
+            className="fill-cyan-600/10 dark:fill-red-500/10"
+          />
+        )}
+
+        {/* Línea de tendencia */}
+        {pathActual && (
           <path
             d={pathActual}
             fill="none"
@@ -469,58 +542,55 @@ function LineChartVentas({ series }) {
             strokeLinecap="round"
             strokeLinejoin="round"
           />
-        ) : null}
+        )}
+
+        {/* Puntos interactivos */}
         {vals.map((v, i) => {
           const s = series?.[i]
           const label = labelOf(s)
           const porMetodo = s?.porMetodo && typeof s.porMetodo === 'object' ? s.porMetodo : null
+          const isHovered = hover?.i === i
           return (
             <g
-              key={`a-${i}`}
-              onMouseMove={(e) => {
-                const svg = e.currentTarget.ownerSVGElement
-                const rect = svg?.getBoundingClientRect?.()
-                if (!rect) return
-                setHover({
-                  i,
-                  label: label || `Punto ${i + 1}`,
-                  monto: v,
-                  porMetodo,
-                  leftPx: e.clientX - rect.left,
-                  topPx: e.clientY - rect.top,
-                })
-              }}
+              key={`pt-${i}`}
+              onMouseMove={(e) => handleMouseMove(e, i, v, label || `Punto ${i + 1}`, porMetodo)}
+              style={{ cursor: 'crosshair' }}
             >
-              <circle cx={xAt(i)} cy={yAt(v)} r={9} className="fill-transparent" />
+              <circle cx={xAt(i)} cy={yAt(v)} r={14} fill="transparent" />
+              {isHovered && (
+                <circle cx={xAt(i)} cy={yAt(v)} r={10} className="fill-cyan-600/15 dark:fill-red-500/15" />
+              )}
               <circle
-                cx={xAt(i)}
-                cy={yAt(v)}
-                r={hover?.i === i ? 6 : 4}
+                cx={xAt(i)} cy={yAt(v)}
+                r={isHovered ? 5 : 3.5}
                 className="fill-cyan-600 dark:fill-red-500"
               />
             </g>
           )
         })}
+
+        {/* Etiquetas eje X */}
         {labels.map((s, i) => {
-          const step = len <= 10 ? 1 : Math.ceil(len / 8)
+          const step = len <= 12 ? 1 : Math.ceil(len / 10)
           const show = i % step === 0 || i === len - 1
           if (!show) return null
           const label = labelOf(s)
+          const x = xAt(i)
+          const y = LINE_CHART_H - 8
           return (
             <text
-              key={`lbl-${s.etiqueta}-${i}`}
-              x={xAt(i)}
-              y={LINE_CHART_H - 10}
-              textAnchor="middle"
-              className="fill-gray-600 text-[9px] dark:fill-zinc-400"
-              transform={`rotate(-28 ${xAt(i)} ${LINE_CHART_H - 10})`}
+              key={`lbl-${i}`}
+              x={x} y={y}
+              textAnchor="end"
+              className="fill-gray-500 dark:fill-zinc-400"
+              fontSize={9}
+              transform={`rotate(-35 ${x} ${y})`}
             >
               {label}
             </text>
           )
         })}
-        </svg>
-      </div>
+      </svg>
     </div>
   )
 }

@@ -49,7 +49,6 @@ function App() {
               navbarTitle="Ceviche del Rey"
               sidebarLinks={sidebarLinks}
               appName="Admin"
-              showNotifications={true}
             />
           }
         >
@@ -139,6 +138,14 @@ function App() {
             element={
               <ProtectedAuthRoute requiredRole="Admin">
                 <SystemLogs />
+              </ProtectedAuthRoute>
+            }
+          />
+          <Route
+            path="/portal"
+            element={
+              <ProtectedAuthRoute requiredRole="Admin">
+                <Portal />
               </ProtectedAuthRoute>
             }
           />

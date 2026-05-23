@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import {
-  BellIcon,
   UserCircleIcon,
   ArrowRightOnRectangleIcon,
   ClockIcon,
@@ -11,7 +10,6 @@ import { useTheme } from '../context/ThemeContext'
 
 export default function Navbar({
   title = 'Ceviche del Rey',
-  showNotifications = true,
 }) {
   const [currentTime, setCurrentTime] = useState(new Date())
   const userName = localStorage.getItem('userName') || 'Usuario'
@@ -61,13 +59,6 @@ export default function Navbar({
               <MoonIcon className="w-5 h-5 text-cyan-200" />
             )}
           </button>
-
-          {showNotifications && (
-            <button type="button" className="relative p-2 hover:bg-white/10 dark:hover:bg-zinc-900 rounded-lg transition">
-              <BellIcon className="w-5 h-5 text-cyan-300 dark:text-red-800/80" />
-              <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full dark:bg-red-800 dark:ring-1 dark:ring-zinc-950" />
-            </button>
-          )}
 
           <div className="hidden sm:flex items-center gap-2 pl-4 border-l border-white/10 dark:border-zinc-800">
             <div className="text-right">

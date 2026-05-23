@@ -5,7 +5,7 @@ export default function Footer() {
         <div className="flex items-center gap-4">
           <span>Ceviche del Rey - 2026</span>
           <span className="w-1 h-1 bg-cyan-300/30 rounded-full dark:bg-red-950/80" aria-hidden />
-          <span>SC-702 - Universidad Fidelitas</span>
+          <span>SC-803 - Universidad Fidelitas</span>
         </div>
         <div className="flex items-center gap-4">
           <span>Version 1.0.0</span>

@@ -7,7 +7,11 @@ import {
   ExclamationCircleIcon,
   CheckCircleIcon,
   ArrowLeftIcon,
+  SunIcon,
+  MoonIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline'
+import { useTheme } from '../context/ThemeContext'
 
 export default function LoginForm({
   appName = 'Ceviche del Rey',
@@ -28,6 +32,7 @@ export default function LoginForm({
   const [resetEmail, setResetEmail] = useState('')
   const [resetMsg, setResetMsg] = useState('')
   const [resetLoading, setResetLoading] = useState(false)
+  const { theme, toggleTheme } = useTheme()
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -134,8 +139,14 @@ export default function LoginForm({
       {/* Logo y titulo */}
       <div className="text-center mb-8">
         <div className="flex items-center justify-center gap-3 mb-2">
-          <div className="w-12 h-12 bg-cyan-400/20 rounded-full flex items-center justify-center">
-            <svg className="w-8 h-8 text-cyan-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-400/20 ring-1 ring-cyan-400/30 dark:border dark:border-red-950/50 dark:bg-zinc-900 dark:shadow-[0_0_20px_rgba(127,29,29,0.35)] dark:ring-2 dark:ring-red-900/45">
+            <svg
+              className="h-8 w-8 text-cyan-300 dark:text-red-300/90"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
             </svg>
           </div>
@@ -143,18 +154,33 @@ export default function LoginForm({
         <h1 className="text-5xl font-bold text-white mb-2 font-poppins">
           {appName}
         </h1>
-        <p className="text-cyan-200 text-lg">{appSubtitle}</p>
+        <p className="text-cyan-200 text-lg dark:text-zinc-300">{appSubtitle}</p>
         {moduleTitle && (
-          <p className="text-cyan-300/60 text-sm mt-1">{moduleTitle}</p>
+          <p className="text-cyan-300/60 text-sm mt-1 dark:text-red-300/55">{moduleTitle}</p>
         )}
       </div>
 
       {/* Card de login */}
       <div className="card bg-white/95 backdrop-blur shadow-2xl border border-white/20 rounded-xl relative overflow-hidden">
         <div className="card-body p-8">
-          <h2 className="text-2xl font-semibold text-gray-800 mb-6 font-poppins">
-            {formTitle}
-          </h2>
+          <div className="mb-6 flex items-start justify-between gap-3">
+            <h2 className="text-2xl font-semibold text-gray-800 dark:text-zinc-100 font-poppins">
+              {formTitle}
+            </h2>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-2 text-gray-600 transition hover:bg-gray-100 dark:border-red-950/40 dark:bg-zinc-900 dark:text-red-300/90 dark:hover:bg-zinc-800 dark:hover:text-red-200"
+              title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+              aria-label={theme === 'dark' ? 'Activar modo claro' : 'Activar modo oscuro'}
+            >
+              {theme === 'dark' ? (
+                <SunIcon className="h-5 w-5" />
+              ) : (
+                <MoonIcon className="h-5 w-5 text-cyan-700" />
+              )}
+            </button>
+          </div>
 
           {/* Mensajes */}
           {error && (
@@ -258,34 +284,40 @@ export default function LoginForm({
             )}
           </form>
 
-          {/* Usuarios de prueba */}
           {testUsers && testUsers.length > 0 && (
-            <>
-              <div className="divider text-gray-400 text-xs my-6">Usuarios de Prueba</div>
-
-              <div className="space-y-2">
-                {testUsers.map(user => (
+            <details className="group mt-4 rounded-lg border border-gray-200/90 bg-gray-50/90 dark:border-zinc-700 dark:bg-zinc-900/50">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-gray-600 transition hover:text-gray-800 dark:text-zinc-400 dark:hover:text-zinc-200 [&::-webkit-details-marker]:hidden">
+                <span>Credenciales de prueba ({testUsers.length})</span>
+                <ChevronDownIcon className="h-4 w-4 shrink-0 transition group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="space-y-1 border-t border-gray-200/90 px-2 py-2 dark:border-zinc-700">
+                {testUsers.map((user) => (
                   <button
                     key={user.email}
+                    type="button"
                     onClick={() => handleTestLogin(user)}
                     disabled={loading}
-                    className="w-full btn btn-sm btn-ghost justify-start border border-gray-200 hover:border-primary/50 hover:bg-primary/5 text-left"
+                    className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition hover:bg-white disabled:opacity-50 dark:hover:bg-zinc-800"
                   >
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-800 text-sm">{user.name}</div>
-                      <div className="text-xs text-gray-500">{user.role}</div>
-                    </div>
-                    <span className="text-xs font-mono text-gray-400">{user.password}</span>
+                    <span className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-gray-800 dark:text-zinc-200">{user.name}</span>
+                      <span className="shrink-0 rounded bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-zinc-800 dark:text-zinc-400">
+                        {user.role}
+                      </span>
+                    </span>
+                    <span className="truncate font-mono text-[10px] text-gray-500 dark:text-zinc-500">
+                      {user.email}
+                    </span>
                   </button>
                 ))}
               </div>
-            </>
+            </details>
           )}
 
           {/* Footer */}
-          <div className="mt-8 pt-6 border-t border-gray-200 text-center text-xs text-gray-500">
-            <p>Universidad Fidelitas - SC-702</p>
-            <p className="mt-1">Demo: Firebase Authentication</p>
+          <div className="mt-8 pt-6 border-t border-gray-200 dark:border-zinc-700 text-center text-xs text-gray-500 dark:text-zinc-400">
+            <p>Universidad Fidelitas - SC-803</p>
+            <p className="mt-1">Firebase Authentication</p>
           </div>
 
           {/* Panel de recuperación de contraseña */}
