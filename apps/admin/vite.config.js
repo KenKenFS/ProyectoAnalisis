@@ -31,6 +31,7 @@ export default defineConfig({
       'firebase/firestore': path.resolve(__dirname, 'node_modules/firebase/firestore/dist/index.cjs.js'),
       'firebase/storage': path.resolve(__dirname, 'node_modules/firebase/storage/dist/index.cjs.js'),
       'firebase/functions': path.resolve(__dirname, 'node_modules/firebase/functions/dist/index.cjs.js'),
+      '@heroicons/react': path.resolve(__dirname, 'node_modules/@heroicons/react'),
     }
   },
   server: {

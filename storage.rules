@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function staffRole() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return signedIn() && staffRole() in ['Admin', 'admin'];
+    }
+
+    function isStaff() {
+      return signedIn() && staffRole() in ['Admin', 'admin', 'Cajero', 'cajero', 'Mesero', 'mesero', 'Cocina', 'cocina'];
+    }
+
+    function isValidImageUpload() {
+      return request.resource != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Logo / marca — lectura publica (portal, login)
+    match /brand/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImageUpload();
+    }
+
+    // Imagenes de productos — lectura publica (menu portal)
+    match /productos/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImageUpload();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
